@@ -41,6 +41,7 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
   const [installOutput, setInstallOutput] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedPackages, setSelectedPackages] = useState<Set<string>>(new Set());
 
   // Common packages suggestion catalog
   const popularPackages = [
@@ -69,6 +70,16 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleTogglePackage = (packageName: string) => {
+    const newSelected = new Set(selectedPackages);
+    if (newSelected.has(packageName)) {
+      newSelected.delete(packageName);
+    } else {
+      newSelected.add(packageName);
+    }
+    setSelectedPackages(newSelected);
   };
 
   useEffect(() => {
@@ -104,11 +115,15 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
     setIsInstalling(true);
     setInstallOutput(null);
     setInstallError(null);
-    
+
     try {
+      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/pip/install', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ packageName: name.trim() })
       });
       const data = await res.json();
@@ -328,35 +343,37 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
                 </div>
               </div>
 
-              {/* Package cards grid view */}
-              <div className="border border-slate-200/60 dark:border-slate-800/80 rounded-xl overflow-hidden">
-                <div className="max-h-[220px] overflow-y-auto divide-y divide-slate-150 dark:divide-slate-850/80">
-                  {filteredPackages.map((pkg, idx) => (
-                    <div 
-                      key={`${pkg.name}-${idx}`} 
-                      className={`p-2.5 px-3.5 flex items-center justify-between text-xs hover:bg-slate-550/5 transition-colors ${
-                        isLight ? 'even:bg-slate-50/50' : 'even:bg-slate-950/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-1.5 rounded-full bg-indigo-550 shrink-0"></div>
-                        <span className="font-mono font-bold text-slate-705 dark:text-zinc-150">{pkg.name}</span>
-                        {['numpy', 'pandas', 'matplotlib', 'seaborn', 'scikit-learn'].includes(pkg.name) && (
-                          <span className="text-[9px] px-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/15 rounded select-none font-bold scale-[0.9] origin-left">
-                            Básico
-                          </span>
-                        )}
+              {/* Installed Libraries Section */}
+              <div className="space-y-2">
+                <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${c.title}`}>
+                  <Check className="h-4 w-4 text-emerald-500" /> Librerías Instaladas ({filteredPackages.length})
+                </h3>
+                {filteredPackages.length === 0 ? (
+                  <div className={`p-3.5 rounded-lg text-xs text-center ${c.cardItem}`}>
+                    {packages.length === 0 ? 'Sin librerías instaladas aún.' : 'Sin coincidencias en la búsqueda.'}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
+                    {filteredPackages.map(pkg => (
+                      <div
+                        key={pkg.name}
+                        className={`p-3 rounded-lg flex items-center gap-3 transition-all ${c.cardItem}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedPackages.has(pkg.name)}
+                          onChange={() => handleTogglePackage(pkg.name)}
+                          className="w-4 h-4 rounded accent-indigo-600 cursor-pointer"
+                          disabled={isInstalling}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold truncate">{pkg.name}</p>
+                          <p className="text-[10px] text-slate-500">{pkg.version || 'version desconocida'}</p>
+                        </div>
                       </div>
-                      <span className="font-mono text-slate-500 text-[11px]">v{pkg.version}</span>
-                    </div>
-                  ))}
-
-                  {filteredPackages.length === 0 && (
-                    <div className="p-8 text-center text-xs text-slate-500 font-medium">
-                      {packages.length === 0 ? 'Generando lista de paquetes...' : 'Ninguna librería instalada coincide con tu filtro.'}
-                    </div>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
