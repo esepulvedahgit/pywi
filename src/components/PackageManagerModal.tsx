@@ -40,6 +40,11 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
   const [isInstalling, setIsInstalling] = useState(false);
   const [isUninstalling, setIsUninstalling] = useState(false);
   const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
+  const [uninstallProgress, setUninstallProgress] = useState<{
+    currentPackage: string | null;
+    removed: string[];
+    failed: string[];
+  }>({ currentPackage: null, removed: [], failed: [] });
   const [installOutput, setInstallOutput] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -181,9 +186,61 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
   );
 
   const handleUninstallPackages = async () => {
-    // TODO: Implement uninstall logic in Task 7
-    // For now, this will be called when user confirms deletion
-    console.log('Uninstalling packages:', Array.from(selectedPackages));
+    const packageNames = Array.from(selectedPackages);
+    if (packageNames.length === 0) return;
+
+    setIsUninstalling(true);
+    setUninstallProgress({ currentPackage: null, removed: [], failed: [] });
+
+    try {
+      const token = localStorage.getItem('py_ide_token');
+
+      // Uninstall each package sequentially and update progress
+      const removed: string[] = [];
+      const failed: string[] = [];
+
+      for (const pkgName of packageNames) {
+        setUninstallProgress(prev => ({
+          ...prev,
+          currentPackage: pkgName
+        }));
+
+        try {
+          const res = await fetch('/api/pip/uninstall', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({ packageNames: [pkgName] })
+          });
+          const data = await res.json();
+
+          if (res.ok && data.success && data.removed.includes(pkgName)) {
+            removed.push(pkgName);
+          } else {
+            failed.push(pkgName);
+          }
+        } catch (err) {
+          failed.push(pkgName);
+        }
+
+        setUninstallProgress(prev => ({
+          ...prev,
+          removed,
+          failed
+        }));
+      }
+
+      // Final update and close modal
+      await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show completion
+      setIsUninstalling(false);
+      setSelectedPackages(new Set());
+      await fetchStatusAndPackages();
+    } catch (err: any) {
+      console.error('Uninstall error:', err);
+      setIsUninstalling(false);
+    }
   };
 
   const UninstallConfirmModal = () => {
@@ -225,6 +282,57 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
               Eliminar
             </button>
           </div>
+        </div>
+      </div>
+    );
+  };
+
+  const UninstallProgressModal = () => {
+    if (!isUninstalling) return null;
+
+    return (
+      <div className="fixed inset-0 z-[101] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          className={`p-6 rounded-2xl shadow-2xl max-w-md w-full ${
+            isLight ? 'bg-white text-slate-800' : isVibrant ? 'bg-slate-900 text-slate-200' : 'bg-neutral-950 text-neutral-200'
+          }`}
+        >
+          <h3 className="text-base font-bold mb-4">Desinstalando paquetes</h3>
+
+          {uninstallProgress.currentPackage && (
+            <div className="mb-4 flex items-center gap-3">
+              <RefreshCw className="h-4 w-4 animate-spin text-indigo-500" />
+              <p className="text-xs font-mono">{uninstallProgress.currentPackage}</p>
+            </div>
+          )}
+
+          {uninstallProgress.removed.length > 0 && (
+            <div className="mb-4">
+              <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mb-1.5">Desinstaladas ({uninstallProgress.removed.length}):</p>
+              <div className="space-y-1">
+                {uninstallProgress.removed.map(pkg => (
+                  <div key={pkg} className="text-xs flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                    <Check className="h-3 w-3" />
+                    {pkg}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {uninstallProgress.failed.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold text-red-600 dark:text-red-400 mb-1.5">Fallaron ({uninstallProgress.failed.length}):</p>
+              <div className="space-y-1">
+                {uninstallProgress.failed.map(pkg => (
+                  <div key={pkg} className="text-xs flex items-center gap-2 text-red-600 dark:text-red-400">
+                    <AlertTriangle className="h-3 w-3" />
+                    {pkg}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -511,6 +619,7 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
 
       </div>
       <UninstallConfirmModal />
+      <UninstallProgressModal />
     </div>
   );
 }
