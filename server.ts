@@ -671,8 +671,15 @@ app.post('/api/pip/uninstall', requireAuth, (req, res) => {
     }
 
     if (hasPython) {
+      // Validate package name against PEP 503 naming convention
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(pkgName)) {
+        failed.push(pkgName);
+        uninstallNext(index + 1);
+        return;
+      }
+
       const pipPath = getVenvPythonPath().replace('python', 'pip');
-      exec(`"${pipPath}" uninstall -y "${pkgName}"`, (err) => {
+      execFile(pipPath, ['uninstall', '-y', '--', pkgName], (err) => {
         if (!err) {
           removed.push(pkgName);
           removePackageForUser(userId, pkgName);
