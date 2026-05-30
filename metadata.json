@@ -1,0 +1,6 @@
+{
+  "name": "Python Web IDE",
+  "description": "Un entorno de desarrollo integrado ligero para Python de enfoque móvil, que permite crear proyectos, gestionar scripts, subir datasets y ejecutar código con terminal interactiva de arrastre.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,933 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Play, 
+  Menu, 
+  ChevronRight, 
+  Terminal, 
+  Folder, 
+  FileCode, 
+  Sparkles, 
+  Download, 
+  RefreshCw,
+  Clock,
+  Code2,
+  Palette,
+  MoreVertical,
+  Keyboard
+} from 'lucide-react';
+import { EditorView } from '@codemirror/view';
+import CodeMirror from '@uiw/react-codemirror';
+import { python } from '@codemirror/lang-python';
+
+import { User, Project, FileItem, ExecutionResult } from './types';
+import AuthScreen from './components/AuthScreen';
+import Sidebar from './components/Sidebar';
+import SpecialKeys from './components/SpecialKeys';
+import ConsoleSheet from './components/ConsoleSheet';
+import PackageManagerModal from './components/PackageManagerModal';
+
+export default function App() {
+  // Authentication & session state
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('py_ide_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  // Package Manager visibility state
+  const [showPackageManager, setShowPackageManager] = useState(false);
+
+  // Theme & customization visual state
+  const [activeTheme, setActiveTheme] = useState<'light' | 'vibrant-dark' | 'midnight-obsidian'>(() => {
+    const saved = localStorage.getItem('py_ide_theme');
+    return (saved as any) || 'light';
+  });
+  const [showThemeMenu, setShowThemeMenu] = useState(false);
+  const [showMobileOptions, setShowMobileOptions] = useState(false);
+  const [showSpecialKeys, setShowSpecialKeys] = useState<boolean>(() => {
+    const saved = localStorage.getItem('py_ide_show_special_keys');
+    return saved === 'true'; // Default to hidden (false)
+  });
+
+  useEffect(() => {
+    localStorage.setItem('py_ide_theme', activeTheme);
+  }, [activeTheme]);
+
+  useEffect(() => {
+    localStorage.setItem('py_ide_show_special_keys', String(showSpecialKeys));
+  }, [showSpecialKeys]);
+
+  // Project state
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [currentProject, setCurrentProject] = useState<Project | null>(null);
+  
+  // File state
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [currentFile, setCurrentFile] = useState<FileItem | null>(null);
+  const [code, setCode] = useState<string>('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Execution console state
+  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+
+  // Layout UI management
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const editorRef = useRef<EditorView | null>(null);
+
+  // Synchronization: Persist user session
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('py_ide_user', JSON.stringify(user));
+      fetchProjects();
+    } else {
+      localStorage.removeItem('py_ide_user');
+      setProjects([]);
+      setCurrentProject(null);
+      setFiles([]);
+      setCurrentFile(null);
+      setCode('');
+    }
+  }, [user]);
+
+  // Load user files list when project is loaded
+  useEffect(() => {
+    if (currentProject) {
+      fetchFiles(currentProject.id);
+    }
+  }, [currentProject]);
+
+  // Fetch file content when active file changes
+  useEffect(() => {
+    if (currentProject && currentFile && user) {
+      fetchFileContent(currentProject.id, currentFile.id);
+    }
+  }, [currentFile]);
+
+  // API Call: Fetch projects for active log
+  const fetchProjects = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/users/${user.id}/projects`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setProjects(data);
+        if (data.length > 0) {
+          // Select previous or first project
+          const savedProjId = localStorage.getItem('py_ide_last_proj');
+          const found = data.find(p => p.id === savedProjId);
+          setCurrentProject(found || data[0]);
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching projects:', err);
+    }
+  };
+
+  // API Call: Fetch files for active project
+  const fetchFiles = async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/files`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setFiles(data);
+        if (data.length > 0) {
+          // Prefer main.py script
+          const mainFile = data.find(f => f.filename === 'main.py');
+          setCurrentFile(mainFile || data[0]);
+        } else {
+          setCurrentFile(null);
+          setCode('');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching files:', err);
+    }
+  };
+
+  // API Call: Fetch content of a file
+  const fetchFileContent = async (projectId: string, fileId: string) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/files/${fileId}/content?userId=${user.id}`);
+      const data = await res.json();
+      if (data && data.content !== undefined) {
+        setCode(data.content);
+      }
+    } catch (err) {
+      console.error('Error loading file contents:', err);
+    }
+  };
+
+  // API Call: Create new project
+  const handleCreateProject = async (name: string) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/users/${user.id}/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setProjects(prev => [...prev, data]);
+        setCurrentProject(data);
+        localStorage.setItem('py_ide_last_proj', data.id);
+      }
+    } catch (err) {
+      console.error('Error creating project:', err);
+    }
+  };
+
+  // API Call: Delete action
+  const handleDeleteProject = async (projectId: string) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/users/${user.id}/projects/${projectId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const remaining = projects.filter(p => p.id !== projectId);
+        setProjects(remaining);
+        if (remaining.length > 0) {
+          setCurrentProject(remaining[0]);
+          localStorage.setItem('py_ide_last_proj', remaining[0].id);
+        } else {
+          setCurrentProject(null);
+          setFiles([]);
+          setCurrentFile(null);
+          setCode('');
+        }
+      }
+    } catch (err) {
+      console.error('Error deleting project:', err);
+    }
+  };
+
+  // API Call: Save changes physically
+  const handleSaveFile = async (customContent?: string) => {
+    if (!user || !currentProject || !currentFile) return;
+    const contentToSave = customContent !== undefined ? customContent : code;
+    setIsSaving(true);
+    try {
+      await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/content`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, content: contentToSave })
+      });
+    } catch (err) {
+      console.error('Error saving file:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // API Call: Create file script or data item
+  const handleCreateFile = async (filename: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          filename,
+          content: filename.endsWith('.py') ? `# Script: ${filename}\nprint("Hola ${filename}!")` : '',
+          type: filename.endsWith('.py') ? 'script' : 'dataset'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFiles(prev => [...prev, data]);
+        if (data.type === 'script') {
+          setCurrentFile(data);
+        }
+      } else {
+        alert(data.error || 'Error al crear archivo');
+      }
+    } catch (err) {
+      console.error('Error creating file:', err);
+    }
+  };
+
+  // API Call: Delete File
+  const handleDeleteFile = async (fileId: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/files/${fileId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id })
+      });
+      if (res.ok) {
+        const remaining = files.filter(f => f.id !== fileId);
+        setFiles(remaining);
+        if (currentFile?.id === fileId) {
+          const scripts = remaining.filter(f => f.type === 'script');
+          setCurrentFile(scripts.length > 0 ? scripts[0] : remaining[0] || null);
+        }
+      }
+    } catch (err) {
+      console.error('Error deleting file:', err);
+    }
+  };
+
+  // API Call: Upload files via dataset multer engine
+  const handleUploadDataset = async (file: File) => {
+    if (!user || !currentProject) return;
+    const formData = new FormData();
+    formData.append('dataset', file);
+
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/upload/${user.id}`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Refresh project files details
+        fetchFiles(currentProject.id);
+      } else {
+        alert(data.error || 'Error al subir dataset');
+      }
+    } catch (err) {
+      console.error('Error uploading dataset:', err);
+    }
+  };
+
+  // API Call: RUN PYTHON CODE (Critical Compiler Pipeline)
+  const handleRunCode = async () => {
+    if (!user || !currentProject || !currentFile) return;
+    
+    setIsRunning(true);
+    setExecutionResult(null);
+    setIsConsoleOpen(true); // Open "Bottom Sheet" on run trig
+    
+    // Auto save physical file change before running
+    await handleSaveFile(code);
+
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, runCode: code })
+      });
+      const data = await res.json();
+      setExecutionResult(data);
+    } catch (err: any) {
+      setExecutionResult({
+        success: false,
+        stdout: '',
+        stderr: `Error al llamar al motor de ejecución: ${err.message}`,
+        exitCode: -1,
+        duration: 0,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // Helper: Trigger CodeMirror cursor insertions programmatically
+  const handleInsertChar = (char: string) => {
+    if (editorRef.current) {
+      const view = editorRef.current;
+      const range = view.state.selection.main;
+      view.dispatch({
+        changes: { from: range.from, to: range.to, insert: char },
+        selection: { anchor: range.from + char.length }
+      });
+      view.focus();
+    } else {
+      setCode(prev => prev + char);
+    }
+  };
+
+  // Helper: Download current code as local file
+  const handleDownloadFile = () => {
+    if (!currentFile) return;
+    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = currentFile.filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Log of session switcher
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('py_ide_user');
+    localStorage.removeItem('py_ide_last_proj');
+  };
+
+  const getThemeClasses = (theme: string) => {
+    switch (theme) {
+      case 'vibrant-dark':
+        return {
+          wrapper: 'theme-vibrant-dark h-screen w-screen bg-slate-950 flex font-sans overflow-hidden text-slate-100',
+          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-slate-900 overflow-hidden',
+          header: 'h-14 bg-slate-950 border-b border-slate-800/80 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-10 text-slate-100',
+          headerTitle: 'text-slate-100',
+          headerSub: 'text-slate-450 uppercase font-bold tracking-wider',
+          projectBadge: 'bg-slate-900 border border-slate-800 text-slate-350',
+          projectSubtext: 'text-slate-400',
+          fileNameText: 'font-mono text-slate-250 truncate',
+          btnSec: 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:text-white',
+          presetPanel: 'bg-slate-950 border-b border-slate-850 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
+          presetTitle: 'text-slate-400',
+          presetBtn: 'bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-indigo-400 border-slate-800/80',
+          editorCanvas: 'flex-1 overflow-hidden relative bg-[#090d16] flex flex-col p-2 sm:p-4',
+          indicatorBox: 'bg-slate-950/95 border border-slate-850',
+          userAvatar: 'bg-slate-800 border border-slate-705 text-slate-200'
+        };
+      case 'midnight-obsidian':
+        return {
+          wrapper: 'theme-obsidian h-screen w-screen bg-black flex font-sans overflow-hidden text-neutral-100',
+          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-[#080808] overflow-hidden',
+          header: 'h-14 bg-black border-b border-neutral-900 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-10 text-neutral-100',
+          headerTitle: 'text-neutral-100',
+          headerSub: 'text-neutral-500 uppercase font-bold tracking-wider',
+          projectBadge: 'bg-black border border-neutral-900 text-neutral-400',
+          projectSubtext: 'text-neutral-500',
+          fileNameText: 'font-mono text-neutral-200 truncate',
+          btnSec: 'bg-neutral-955 hover:bg-neutral-900 text-neutral-300 border-neutral-900 hover:text-white',
+          presetPanel: 'bg-neutral-955 border-b border-neutral-900 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
+          presetTitle: 'text-neutral-400',
+          presetBtn: 'bg-neutral-955 hover:bg-neutral-900 text-neutral-300 hover:text-white border-neutral-900',
+          editorCanvas: 'flex-1 overflow-hidden relative bg-black flex flex-col p-2 sm:p-4',
+          indicatorBox: 'bg-black/95 border border-neutral-900',
+          userAvatar: 'bg-neutral-900 border border-neutral-800 text-neutral-355'
+        };
+      case 'light':
+      default:
+        return {
+          wrapper: 'theme-light h-screen w-screen bg-slate-950 flex font-sans overflow-hidden text-slate-100',
+          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-[#f8fafc] overflow-hidden',
+          header: 'h-14 bg-white border-b border-slate-200 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-xs z-10 text-slate-800',
+          headerTitle: 'text-slate-800',
+          headerSub: 'text-[9px] text-slate-400 font-bold uppercase tracking-wider',
+          projectBadge: 'bg-slate-50 border border-slate-200 text-slate-600',
+          projectSubtext: 'text-slate-500',
+          fileNameText: 'font-mono text-slate-700 truncate',
+          btnSec: 'bg-white hover:bg-slate-55 text-slate-600 border border-slate-205 hover:text-slate-800 shadow-xs',
+          presetPanel: 'bg-white border-b border-slate-200 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
+          presetTitle: 'text-xs text-slate-500 font-bold uppercase tracking-wider',
+          presetBtn: 'bg-slate-55 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 shadow-2xs',
+          editorCanvas: 'flex-1 overflow-hidden relative bg-[#0d1117] flex flex-col p-2 sm:p-4',
+          indicatorBox: 'bg-slate-900/90 border border-slate-800',
+          userAvatar: 'bg-indigo-50 border border-indigo-100 text-indigo-700'
+        };
+    }
+  };
+
+  if (!user) {
+    return <AuthScreen onLoginSuccess={(u) => setUser(u)} />;
+  }
+
+  const t = getThemeClasses(activeTheme);
+
+  return (
+    <div className={t.wrapper} id="main-ide-panel">
+      {/* 1. Left Navigation Sidebar */}
+      <Sidebar
+        user={user}
+        projects={projects}
+        currentProject={currentProject}
+        files={files}
+        currentFileId={currentFile ? currentFile.id : null}
+        onSelectProject={(id) => {
+          const found = projects.find(p => p.id === id);
+          if (found) {
+            setCurrentProject(found);
+            localStorage.setItem('py_ide_last_proj', id);
+          }
+        }}
+        onCreateProject={handleCreateProject}
+        onDeleteProject={handleDeleteProject}
+        onSelectFile={(id) => {
+          const found = files.find(f => f.id === id);
+          if (found && found.type === 'script') {
+            setCurrentFile(found);
+          }
+        }}
+        onCreateFile={handleCreateFile}
+        onDeleteFile={handleDeleteFile}
+        onUploadDataset={handleUploadDataset}
+        onLogout={handleLogout}
+        isOpenOnMobile={sidebarOpen}
+        onCloseMobile={() => setSidebarOpen(false)}
+        activeTheme={activeTheme}
+        onOpenPackageManager={() => setShowPackageManager(true)}
+      />
+
+      {/* Python Pip Package Manager Modal */}
+      <PackageManagerModal
+        isOpen={showPackageManager}
+        onClose={() => setShowPackageManager(false)}
+        activeTheme={activeTheme}
+      />
+
+      {/* 2. Main IDE Workspace */}
+      <div className={t.workspace}>        {/* Top Control Header bar */}
+        <header className={t.header}>
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            {/* Mobile Sidebar toggle triggers */}
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-1.5 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors shrink-0"
+              id="sidebar-toggle-mobile"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="bg-indigo-600 p-1.5 rounded-lg text-white hidden sm:block">
+                <Code2 className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col hidden sm:flex">
+                <h1 className={`text-sm font-bold ${activeTheme === 'light' ? 'text-slate-800' : 'text-slate-100'} leading-tight`}>PyCloud IDE</h1>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">v2.4.0 • Enterprise Edition</p>
+              </div>
+            </div>
+            
+            <div className="h-6 w-[1px] bg-slate-200 mx-1 hidden lg:block"></div>
+            
+            {/* Desktop Full Breadcrumbs */}
+            <div className={`hidden lg:flex items-center gap-1.5 px-2 py-1 ${t.projectBadge} rounded text-xs font-semibold max-w-[150px] lg:max-w-[260px] xl:max-w-[360px] min-w-0 shrink`}>
+              <Folder className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              <span className={`truncate ${t.projectSubtext} font-medium max-w-[60px] lg:max-w-[120px]`}>
+                {currentProject ? currentProject.name : 'Sin Proyecto'}
+              </span>
+              <span className="text-slate-300 shrink-0">/</span>
+              <span className={`truncate max-w-[70px] lg:max-w-[120px] ${t.fileNameText}`}>
+                {currentFile ? currentFile.filename : 'sin_archivo.py'}
+              </span>
+            </div>
+
+            {/* Mobile Compact File badge */}
+            <div className="flex items-center gap-1.5 lg:hidden min-w-0 bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/80 rounded px-2 py-0.5 select-none shrink">
+              <FileCode className="h-3 w-3 text-indigo-500 shrink-0" />
+              <span className={`font-mono text-[11px] font-bold truncate max-w-[80px] sm:max-w-[150px] ${
+                activeTheme === 'light' ? 'text-slate-800' : 'text-slate-200'
+              }`}>
+                {currentFile ? currentFile.filename : 'sin_archivo.py'}
+              </span>
+            </div>
+          </div>
+
+          {/* Compile, Run & responsive options dropdown */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {/* Desktop Only Service Status */}
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 mr-1 hidden xl:flex shrink-0">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+              <span className="font-medium text-slate-605">Servicio Activo</span>
+            </div>
+
+            {/* Desktop Only raw download button */}
+            {currentFile && (
+              <button
+                onClick={handleDownloadFile}
+                className={`p-1 px-2.5 ${t.btnSec} font-bold text-xs rounded-md transition-all flex items-center gap-1 shadow-xs hidden lg:flex shrink-0`}
+                title="Descargar script a tu dispositivo"
+                id="btn-download-script-raw"
+              >
+                <Download className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Descargar</span>
+              </button>
+            )}
+
+            {/* Beautiful Run button: highly responsive (compact text on mobile, full label on tablets/desktops) */}
+            <button
+              onClick={handleRunCode}
+              disabled={isRunning || !currentFile}
+              className="flex items-center gap-1.5 sm:gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 shrink-0"
+              id="btn-run-python-code"
+            >
+              {isRunning ? (
+                <>
+                  <div className="h-3 w-3 sm:h-3.5 sm:w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                  <span className="hidden xs:inline">Ejecutando...</span>
+                  <span className="xs:hidden">...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current shrink-0" />
+                  <span>Ejecutar</span>
+                  <span className="hidden xs:inline">script</span>
+                </>
+              )}
+            </button>
+            
+            {/* Desktop Visual Theme selector */}
+            <div className="relative hidden lg:block" id="theme-visual-selector-dropdown-desktop">
+              <button
+                onClick={() => setShowThemeMenu(!showThemeMenu)}
+                className={`p-1.5 px-2 rounded-md border text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs shrink-0 ${
+                  activeTheme === 'light'
+                    ? 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                    : activeTheme === 'vibrant-dark'
+                    ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                    : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
+                }`}
+                title="Configuración de Tema"
+                id="btn-trigger-theme-selector-desktop"
+              >
+                <Palette className="h-3.5 w-3.5 text-indigo-505 shrink-0" />
+                <span className="hidden lg:inline">Tema</span>
+              </button>
+
+              {showThemeMenu && (
+                <>
+                  <div 
+                    onClick={() => setShowThemeMenu(false)} 
+                    className="fixed inset-0 z-30" 
+                    id="theme-menu-backdrop-desktop" 
+                  />
+                  <div 
+                    className={`absolute right-0 mt-2 w-52 rounded-xl border p-2 shadow-xl z-40 animate-fadeIn ${
+                      activeTheme === 'light'
+                        ? 'bg-white border-slate-200 text-slate-850'
+                        : activeTheme === 'vibrant-dark'
+                        ? 'bg-slate-950 border-slate-850 text-slate-100'
+                        : 'bg-black border-neutral-850 text-neutral-100'
+                    }`}
+                    id="theme-selection-popover-desktop"
+                  >
+                    <p className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 ${activeTheme === 'light' ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Temas de Interfaz
+                    </p>
+                    <div className="space-y-1 mt-1">
+                      <button
+                        onClick={() => {
+                          setActiveTheme('light');
+                          setShowThemeMenu(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${
+                          activeTheme === 'light' 
+                            ? 'bg-indigo-50/70 text-indigo-700' 
+                            : 'hover:bg-slate-100 text-slate-700 dark:hover:bg-slate-900 text-slate-300'
+                        }`}
+                        id="theme-opt-light"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-3.5 h-3.5 rounded-full border border-slate-300 bg-white" />
+                          <span>Professional Polish (Light)</span>
+                        </div>
+                        {activeTheme === 'light' && <div className="w-1.5 h-1.5 rounded-full bg-indigo-600" />}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setActiveTheme('vibrant-dark');
+                          setShowThemeMenu(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${
+                          activeTheme === 'vibrant-dark' 
+                            ? 'bg-indigo-950/40 text-indigo-300' 
+                            : 'hover:bg-slate-100 text-slate-700 dark:hover:bg-[#131b2e] text-slate-300'
+                        }`}
+                        id="theme-opt-vibrant-dark"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-3.5 h-3.5 rounded-full border border-indigo-500/20 bg-slate-900" />
+                          <span>Vibrant Slate (Dark)</span>
+                        </div>
+                        {activeTheme === 'vibrant-dark' && <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setActiveTheme('midnight-obsidian');
+                          setShowThemeMenu(false);
+                        }}
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${
+                          activeTheme === 'midnight-obsidian' 
+                            ? 'bg-neutral-900 text-white border-l border-neutral-400' 
+                            : 'hover:bg-slate-100 text-slate-700 dark:hover:bg-neutral-900 text-slate-305'
+                        }`}
+                        id="theme-opt-midnight-obsidian"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-3.5 h-3.5 rounded-full border border-neutral-800 bg-black" />
+                          <span>Deep Obsidian (Ebony)</span>
+                        </div>
+                        {activeTheme === 'midnight-obsidian' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Quick Mobile Keyboard Toggle Button */}
+            <button
+              onClick={() => setShowSpecialKeys(!showSpecialKeys)}
+              className={`lg:hidden p-1.5 rounded-md border text-xs font-bold transition-all flex items-center justify-center shadow-2xs shrink-0 ${
+                showSpecialKeys
+                  ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-300 font-bold'
+                  : activeTheme === 'light'
+                  ? 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  : activeTheme === 'vibrant-dark'
+                  ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                  : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
+              }`}
+              title={showSpecialKeys ? "Ocultar teclado táctil móvil" : "Mostrar teclado táctil móvil"}
+              id="btn-toggle-special-keys-mobile"
+            >
+              <Keyboard className="h-4 w-4 shrink-0" />
+            </button>
+
+            {/* Mobile Actions Dropdown menu (MoreVertical is visible only on mobile/tablets) */}
+            <div className="relative lg:hidden" id="mobile-header-options">
+              <button
+                onClick={() => setShowMobileOptions(!showMobileOptions)}
+                className={`p-1.5 rounded-md border text-xs font-bold transition-all flex items-center justify-center shadow-2xs shrink-0 ${
+                  activeTheme === 'light'
+                    ? 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                    : activeTheme === 'vibrant-dark'
+                    ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                    : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
+                }`}
+                title="Más acciones"
+                id="btn-trigger-mobile-options"
+              >
+                <MoreVertical className="h-4 w-4 shrink-0" />
+              </button>
+
+              {showMobileOptions && (
+                <>
+                  <div 
+                    onClick={() => setShowMobileOptions(false)} 
+                    className="fixed inset-0 z-30" 
+                    id="mobile-options-backdrop" 
+                  />
+                  <div 
+                    className={`absolute right-0 mt-2 w-56 rounded-xl border p-3 shadow-xl z-40 animate-fadeIn ${
+                      activeTheme === 'light'
+                        ? 'bg-white border-slate-200 text-slate-850'
+                        : activeTheme === 'vibrant-dark'
+                        ? 'bg-slate-950 border-slate-850 text-slate-105'
+                        : 'bg-black border-neutral-850 text-neutral-100'
+                    }`}
+                    id="mobile-options-popover"
+                  >
+                    <p className={`text-[10px] font-bold uppercase tracking-widest px-1 mb-2 ${
+                      activeTheme === 'light' ? 'text-slate-400' : 'text-slate-500'
+                    }`}>
+                      Proyecto y Script
+                    </p>
+                    
+                    <div className="space-y-2 mt-1">
+                      {/* Active project and file info */}
+                      <div className={`p-2 rounded-lg text-[11px] leading-5 border text-left ${
+                        activeTheme === 'light' ? 'bg-slate-50 border-slate-100 text-slate-700' : 'bg-slate-900/60 border-slate-800/80 text-slate-300'
+                      }`}>
+                        <div className="font-semibold text-[9px] uppercase opacity-60">Proyecto Activo:</div>
+                        <div className="truncate font-bold mb-1.5">{currentProject ? currentProject.name : 'Sin Proyecto'}</div>
+                        <div className="font-semibold text-[9px] uppercase opacity-60">Script actual (.py):</div>
+                        <div className="truncate font-mono text-[11px] font-bold text-indigo-500">{currentFile ? currentFile.filename : 'sin_archivo.py'}</div>
+                      </div>
+
+                      {/* Download option */}
+                      {currentFile && (
+                        <button
+                          onClick={() => {
+                            handleDownloadFile();
+                            setShowMobileOptions(false);
+                          }}
+                          className={`w-full text-left px-2 py-1.5 rounded-md text-xs font-semibold flex items-center gap-2 transition-colors ${
+                            activeTheme === 'light' ? 'hover:bg-slate-100 text-slate-700' : 'hover:bg-slate-900 text-slate-100'
+                          }`}
+                        >
+                          <Download className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                          <span>Descargar script (.py)</span>
+                        </button>
+                      )}
+
+                      {/* Keyboard quick toggle option */}
+                      <button
+                        onClick={() => {
+                          setShowSpecialKeys(!showSpecialKeys);
+                          setShowMobileOptions(false);
+                        }}
+                        className={`w-full text-left px-2 py-1.5 rounded-md text-xs font-semibold flex items-center gap-2 transition-colors ${
+                          activeTheme === 'light' ? 'hover:bg-slate-100 text-slate-700' : 'hover:bg-slate-900 text-slate-100'
+                        }`}
+                      >
+                        <Keyboard className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                        <span>{showSpecialKeys ? 'Ocultar teclado especial' : 'Mostrar teclado especial'}</span>
+                      </button>
+
+                      {/* Switch theme directly drawer option */}
+                      <div className={`pt-2 border-t space-y-1 ${
+                        activeTheme === 'light' ? 'border-slate-100' : 'border-slate-800/80'
+                      }`}>
+                        <p className={`text-[9px] font-bold uppercase tracking-wider px-1 ${
+                          activeTheme === 'light' ? 'text-slate-400' : 'text-slate-500'
+                        }`}>
+                          Cambiar Tema:
+                        </p>
+                        <div className="grid grid-cols-3 gap-1">
+                          <button
+                            onClick={() => {
+                              setActiveTheme('light');
+                              setShowMobileOptions(false);
+                            }}
+                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
+                              activeTheme === 'light' 
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-700' 
+                                : 'bg-slate-100/50 border-transparent text-slate-500'
+                            }`}
+                            title="Claro"
+                          >
+                            Claro
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveTheme('vibrant-dark');
+                              setShowMobileOptions(false);
+                            }}
+                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
+                              activeTheme === 'vibrant-dark' 
+                                ? 'bg-indigo-950/50 border-indigo-800 text-indigo-300' 
+                                : 'bg-slate-900/40 border-transparent text-slate-400'
+                            }`}
+                            title="Pizarra"
+                          >
+                            Pizarra
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveTheme('midnight-obsidian');
+                              setShowMobileOptions(false);
+                            }}
+                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
+                              activeTheme === 'midnight-obsidian' 
+                                ? 'bg-neutral-800 border-neutral-600 text-white' 
+                                : 'bg-neutral-900/40 border-transparent text-neutral-400'
+                            }`}
+                            title="Negro"
+                          >
+                            Obsidiana
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Status Row */}
+                      <div className="flex items-center justify-between px-1 py-1 bg-emerald-50/50 dark:bg-emerald-950/20 rounded border border-emerald-100/40 mt-1">
+                        <span className="text-[10px] opacity-75 text-emerald-600 font-medium">Servicio en línea</span>
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                      </div>
+
+                      {/* Logged user Row */}
+                      <div className={`pt-2 border-t flex items-center gap-2 ${
+                        activeTheme === 'light' ? 'border-slate-100' : 'border-slate-800/80'
+                      }`}>
+                        <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-white text-[10px] shrink-0">
+                          {user.username.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 text-left">
+                          <div className="text-[10px] font-bold truncate text-slate-700 dark:text-slate-300">{user.username}</div>
+                          <div className="text-[9px] truncate opacity-50">{user.email}</div>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Desktop Only user avatar */}
+            <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 text-xs font-bold shrink-0 shadow-xs hidden md:flex">
+              {user.username.substring(0, 2).toUpperCase()}
+            </div>
+          </div>
+        </header>
+
+        {/* Special Mobile helpful touch Keys bar */}
+        {showSpecialKeys && (
+          <SpecialKeys 
+            onInsertChar={handleInsertChar} 
+            onClose={() => setShowSpecialKeys(false)} 
+          />
+        )}
+
+        {/* Center Canvas: Interactive Python Editor panel */}
+        <main className={t.editorCanvas} id="editor-wrapper-canvas">
+          {currentFile ? (
+            <div className="flex-1 flex flex-col relative h-full min-h-0">
+              {/* Saving or draft indicator states */}
+              <div className={`absolute top-2 right-4 z-10 flex items-center gap-1 ${t.indicatorBox} px-2 py-0.5 rounded text-[10px] text-slate-400 border`}>
+                {isSaving ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin text-indigo-400" />
+                    <span>Autoguardando...</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    <span>Guardado local</span>
+                  </>
+                )}
+              </div>
+
+              {/* Robust CodeMirror Editor workspace container */}
+              <div className="flex-1 min-h-0 relative select-text" id="codemirror-wrapper-layer">
+                <CodeMirror
+                  value={code}
+                  height="100%"
+                  theme={activeTheme === 'light' ? 'light' : 'dark'}
+                  extensions={[python(), EditorView.lineWrapping]}
+                  onChange={(val) => {
+                    setCode(val);
+                    // Automatic debounce-like quick save physically
+                    const timer = setTimeout(() => handleSaveFile(val), 1000);
+                    return () => clearTimeout(timer);
+                  }}
+                  onCreateEditor={(view) => {
+                    editorRef.current = view;
+                  }}
+                  className="h-full rounded-xl overflow-hidden shadow-lg border border-slate-800/80 font-mono text-[13px] sm:text-[14px]"
+                  id="react-codemirror-editor"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center" id="empty-editor-fallback">
+              <div className="h-16 w-16 bg-slate-900 rounded-full flex items-center justify-center border border-slate-800 mb-4 animate-pulse">
+                <Code2 className="h-8 w-8 text-indigo-400" />
+              </div>
+              <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-widest">Editor Vacío</h2>
+              <p className="text-xs text-slate-500 mt-1 max-w-[280px]">
+                Selecciona o crea un archivo .py en la barra lateral para empezar a programar algoritmos.
+              </p>
+            </div>
+          )}
+        </main>
+
+        {/* Floating Toggle button if console output completed and closed */}
+        {!isConsoleOpen && executionResult && (
+          <button
+            onClick={() => setIsConsoleOpen(true)}
+            className="absolute bottom-4 right-4 z-20 h-10 w-10 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border border-indigo-400/40"
+            title="Abrir terminal"
+            id="floating-btn-open-console"
+          >
+            <Terminal className="h-5 w-5" />
+          </button>
+        )}
+
+        {/* 3. Sliding lower Console Sheet panel */}
+        <ConsoleSheet
+          result={executionResult}
+          isOpen={isConsoleOpen}
+          onClose={() => setIsConsoleOpen(false)}
+          isExpanded={isConsoleExpanded}
+          onToggleExpand={() => setIsConsoleExpanded(!isConsoleExpanded)}
+        />
+      </div>
+    </div>
+  );
+}

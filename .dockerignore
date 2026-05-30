@@ -1,0 +1,12 @@
+node_modules
+.venv
+dist
+build
+.git
+.gitignore
+.env
+.env.local
+*.log
+Dockerfile
+docker-compose.yml
+README.md

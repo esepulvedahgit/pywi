@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python)",
+      "Bash(cd \"d:\\\\Proyectos_app\\\\python-web-ide\" *)"
+    ]
+  }
+}

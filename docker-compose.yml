@@ -1,0 +1,25 @@
+services:
+  web-ide:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: python-web-ide
+    ports:
+      - "0.0.0.0:3000:3000"
+    volumes:
+      # Bind mount the workspace directory for live-reloading (development)
+      - .:/app
+      # Shield container's node_modules and .venv from being overwritten by the host
+      - /app/node_modules
+      - /app/.venv
+      # Explicit bind mount for requirements.txt
+      - ./requirements.txt:/app/requirements.txt
+      # Persist user data and databases in the host's data directory
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      # Pass environment variables (or fallbacks)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - APP_URL=${APP_URL:-http://localhost:3000}
+    restart: always

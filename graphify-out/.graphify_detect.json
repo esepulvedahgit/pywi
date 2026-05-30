@@ -1,0 +1,30 @@
+{
+  "files": {
+    "code": [
+      "server.ts",
+      "vite.config.ts",
+      "src/App.tsx",
+      "src/main.tsx",
+      "src/types.ts",
+      "src/components/AuthScreen.tsx",
+      "src/components/ConsoleSheet.tsx",
+      "src/components/PackageManagerModal.tsx",
+      "src/components/Sidebar.tsx",
+      "src/components/SpecialKeys.tsx",
+      "src/data/presets.ts",
+      "data/app_data/user_default/proj_default/main.py",
+      "data/app_data/user_hdto0l16e/proj_jh0jwb2pa/main.py"
+    ],
+    "document": [
+      "docker-compose.yml",
+      "index.html",
+      "README.md",
+      "requirements.txt"
+    ],
+    "paper": [],
+    "image": [],
+    "video": []
+  },
+  "total_files": 17,
+  "total_words": 12761
+}
