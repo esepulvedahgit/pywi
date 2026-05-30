@@ -1,13 +1,75 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { exec, execSync } from 'child_process';
+import { exec, execSync, execFile } from 'child_process';
 import crypto from 'crypto';
+import os from 'os';
 import multer from 'multer';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
 const PORT = 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production';
+
+// Authentication utilities
+function generateToken(userId: string): string {
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+function verifyToken(token: string): { userId: string } | null {
+  try {
+    return jwt.verify(token, JWT_SECRET) as { userId: string };
+  } catch {
+    return null;
+  }
+}
+
+// Middleware: Require authentication
+const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token requerido' });
+  }
+
+  const payload = verifyToken(token);
+  if (!payload) {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
+  (req as any).userId = payload.userId;
+  next();
+};
+
+// Middleware: Require admin (for now, only user_default is admin)
+const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token requerido' });
+  }
+
+  const payload = verifyToken(token);
+  if (!payload || payload.userId !== 'user_default') {
+    return res.status(403).json({ error: 'Acceso denegado: se requieren permisos de administrador' });
+  }
+
+  (req as any).userId = payload.userId;
+  next();
+};
+
+// Validate package name: strict whitelist to prevent command injection
+function isValidPackageName(pkg: string): boolean {
+  if (!pkg || typeof pkg !== 'string') return false;
+  if (pkg.length > 100) return false;
+  if (pkg.startsWith('-')) return false;
+  // Allow alphanumeric, dots, dashes, underscores, and version specifiers (==, >=, <=, <, >, ~, !)
+  return /^[a-zA-Z0-9][a-zA-Z0-9._\-!~<>=]*$/.test(pkg);
+}
 
 // Root storage paths
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -55,6 +117,14 @@ const mockPackages = [
   { name: 'seaborn', version: '0.12.2' },
   { name: 'scikit-learn', version: '1.2.2' }
 ];
+
+interface RestoreJob {
+  inProgress: boolean;
+  pending: string[];
+  done: string[];
+  failed: string[];
+}
+const userRestoreJobs = new Map<string, RestoreJob>();
 
 function getVenvPythonPath(): string {
   if (fs.existsSync(VENV_DIR)) {
@@ -167,6 +237,133 @@ function setupVenv() {
 // Start setup
 setupVenv();
 
+// Metrics utilities
+interface ContainerMetrics {
+  memUsed: number;
+  memTotal: number;
+  cpuPercent: number;
+  gpuAvailable: boolean;
+  gpuPercent: number;
+  gpuMemUsed: number;
+  gpuMemTotal: number;
+}
+
+let lastCpuStat = { user: 0, nice: 0, system: 0, idle: 0, iowait: 0 };
+let lastCpuTime = Date.now();
+
+function readCgroupMemory(): { used: number; total: number } {
+  // Try cgroup v2
+  try {
+    const used = fs.readFileSync('/sys/fs/cgroup/memory.current', 'utf-8').trim();
+    const maxFile = '/sys/fs/cgroup/memory.max';
+    let total = fs.readFileSync(maxFile, 'utf-8').trim();
+
+    const usedNum = parseInt(used, 10);
+    let totalNum = parseInt(total, 10);
+
+    // If total is "max" (no limit), use os.totalmem()
+    if (isNaN(totalNum) || totalNum > 9223372036854000000) {
+      totalNum = os.totalmem();
+    }
+
+    return { used: usedNum, total: totalNum };
+  } catch (e) {}
+
+  // Try cgroup v1
+  try {
+    const used = fs.readFileSync('/sys/fs/cgroup/memory/memory.usage_in_bytes', 'utf-8').trim();
+    const total = fs.readFileSync('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'utf-8').trim();
+
+    const usedNum = parseInt(used, 10);
+    let totalNum = parseInt(total, 10);
+
+    if (isNaN(totalNum) || totalNum > 9223372036854000000) {
+      totalNum = os.totalmem();
+    }
+
+    return { used: usedNum, total: totalNum };
+  } catch (e) {}
+
+  // Fallback: os module
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  return { used: totalMem - freeMem, total: totalMem };
+}
+
+function readCgroupCpu(): number {
+  try {
+    const statContent = fs.readFileSync('/proc/stat', 'utf-8');
+    const lines = statContent.split('\n');
+    const cpuLine = lines.find(l => l.startsWith('cpu ')) || '';
+    const parts = cpuLine.split(/\s+/).slice(1, 8);
+
+    const [user, nice, system, idle, iowait, irq, softirq] = parts.map(Number);
+    const nonIdle = user + nice + system + irq + softirq;
+    const total = nonIdle + idle + iowait;
+
+    const timeDelta = Date.now() - lastCpuTime;
+    if (timeDelta < 100) return 0; // Not enough time has passed
+
+    const userDelta = user - lastCpuStat.user;
+    const niceDelta = nice - lastCpuStat.nice;
+    const systemDelta = system - lastCpuStat.system;
+    const idleDelta = idle - lastCpuStat.idle;
+    const iowaitDelta = iowait - lastCpuStat.iowait;
+
+    const nonIdleDelta = userDelta + niceDelta + systemDelta;
+    const totalDelta = nonIdleDelta + idleDelta + iowaitDelta;
+
+    const cpuPercent = totalDelta === 0 ? 0 : (nonIdleDelta / totalDelta) * 100;
+
+    lastCpuStat = { user, nice, system, idle, iowait };
+    lastCpuTime = Date.now();
+
+    return Math.min(100, cpuPercent);
+  } catch (e) {}
+
+  // Fallback: use loadavg
+  const loadAvg = os.loadavg()[0];
+  const cpuCount = os.cpus().length;
+  return Math.min(100, (loadAvg * 100) / cpuCount);
+}
+
+function readGpuMetrics(): { available: boolean; percent: number; memUsed: number; memTotal: number } {
+  try {
+    const output = execSync('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', {
+      encoding: 'utf-8',
+      timeout: 2000,
+      stdio: ['pipe', 'pipe', 'ignore']
+    });
+
+    const line = output.trim().split('\n')[0];
+    const [gpuStr, memUsedStr, memTotalStr] = line.split(',').map(s => s.trim());
+
+    const gpuPercent = parseFloat(gpuStr);
+    const memUsed = parseInt(memUsedStr, 10) * 1024 * 1024; // Convert MB to bytes
+    const memTotal = parseInt(memTotalStr, 10) * 1024 * 1024;
+
+    return { available: true, percent: gpuPercent, memUsed, memTotal };
+  } catch (e) {
+    return { available: false, percent: 0, memUsed: 0, memTotal: 0 };
+  }
+}
+
+async function getMetrics(): Promise<ContainerMetrics> {
+  const { used: memUsed, total: memTotal } = readCgroupMemory();
+  const cpuPercent = readCgroupCpu();
+  const gpu = readGpuMetrics();
+
+  return {
+    memUsed,
+    memTotal,
+    cpuPercent,
+    gpuAvailable: gpu.available,
+    gpuPercent: gpu.percent,
+    gpuMemUsed: gpu.memUsed,
+    gpuMemTotal: gpu.memTotal
+  };
+}
+
 // Multer setup for dataset and project uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -183,11 +380,28 @@ const storage = multer.diskStorage({
     cb(null, sanitized);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 30 * 1024 * 1024 } // 30 MB limit
+});
 
 // Types
+interface UserSettings {
+  indentation: 2 | 4;
+  language: 'es' | 'en';
+}
+
+interface SmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  from: string;
+  secure: boolean;
+}
+
 interface SimpleDB {
-  users: Array<{ id: string; username: string; email: string; passwordHash: string }>;
+  users: Array<{ id: string; username: string; email: string; passwordHash: string; packages?: string[]; settings?: UserSettings }>;
   projects: Array<{ id: string; userId: string; name: string; createdAt: string }>;
   files: Array<{
     id: string;
@@ -198,20 +412,23 @@ interface SimpleDB {
     size: number;
     updatedAt: string;
   }>;
+  resetTokens: Array<{ userId: string; token: string; expiresAt: string }>;
 }
 
 // Database initialization
 function readDB(): SimpleDB {
   if (!fs.existsSync(DB_FILE)) {
-    const initial: SimpleDB = { users: [], projects: [], files: [] };
+    const initial: SimpleDB = { users: [], projects: [], files: [], resetTokens: [] };
     fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2));
     return initial;
   }
   const raw = fs.readFileSync(DB_FILE, 'utf8');
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as SimpleDB;
+    if (!parsed.resetTokens) parsed.resetTokens = [];
+    return parsed;
   } catch (err) {
-    return { users: [], projects: [], files: [] };
+    return { users: [], projects: [], files: [], resetTokens: [] };
   }
 }
 
@@ -219,118 +436,25 @@ function writeDB(data: SimpleDB) {
   fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// Initialize default admin or test user if DB is empty so developers have instant access
-const db = readDB();
-if (db.users.length === 0) {
-  const passwordHash = crypto.createHash('sha256').update('python123').digest('hex');
-  const testUser = {
-    id: 'user_default',
-    username: 'Pythonista',
-    email: 'admin@ide.py',
-    passwordHash
-  };
-  db.users.push(testUser);
-  
-  // Default project
-  const firstProject = {
-    id: 'proj_default',
-    userId: 'user_default',
-    name: 'Análisis de Datos Demo',
-    createdAt: new Date().toISOString()
-  };
-  db.projects.push(firstProject);
+// SMTP Configuration
+const SMTP_CONFIG_FILE = path.join(DATA_DIR, 'smtp_config.json');
 
-  // Set up project physical files
-  const projPath = path.join(APP_DATA_DIR, 'user_default', 'proj_default');
-  if (!fs.existsSync(projPath)) {
-    fs.mkdirSync(projPath, { recursive: true });
+function readSmtpConfig(): SmtpConfig | null {
+  if (!fs.existsSync(SMTP_CONFIG_FILE)) return null;
+  const raw = fs.readFileSync(SMTP_CONFIG_FILE, 'utf8');
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return null;
   }
-
-  // Pre-populate script main.py
-  const mainPyContent = `"""
-Plataforma Web IDE para Python
-Demo: Operaciones Lógicas y Análisis de Datos
-"""
-import sys
-
-print("--- Iniciando Ejecución en IDE Web para Python ---")
-
-# 1. Ejemplo de datos (simulando un dataset)
-students_data = [
-    {"nombre": "Sofía", "edad": 21, "materia": "Machine Learning", "calificacion": 9.5},
-    {"nombre": "Lucas", "edad": 22, "materia": "Deep Learning", "calificacion": 8.8},
-    {"nombre": "Mateo", "edad": 20, "materia": "Lógica Avanzada", "calificacion": 7.2},
-    {"nombre": "Valentina", "edad": 23, "materia": "Machine Learning", "calificacion": 10.0},
-    {"nombre": "Santiago", "edad": 22, "materia": "Lógica Avanzada", "calificacion": 6.4}
-]
-
-# 2. Lógica de Filtrado y Procesamiento
-print("\\nProcesando Calificaciones Escolares:")
-aprobados = []
-suma_calificaciones = 0
-
-for s in students_data:
-    suma_calificaciones += s["calificacion"]
-    if s["calificacion"] >= 7.0:
-        aprobados.append(s["nombre"])
-        print(f"  - {s['nombre']} aprobó {s['materia']} con {s['calificacion']}")
-    else:
-        print(f"  - {s['nombre']} reprobó (Calificación: {s['calificacion']})")
-
-promedio = suma_calificaciones / len(students_data)
-print(f"\\nPromedio del grupo: {promedio:.2f}")
-print(f"Alumnos aprobados: {', '.join(aprobados)}")
-
-# 3. Lectura de Dataset CSV local (si existe)
-try:
-    with open('ventas.csv', 'r', encoding='utf-8') as f:
-        print("\\n--- Leyendo archivo ventas.csv ---")
-        lineas = f.readlines()
-        for i, linea in enumerate(lineas[:6]): # Mostrar primeras 5 filas
-            print(f"Fila {i}: {linea.strip()}")
-except FileNotFoundError:
-    print("\\n[Aviso] ventas.csv no ha sido creado o subido aún en este proyecto.")
-    print("Puedes subir un dataset o crearlo en la barra lateral.")
-
-print("\\n--- Ejecución Finalizada Exitosamente ---")
-`;
-  fs.writeFileSync(path.join(projPath, 'main.py'), mainPyContent);
-
-  // Pre-populate sales dataset
-  const ventasCsvContent = `mes,producto,ventas_unidades,total_pesos
-Enero,Notebook XPS,12,240000
-Febrero,Notebook XPS,15,300000
-Marzo,Mouse Gamer,85,42500
-Abril,Teclado Mecánico,42,63000
-Mayo,Monitor 4K,25,250000
-Junio,Notebook XPS,18,360000
-Julio,Monitor 4K,22,220000
-`;
-  fs.writeFileSync(path.join(projPath, 'ventas.csv'), ventasCsvContent);
-
-  // Add metadata for these pre-populated files to DB
-  db.files.push({
-    id: 'file_main',
-    projectId: 'proj_default',
-    filename: 'main.py',
-    filepath: path.join('user_default', 'proj_default', 'main.py'),
-    type: 'script',
-    size: Buffer.byteLength(mainPyContent),
-    updatedAt: new Date().toISOString()
-  });
-
-  db.files.push({
-    id: 'file_ventas',
-    projectId: 'proj_default',
-    filename: 'ventas.csv',
-    filepath: path.join('user_default', 'proj_default', 'ventas.csv'),
-    type: 'dataset',
-    size: Buffer.byteLength(ventasCsvContent),
-    updatedAt: new Date().toISOString()
-  });
-
-  writeDB(db);
 }
+
+function writeSmtpConfig(cfg: SmtpConfig) {
+  fs.writeFileSync(SMTP_CONFIG_FILE, JSON.stringify(cfg, null, 2));
+}
+
+// Read database (demo user initialization removed)
+const db = readDB();
 
 // Basic JSON APIs with Express
 app.use(express.json());
@@ -347,6 +471,54 @@ app.get('/api/pip/status', (req, res) => {
   });
 });
 
+// Restore user packages in background (called on login)
+function restoreUserPackages(userId: string, packages: string[]): void {
+  const job: RestoreJob = { inProgress: true, pending: [...packages], done: [], failed: [] };
+  userRestoreJobs.set(userId, job);
+
+  const installNext = () => {
+    if (job.pending.length === 0) {
+      job.inProgress = false;
+      checkInstalledPackages(); // refresh to get full version info
+      setTimeout(() => userRestoreJobs.delete(userId), 5000);
+      return;
+    }
+
+    const pkg = job.pending.shift()!;
+
+    // Validate package name before execution
+    if (!isValidPackageName(pkg)) {
+      job.failed.push(pkg);
+      installNext();
+      return;
+    }
+
+    const venvPython = getVenvPythonPath();
+    if (!venvPython) {
+      job.failed.push(pkg);
+      installNext();
+      return;
+    }
+
+    const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
+
+    execFile(pipPath, ['install', '--', pkg], { timeout: 90000 }, (error) => {
+      if (error) {
+        job.failed.push(pkg);
+      } else {
+        job.done.push(pkg);
+        // Optimistic update: add to in-memory list immediately
+        if (!installedPackagesList.find(p => p.name.toLowerCase() === pkg.toLowerCase())) {
+          installedPackagesList.push({ name: pkg, version: '' });
+        }
+      }
+      installNext();
+    });
+  };
+
+  installNext();
+}
+
 // API: Get venv installed packages
 app.get('/api/pip/packages', (req, res) => {
   res.json({
@@ -355,8 +527,33 @@ app.get('/api/pip/packages', (req, res) => {
   });
 });
 
+// API: Get env restore status
+app.get('/api/pip/restore-status', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  const job = userRestoreJobs.get(userId);
+
+  if (!job) {
+    return res.json({
+      inProgress: false,
+      pending: [],
+      done: [],
+      failed: [],
+      total: 0
+    });
+  }
+
+  res.json({
+    inProgress: job.inProgress,
+    pending: job.pending,
+    done: job.done,
+    failed: job.failed,
+    total: job.done.length + job.pending.length + job.failed.length
+  });
+});
+
 // API: Install a new package via pip
-app.post('/api/pip/install', (req, res) => {
+app.post('/api/pip/install', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
   const { packageName } = req.body;
   if (!packageName) {
     return res.status(400).json({ error: 'Nombre de paquete requerido' });
@@ -368,13 +565,38 @@ app.post('/api/pip/install', (req, res) => {
     return res.status(400).json({ error: 'Nombre de paquete inválido' });
   }
 
+  const pkgBaseName = sanitized.split(/[=<>~!]/)[0].toLowerCase();
+  const savePackageForUser = () => {
+    const db = readDB();
+    const user = db.users.find(u => u.id === userId);
+    if (user) {
+      if (!user.packages) user.packages = [];
+      if (!user.packages.includes(pkgBaseName)) {
+        user.packages.push(pkgBaseName);
+        writeDB(db);
+      }
+    }
+  };
+
+  const removePackageForUser = (userId: string, packageName: string) => {
+    const db = readDB();
+    const user = db.users.find(u => u.id === userId);
+    if (user && Array.isArray(user.packages)) {
+      user.packages = user.packages.filter(
+        p => p.toLowerCase() !== packageName.toLowerCase()
+      );
+      writeDB(db);
+    }
+  };
+
   if (!hasPython) {
     // Fallback mode simulation: wait 1.5 seconds, add package to mock list, and return success
     setTimeout(() => {
-      const exists = mockPackages.some(p => p.name.toLowerCase() === sanitized.split(/[=<>\-_]/)[0].toLowerCase());
+      const exists = mockPackages.some(p => p.name.toLowerCase() === pkgBaseName);
       if (!exists) {
         mockPackages.push({ name: sanitized, version: 'latest' });
       }
+      savePackageForUser();
       res.json({
         success: true,
         stdout: `Collecting ${sanitized}\n  Downloading ${sanitized}-latest.tar.gz (4.1 MB)\nInstalling collected packages: ${sanitized}\nSuccessfully installed ${sanitized}-latest\n`,
@@ -390,10 +612,9 @@ app.post('/api/pip/install', (req, res) => {
   }
 
   const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-  const installCmd = `"${pipPath}" install ${sanitized}`;
 
-  console.log(`Running pip installation: ${installCmd}`);
-  exec(installCmd, { timeout: 90000 }, (error, stdout, stderr) => {
+  console.log(`Running pip installation: ${pipPath} install ${sanitized}`);
+  execFile(pipPath, ['install', '--', sanitized], { timeout: 90000 }, (error, stdout, stderr) => {
     if (error) {
       console.error(`Pip install error for ${sanitized}:`, error);
       return res.status(550).json({
@@ -403,8 +624,13 @@ app.post('/api/pip/install', (req, res) => {
         stderr: stderr || ''
       });
     }
-    
-    // Refresh packages in background
+
+    // Save package for user and refresh packages in background
+    savePackageForUser();
+    // Optimistic update: add to in-memory list immediately
+    if (!installedPackagesList.find(p => p.name.toLowerCase() === pkgBaseName)) {
+      installedPackagesList.push({ name: pkgBaseName, version: '' });
+    }
     checkInstalledPackages();
 
     res.json({
@@ -416,9 +642,9 @@ app.post('/api/pip/install', (req, res) => {
 });
 
 // API: Auth registration
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
-  
+
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'Todos los campos son obligatorios' });
   }
@@ -429,12 +655,13 @@ app.post('/api/auth/register', (req, res) => {
     return res.status(400).json({ error: 'El correo electrónico ya está registrado' });
   }
 
-  const userId = 'user_' + Math.random().toString(36).substr(2, 9);
-  const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
+  try {
+    const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    const passwordHash = await bcrypt.hash(password, 10);
 
-  const newUser = { id: userId, username, email, passwordHash };
-  database.users.push(newUser);
-  writeDB(database);
+    const newUser = { id: userId, username, email, passwordHash };
+    database.users.push(newUser);
+    writeDB(database);
 
   // Auto-create a default project for the new user
   const projectId = 'proj_' + Math.random().toString(36).substr(2, 9);
@@ -470,30 +697,257 @@ print(f"La suma de {a} y {b} es {suma}")
     updatedAt: new Date().toISOString()
   });
 
-  writeDB(database);
+    writeDB(database);
 
-  res.json({ id: userId, username, email });
+    const token = generateToken(userId);
+    res.json({ id: userId, username, email, token });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error al registrar usuario' });
+  }
 });
 
 // API: Auth login
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'Credenciales inválidas' });
   }
 
+  try {
+    const database = readDB();
+    const user = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!user) {
+      return res.status(400).json({ error: 'Credenciales inválidas' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      return res.status(400).json({ error: 'Credenciales inválidas' });
+    }
+
+    const token = generateToken(user.id);
+
+    // Check for missing packages and initiate restore if needed
+    const userPackages = (user.packages ?? []).filter(isValidPackageName);
+    const installedNames = installedPackagesList.map(p => p.name.toLowerCase());
+    const missingPackages = userPackages.filter(pkg => !installedNames.includes(pkg.toLowerCase()));
+
+    if (missingPackages.length > 0) {
+      restoreUserPackages(user.id, missingPackages);
+    }
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      token,
+      restoreNeeded: missingPackages.length > 0,
+      restoreCount: missingPackages.length
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error al iniciar sesión' });
+  }
+});
+
+// API: Get user settings
+app.get('/api/users/:userId/settings', requireAuth, (req, res) => {
+  const { userId } = req.params;
+  const currentUserId = (req as any).userId;
+
+  if (currentUserId !== userId && currentUserId !== 'user_default') {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+
+  if (!user) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+
+  const settings = user.settings || { indentation: 4, language: 'es' };
+  res.json(settings);
+});
+
+// API: Update user settings
+app.put('/api/users/:userId/settings', requireAuth, (req, res) => {
+  const { userId } = req.params;
+  const currentUserId = (req as any).userId;
+  const { indentation, language } = req.body;
+
+  if (currentUserId !== userId && currentUserId !== 'user_default') {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  if (![2, 4].includes(indentation) || !['es', 'en'].includes(language)) {
+    return res.status(400).json({ error: 'Configuración inválida' });
+  }
+
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+
+  if (!user) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+
+  user.settings = { indentation, language };
+  writeDB(database);
+
+  res.json({ success: true, settings: user.settings });
+});
+
+// API: Get SMTP configuration
+app.get('/api/system/smtp', requireAdmin, (req, res) => {
+  const config = readSmtpConfig();
+
+  if (!config) {
+    return res.json({ host: '', port: 587, user: '', password: '', from: '', secure: false });
+  }
+
+  res.json({
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: config.password ? '••••••' : '',
+    from: config.from,
+    secure: config.secure
+  });
+});
+
+// API: Update SMTP configuration
+app.put('/api/system/smtp', requireAdmin, (req, res) => {
+  const { host, port, user, password, from, secure } = req.body;
+
+  if (!host || !user || !from || port < 1 || port > 65535) {
+    return res.status(400).json({ error: 'Configuración SMTP inválida' });
+  }
+
+  let config = readSmtpConfig() || { host: '', port: 587, user: '', password: '', from: '', secure: false };
+  config.host = host;
+  config.port = port;
+  config.user = user;
+  config.from = from;
+  config.secure = !!secure;
+
+  if (password && password !== '••••••') {
+    config.password = password;
+  }
+
+  writeSmtpConfig(config);
+  res.json({ success: true });
+});
+
+// API: Test SMTP connection
+app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
+  const config = readSmtpConfig();
+
+  if (!config) {
+    return res.status(400).json({ error: 'SMTP no configurado' });
+  }
+
+  try {
+    const nodemailer = await import('nodemailer');
+    const transporter = nodemailer.default.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: {
+        user: config.user,
+        pass: config.password
+      }
+    });
+
+    await transporter.verify();
+    res.json({ success: true, message: 'Conexión SMTP verificada' });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error verificando SMTP' });
+  }
+});
+
+// API: Forgot password
+app.post('/api/auth/forgot-password', (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ error: 'El correo es obligatorio' });
+  }
+
   const database = readDB();
   const user = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+
+  if (user) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    database.resetTokens.push({ userId: user.id, token, expiresAt });
+    writeDB(database);
+
+    const config = readSmtpConfig();
+    if (config) {
+      (async () => {
+        try {
+          const nodemailer = await import('nodemailer');
+          const transporter = nodemailer.default.createTransport({
+            host: config.host,
+            port: config.port,
+            secure: config.secure,
+            auth: { user: config.user, pass: config.password }
+          });
+
+          const resetUrl = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password?token=${token}`;
+          await transporter.sendMail({
+            from: config.from,
+            to: email,
+            subject: 'Restablecer contraseña - Python Web IDE',
+            html: `<p>Haz clic en el enlace para restablecer tu contraseña:</p><a href="${resetUrl}">${resetUrl}</a><p>Este enlace expira en 1 hora.</p>`
+          });
+        } catch (err) {
+          console.warn('Error enviando email de recuperación:', err);
+        }
+      })();
+    }
+  }
+
+  res.status(200).json({ success: true });
+});
+
+// API: Reset password
+app.post('/api/auth/reset-password', (req, res) => {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token y contraseña requeridos' });
+  }
+
+  const database = readDB();
+  const resetToken = database.resetTokens.find(t => t.token === token);
+
+  if (!resetToken || new Date(resetToken.expiresAt) < new Date()) {
+    return res.status(400).json({ error: 'Token inválido o expirado' });
+  }
+
+  const user = database.users.find(u => u.id === resetToken.userId);
   if (!user) {
-    return res.status(400).json({ error: 'El usuario no existe' });
+    return res.status(400).json({ error: 'Usuario no encontrado' });
   }
 
-  const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
-  if (user.passwordHash !== passwordHash) {
-    return res.status(400).json({ error: 'Contraseña incorrecta' });
-  }
+  const passwordHash = bcrypt.hashSync(newPassword, 10);
+  user.passwordHash = passwordHash;
 
-  res.json({ id: user.id, username: user.username, email: user.email });
+  database.resetTokens = database.resetTokens.filter(t => t.token !== token);
+  writeDB(database);
+
+  res.json({ success: true, message: 'Contraseña restablecida' });
+});
+
+// API: Get container metrics (CPU, RAM, GPU)
+app.get('/api/metrics', async (req, res) => {
+  try {
+    const metrics = await getMetrics();
+    res.json(metrics);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error reading metrics' });
+  }
 });
 
 // API: Get projects list for a user
@@ -531,7 +985,7 @@ app.post('/api/users/:userId/projects', (req, res) => {
 
   // Prepopulate a script
   const sampleCode = `print("Proyecto '${name}' inicializado.")
-# Puedes subir datasets (.csv, .txt) e importarlos aquí.
+# Puedes subir datasets (.csv, .txt, .xlsx, .xls, .json, .parquet, .log) e importarlos aquí.
 `;
   const defaultFilename = 'main.py';
   fs.writeFileSync(path.join(projPath, defaultFilename), sampleCode);
@@ -589,8 +1043,10 @@ app.post('/api/projects/:projectId/files', (req, res) => {
   }
 
   // Validate filename is acceptable
-  if (!filename.endsWith('.py') && !filename.endsWith('.csv') && !filename.endsWith('.txt')) {
-    return res.status(400).json({ error: 'Extensión de archivo inválida. Permitido: .py, .csv, .txt' });
+  const validExtensions = ['.py', '.csv', '.txt', '.xlsx', '.xls', '.json', '.parquet', '.log'];
+  const isValidExt = validExtensions.some(ext => filename.endsWith(ext));
+  if (!isValidExt) {
+    return res.status(400).json({ error: 'Extensión de archivo inválida. Permitido: .py, .csv, .txt, .xlsx, .xls, .json, .parquet, .log' });
   }
 
   const database = readDB();
@@ -894,6 +1350,10 @@ app.post('/api/projects/:projectId/files/:fileId/run', (req, res) => {
 const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
+  // Serve static files from public directory
+  const publicPath = path.join(process.cwd(), 'public');
+  app.use(express.static(publicPath));
+
   if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
