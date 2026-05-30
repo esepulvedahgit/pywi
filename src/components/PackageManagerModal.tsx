@@ -176,9 +176,59 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
     btnSecondary: isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-800 hover:bg-slate-700 text-slate-250'
   };
 
-  const filteredPackages = packages.filter(p => 
+  const filteredPackages = packages.filter(p =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleUninstallPackages = async () => {
+    // TODO: Implement uninstall logic in Task 7
+    // For now, this will be called when user confirms deletion
+    console.log('Uninstalling packages:', Array.from(selectedPackages));
+  };
+
+  const UninstallConfirmModal = () => {
+    if (!showUninstallConfirm) return null;
+
+    const selectedList = Array.from(selectedPackages).join(', ');
+
+    return (
+      <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4" onClick={() => setShowUninstallConfirm(false)}>
+        <div
+          className={`p-6 rounded-2xl shadow-2xl max-w-md w-full ${
+            isLight ? 'bg-white text-slate-800' : isVibrant ? 'bg-slate-900 text-slate-200' : 'bg-neutral-950 text-neutral-200'
+          }`}
+          onClick={e => e.stopPropagation()}
+        >
+          <h3 className="text-base font-bold mb-3">Confirmar eliminación</h3>
+          <p className="text-xs mb-4 leading-relaxed text-slate-500 dark:text-slate-400">
+            ¿Desinstalar {selectedPackages.size} librería{selectedPackages.size > 1 ? 's' : ''}? Se eliminarán de tu entorno y <strong>no se restaurarán</strong> en próximos logins.
+          </p>
+          <p className="text-xs mb-4 p-3 rounded-lg bg-slate-100 dark:bg-slate-800 font-mono break-words">
+            {selectedList}
+          </p>
+          <div className="flex gap-3 justify-end">
+            <button
+              onClick={() => setShowUninstallConfirm(false)}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${
+                isLight ? 'bg-slate-200 hover:bg-slate-300 text-slate-800' : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+              }`}
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                setShowUninstallConfirm(false);
+                handleUninstallPackages();
+              }}
+              className="px-4 py-2 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition-colors"
+            >
+              Eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className={c.overlay} id="package-manager-overlay-container" onClick={onClose}>
@@ -460,6 +510,7 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
         </div>
 
       </div>
+      <UninstallConfirmModal />
     </div>
   );
 }
