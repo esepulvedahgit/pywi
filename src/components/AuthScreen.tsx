@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Terminal, Shield, LogIn, UserPlus } from 'lucide-react';
+import { Shield, LogIn, UserPlus } from 'lucide-react';
 import { User } from '../types';
 
 interface AuthScreenProps {
@@ -31,6 +31,9 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
         throw new Error(data.error || 'Error al iniciar sesión');
       }
 
+      if (data.token) {
+        localStorage.setItem('py_ide_token', data.token);
+      }
       onLoginSuccess(data);
     } catch (err: any) {
       setError(err.message || 'Error de conexión');
@@ -56,32 +59,12 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
         throw new Error(data.error || 'Error al registrarse');
       }
 
+      if (data.token) {
+        localStorage.setItem('py_ide_token', data.token);
+      }
       onLoginSuccess(data);
     } catch (err: any) {
       setError(err.message || 'Error de conexión');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleInstantDemo = async () => {
-    setError('');
-    setLoading(true);
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'admin@ide.py', password: 'python123' })
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Error al conectar demo');
-      }
-
-      onLoginSuccess(data);
-    } catch (err: any) {
-      setError('No se pudo acceder al usuario de prueba. Intenta registrar uno nuevo.');
     } finally {
       setLoading(false);
     }
@@ -91,9 +74,11 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
     <div className="min-h-screen bg-[#f8fafc] flex flex-col justify-center py-12 px-6 lg:px-8 font-sans" id="auth-screen-container">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center" id="logo-icon">
-          <div className="h-14 w-14 rounded-xl bg-indigo-600 flex items-center justify-center shadow-md shadow-indigo-600/25">
-            <Terminal className="h-8 w-8 text-white" />
-          </div>
+          <img
+            src="/images/logo_ico.png"
+            alt="PyCloud IDE Logo"
+            className="h-14 w-14 rounded-xl shadow-md shadow-indigo-600/25"
+          />
         </div>
         <h2 className="mt-5 text-center text-2xl font-bold tracking-tight text-slate-800">
           PyCloud Web IDE
@@ -117,7 +102,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
               onClick={() => { setIsRegistering(false); setError(''); }}
               className={`flex-1 pb-3 text-center font-bold text-xs uppercase tracking-wider transition-colors border-b-2 ${
                 !isRegistering
-                  ? 'border-indigo-650 text-indigo-600'
+                  ? 'border-indigo-700 text-indigo-600'
                   : 'border-transparent text-slate-400 hover:text-slate-600'
               }`}
               id="tab-login"
@@ -128,7 +113,7 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
               onClick={() => { setIsRegistering(true); setError(''); }}
               className={`flex-1 pb-3 text-center font-bold text-xs uppercase tracking-wider transition-colors border-b-2 ${
                 isRegistering
-                  ? 'border-indigo-650 text-indigo-600'
+                  ? 'border-indigo-700 text-indigo-600'
                   : 'border-transparent text-slate-400 hover:text-slate-600'
               }`}
               id="tab-register"
@@ -188,11 +173,14 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full mt-6 flex justify-center items-center gap-2 py-2.5 px-4 rounded-lg shadow-xs text-xs uppercase tracking-wider font-bold text-white bg-indigo-650 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 transition-colors"
+              className="w-full mt-6 flex justify-center items-center gap-2 py-2.5 px-4 rounded-lg shadow-xs text-xs uppercase tracking-wider font-bold text-white bg-indigo-700 hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 disabled:opacity-50 transition-colors"
               id="auth-submit-btn"
             >
               {loading ? (
-                <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <>
+                  <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Cargando...
+                </>
               ) : isRegistering ? (
                 <>
                   <UserPlus className="h-4 w-4" /> Registrarse e Iniciar
@@ -204,24 +192,6 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
               )}
             </button>
           </form>
-
-          <div className="relative my-6" id="divider-auth">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200"></div>
-            </div>
-            <div className="relative flex justify-center text-[10px] uppercase tracking-wider font-bold text-slate-400">
-              <span className="bg-white px-2">Autenticación Rápida</span>
-            </div>
-          </div>
-
-          <button
-            onClick={handleInstantDemo}
-            disabled={loading}
-            className="w-full flex justify-center items-center gap-1.5 py-2.5 px-4 border border-slate-200 rounded-lg shadow-2xs text-xs font-bold text-slate-600 bg-slate-50 hover:bg-slate-100 transition-colors"
-            id="demo-user-btn"
-          >
-            Utilizar Usuario Demo (admin@ide.py)
-          </button>
         </div>
       </div>
     </div>

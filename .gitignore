@@ -1,9 +1,53 @@
+# Node.js / npm
 node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Build outputs
 build/
 dist/
 coverage/
-.DS_Store
-*.log
+.nyc_output/
+
+# Environment variables
 .env*
 !.env.example
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+ENV/
+env/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.coverage
+
+# Runtime data (user data - should not be versioned)
+data/
+db.json
+
+# OS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+ehthumbs.db
+
+# Line endings
 * text=auto eol=lf

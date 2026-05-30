@@ -1,7 +1,80 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2 } from 'lucide-react';
+import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight } from 'lucide-react';
 import { ExecutionResult } from '../types';
+
+interface ParsedPythonError {
+  errorType: string;
+  errorMessage: string;
+  filename: string;
+  lineNumber: string;
+  codeSnippet: string;
+  isTraceback: boolean;
+}
+
+function parsePythonError(stderr: string): ParsedPythonError | null {
+  if (!stderr || !stderr.trim()) return null;
+
+  const lines = stderr.split('\n');
+  const tracebackHeaderIdx = lines.findIndex(l =>
+    /^Traceback \(most recent call last\):/.test(l.trim())
+  );
+
+  const errorLineRegex = /^([A-Z][a-zA-Z]*(?:Error|Warning|Exception|Interrupt|Fault))(:\s*(.*))?$/;
+  let errorLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (errorLineRegex.test(lines[i].trim())) {
+      errorLineIdx = i;
+      break;
+    }
+  }
+
+  if (errorLineIdx === -1) {
+    return {
+      errorType: 'Error',
+      errorMessage: stderr.trim(),
+      filename: '',
+      lineNumber: '',
+      codeSnippet: '',
+      isTraceback: false,
+    };
+  }
+
+  const errorMatch = lines[errorLineIdx].trim().match(errorLineRegex)!;
+  const errorType = errorMatch[1];
+  const errorMessage = errorMatch[3]?.trim() ?? '';
+
+  const fileLineRegex = /^\s*File "([^"]+)",\s*line\s*(\d+)/;
+  let filename = '';
+  let lineNumber = '';
+  let codeSnippet = '';
+
+  for (let i = errorLineIdx - 1; i >= 0; i--) {
+    const frameMatch = lines[i].match(fileLineRegex);
+    if (frameMatch) {
+      const fullPath = frameMatch[1];
+      filename = fullPath.split('/').pop() ?? fullPath.split('\\').pop() ?? fullPath;
+      lineNumber = frameMatch[2];
+
+      if (i + 1 < errorLineIdx) {
+        const nextLine = lines[i + 1];
+        if (nextLine && !fileLineRegex.test(nextLine) && !/^\s*\^/.test(nextLine)) {
+          codeSnippet = nextLine;
+        }
+      }
+      break;
+    }
+  }
+
+  return {
+    errorType,
+    errorMessage,
+    filename,
+    lineNumber,
+    codeSnippet,
+    isTraceback: tracebackHeaderIdx !== -1,
+  };
+}
 
 interface ConsoleSheetProps {
   result: ExecutionResult | null;
@@ -18,22 +91,54 @@ export default function ConsoleSheet({
   isExpanded,
   onToggleExpand
 }: ConsoleSheetProps) {
+  const [showRawTrace, setShowRawTrace] = useState(false);
+  const [customHeight, setCustomHeight] = useState<number | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const parsedError = result && !result.success && result.stderr
+    ? parsePythonError(result.stderr)
+    : null;
+
+  const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = panelRef.current?.offsetHeight ?? 300;
+
+    const onMove = (ev: PointerEvent) => {
+      const delta = startY - ev.clientY;
+      const newH = Math.max(80, Math.min(window.innerHeight * 0.95, startHeight + delta));
+      setCustomHeight(newH);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+
   if (!isOpen) return null;
 
   return (
     <AnimatePresence>
       <motion.div
+        ref={panelRef}
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+        style={customHeight ? { height: `${customHeight}px` } : undefined}
         className={`fixed bottom-0 left-0 right-0 z-40 bg-slate-950 border-t border-slate-700/80 shadow-2xl flex flex-col font-sans select-none ${
-          isExpanded ? 'h-[90vh]' : 'h-[40vh] sm:h-[45vh]'
+          !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[40vh] sm:h-[45vh]') : ''
         }`}
         id="console-bottom-sheet"
       >
         {/* Resize/Drag upper notch / handle */}
-        <div className="w-full h-1 bg-slate-800 flex items-center justify-center cursor-row-resize hover:bg-slate-700 select-none">
+        <div
+          onPointerDown={handleResizeStart}
+          className="w-full h-1 bg-slate-800 flex items-center justify-center cursor-row-resize hover:bg-slate-700 select-none active:bg-slate-600"
+        >
           <div className="w-12 h-1 bg-slate-600 rounded-full"></div>
         </div>
 
@@ -68,7 +173,10 @@ export default function ConsoleSheet({
             )}
 
             <button
-              onClick={onToggleExpand}
+              onClick={() => {
+                setCustomHeight(null);
+                onToggleExpand();
+              }}
               className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors"
               title={isExpanded ? 'Restaurar pantalla' : 'Maximizar pantalla'}
               id="btn-toggle-expand-console"
@@ -92,15 +200,69 @@ export default function ConsoleSheet({
           {result ? (
             <div className="space-y-4">
               {/* Warnings or Error details */}
-              {!result.success && result.stderr && (
-                <div className="bg-red-950/30 border-l-4 border-red-500 p-3 text-red-200 text-xs rounded-r-md">
-                  <div className="flex items-center gap-1.5 font-bold mb-1 ml-0.5">
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-400" />
-                    <span>Stack Trace / Error de Python</span>
+              {parsedError && (
+                <div className="bg-red-950/30 border-l-4 border-red-500 rounded-r-md overflow-hidden">
+                  {/* Header: error type badge + location + message */}
+                  <div className="px-3 pt-3 pb-2 flex items-start gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-mono select-text">
+                          {parsedError.errorType}
+                        </span>
+                        {parsedError.filename && parsedError.lineNumber && (
+                          <span className="text-[10px] text-slate-400 font-mono select-text">
+                            {parsedError.filename}:{parsedError.lineNumber}
+                          </span>
+                        )}
+                      </div>
+                      {parsedError.errorMessage && (
+                        <p className="mt-1.5 text-red-200 text-[11px] leading-snug font-mono select-text">
+                          {parsedError.errorMessage}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <pre className="whitespace-pre-wrap ml-1 text-[11px] opacity-90 font-mono select-text">
-                    {result.stderr}
-                  </pre>
+
+                  {/* Offending code snippet */}
+                  {parsedError.codeSnippet && (
+                    <div className="mx-3 mb-2 bg-slate-900/60 border border-red-500/20 rounded px-3 py-2">
+                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1 select-none">
+                        Línea {parsedError.lineNumber}
+                      </div>
+                      <pre className="text-[11px] font-mono text-amber-300 whitespace-pre-wrap select-text">
+                        {parsedError.codeSnippet}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Collapsible raw traceback */}
+                  {parsedError.isTraceback && (
+                    <div className="border-t border-red-500/20 mt-1">
+                      <button
+                        onClick={() => setShowRawTrace(prev => !prev)}
+                        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 hover:bg-red-950/20 transition-colors select-none font-mono"
+                      >
+                        {showRawTrace
+                          ? <ChevronDown className="h-3 w-3 shrink-0" />
+                          : <ChevronRight className="h-3 w-3 shrink-0" />
+                        }
+                        <span>{showRawTrace ? 'Ocultar' : 'Ver'} traceback completo</span>
+                      </button>
+                      {showRawTrace && (
+                        <pre className="px-3 pb-3 whitespace-pre-wrap text-[10px] font-mono text-slate-400 select-text opacity-80">
+                          {result!.stderr}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Non-traceback fallback */}
+                  {!parsedError.isTraceback && (
+                    <pre className="px-3 pb-3 whitespace-pre-wrap text-[11px] font-mono text-red-200 select-text opacity-90">
+                      {result!.stderr}
+                    </pre>
+                  )}
                 </div>
               )}
 
