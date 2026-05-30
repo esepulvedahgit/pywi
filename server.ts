@@ -641,6 +641,66 @@ app.post('/api/pip/install', requireAuth, (req, res) => {
   });
 });
 
+// API: Uninstall one or more packages via pip
+app.post('/api/pip/uninstall', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  const { packageNames } = req.body;
+
+  if (!Array.isArray(packageNames) || packageNames.length === 0) {
+    return res.status(400).json({ success: false, error: 'packageNames must be a non-empty array' });
+  }
+
+  if (packageNames.length > 20) {
+    return res.status(400).json({ success: false, error: 'Maximum 20 packages per request' });
+  }
+
+  const removed: string[] = [];
+  const failed: string[] = [];
+
+  const uninstallNext = (index: number) => {
+    if (index >= packageNames.length) {
+      // All done
+      res.json({ success: removed.length > 0, removed, failed });
+      return;
+    }
+
+    const pkgName = packageNames[index].trim().toLowerCase();
+    if (!pkgName) {
+      uninstallNext(index + 1);
+      return;
+    }
+
+    if (hasPython) {
+      const pipPath = getVenvPythonPath().replace('python', 'pip');
+      exec(`"${pipPath}" uninstall -y "${pkgName}"`, (err) => {
+        if (!err) {
+          removed.push(pkgName);
+          removePackageForUser(userId, pkgName);
+          installedPackagesList = installedPackagesList.filter(
+            p => p.name.toLowerCase() !== pkgName
+          );
+        } else {
+          failed.push(pkgName);
+        }
+        uninstallNext(index + 1);
+      });
+    } else {
+      // Mock mode: just remove from in-memory list and db
+      const found = mockPackages.find(p => p.name.toLowerCase() === pkgName);
+      if (found) {
+        mockPackages.splice(mockPackages.indexOf(found), 1);
+        removed.push(pkgName);
+        removePackageForUser(userId, pkgName);
+      } else {
+        failed.push(pkgName);
+      }
+      uninstallNext(index + 1);
+    }
+  };
+
+  uninstallNext(0);
+});
+
 // API: Auth registration
 app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
