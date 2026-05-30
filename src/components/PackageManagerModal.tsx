@@ -38,6 +38,8 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
   const [searchQuery, setSearchQuery] = useState('');
   const [installInput, setInstallInput] = useState('');
   const [isInstalling, setIsInstalling] = useState(false);
+  const [isUninstalling, setIsUninstalling] = useState(false);
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [installOutput, setInstallOutput] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -289,6 +291,28 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
                   <>
                     <Plus className="h-3.5 w-3.5" />
                     <span>Instalar</span>
+                  </>
+                )}
+              </button>
+              <button
+                disabled={selectedPackages.size === 0 || isUninstalling || isInstalling}
+                onClick={() => setShowUninstallConfirm(true)}
+                className={`px-4 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shrink-0 ${
+                  selectedPackages.size === 0 || isUninstalling || isInstalling
+                    ? 'bg-slate-250 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                    : 'bg-red-600 hover:bg-red-700 text-white'
+                }`}
+                id="btn-uninstall-packages"
+              >
+                {isUninstalling ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Desinstalando...</span>
+                  </>
+                ) : (
+                  <>
+                    <X className="h-3.5 w-3.5" />
+                    <span>Eliminar ({selectedPackages.size})</span>
                   </>
                 )}
               </button>
