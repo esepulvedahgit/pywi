@@ -1,22 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Package, 
-  Search, 
-  X, 
-  RefreshCw, 
-  Plus, 
-  Check, 
+import {
+  Package,
+  Search,
+  X,
+  RefreshCw,
+  Plus,
+  Check,
   AlertTriangle,
   Terminal,
   Layers,
   Sparkles,
-  Info
+  Info,
+  ArrowUpCircle
 } from 'lucide-react';
+import { PackageUpdateState } from '../types';
 
 interface PackageManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   activeTheme?: 'light' | 'vibrant-dark' | 'midnight-obsidian';
+  packageUpdates?: PackageUpdateState;
+  onDismissUpdates?: () => void;
+  onUpdatesChanged?: () => void;
 }
 
 interface VenvStatus {
@@ -32,7 +37,14 @@ interface PythonLib {
   version: string;
 }
 
-export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'light' }: PackageManagerModalProps) {
+export default function PackageManagerModal({
+  isOpen,
+  onClose,
+  activeTheme = 'light',
+  packageUpdates,
+  onDismissUpdates,
+  onUpdatesChanged
+}: PackageManagerModalProps) {
   const [status, setStatus] = useState<VenvStatus | null>(null);
   const [packages, setPackages] = useState<PythonLib[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -49,6 +61,10 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
   const [installError, setInstallError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedPackages, setSelectedPackages] = useState<Set<string>>(new Set());
+  const [updatingPackage, setUpdatingPackage] = useState<string | null>(null);
+  const [updateOutput, setUpdateOutput] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
 
   // Common packages suggestion catalog
   const popularPackages = [
@@ -243,6 +259,70 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
     }
   };
 
+  const handleUpdatePackage = async (packageName: string) => {
+    if (updatingPackage) return;
+    setUpdatingPackage(packageName);
+    setUpdateOutput(null);
+    setUpdateError(null);
+
+    try {
+      const token = localStorage.getItem('py_ide_token');
+      const res = await fetch('/api/pip/update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ packageName })
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setUpdateOutput(`${packageName} actualizado correctamente.`);
+        onUpdatesChanged?.();
+        await fetchStatusAndPackages();
+      } else {
+        setUpdateError(data.error || data.stderr || 'Error al actualizar el paquete.');
+      }
+    } catch (err: any) {
+      setUpdateError(err.message || 'Error de conexión.');
+    } finally {
+      setUpdatingPackage(null);
+    }
+  };
+
+  const handleCheckUpdates = async () => {
+    if (isCheckingUpdates) return;
+    setIsCheckingUpdates(true);
+    try {
+      const token = localStorage.getItem('py_ide_token');
+      await fetch('/api/pip/check-updates', {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const res2 = await fetch('/api/pip/updates', {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
+          const data2 = await res2.json();
+          if (!data2.isChecking || attempts >= 10) {
+            clearInterval(poll);
+            setIsCheckingUpdates(false);
+            onUpdatesChanged?.();
+          }
+        } catch {
+          clearInterval(poll);
+          setIsCheckingUpdates(false);
+        }
+      }, 3000);
+    } catch {
+      setIsCheckingUpdates(false);
+    }
+  };
+
   const UninstallConfirmModal = () => {
     if (!showUninstallConfirm) return null;
 
@@ -394,17 +474,95 @@ export default function PackageManagerModal({ isOpen, onClose, activeTheme = 'li
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0 md:self-center">
+              <div className="flex items-center gap-2 shrink-0 md:self-center flex-wrap justify-end">
                 <div className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${c.statusInstalledBg}`}>
                   Librerías: {status?.installingBase ? 'Instalando...' : status?.installedCount || 0}
                 </div>
-                <button 
+                {status?.hasPython && (
+                  <button
+                    onClick={handleCheckUpdates}
+                    disabled={isCheckingUpdates}
+                    title="Buscar actualizaciones de paquetes"
+                    className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 ${
+                      isCheckingUpdates
+                        ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                        : isLight
+                        ? 'bg-amber-100 hover:bg-amber-200 text-amber-700'
+                        : 'bg-amber-950/30 hover:bg-amber-950/50 text-amber-400'
+                    }`}
+                  >
+                    {isCheckingUpdates
+                      ? <><RefreshCw className="h-3 w-3 animate-spin" /> Verificando...</>
+                      : <><ArrowUpCircle className="h-3 w-3" /> Buscar act.</>
+                    }
+                  </button>
+                )}
+                <button
                   onClick={fetchStatusAndPackages}
                   title="Refrescar estado de librerías"
                   className="p-1.5 hover:bg-indigo-350/15 rounded-md transition-colors"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Package Updates Section */}
+          {packageUpdates && !packageUpdates.dismissed && packageUpdates.outdated.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                  <ArrowUpCircle className="h-4 w-4" />
+                  Actualizaciones disponibles ({packageUpdates.outdated.length})
+                </h3>
+                <button
+                  onClick={onDismissUpdates}
+                  className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  Descartar
+                </button>
+              </div>
+
+              {(updateOutput || updateError) && (
+                <div className={`p-2.5 rounded-lg font-mono text-[11px] ${c.terminal}`}>
+                  {updateError && <span className="text-rose-400">{updateError}</span>}
+                  {updateOutput && <span className="text-emerald-400">{updateOutput}</span>}
+                </div>
+              )}
+
+              <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                {packageUpdates.outdated.map(pkg => (
+                  <div
+                    key={pkg.name}
+                    className={`p-3 rounded-lg flex items-center gap-3 transition-all ${c.cardItem}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold truncate">{pkg.name}</p>
+                      <p className="text-[10px] font-mono text-slate-500">
+                        {pkg.version}
+                        <span className="mx-1 text-amber-500">→</span>
+                        <span className="text-emerald-500 font-bold">{pkg.latest_version}</span>
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleUpdatePackage(pkg.name)}
+                      disabled={!!updatingPackage || isInstalling}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all shrink-0 flex items-center gap-1 ${
+                        updatingPackage === pkg.name
+                          ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
+                          : !!updatingPackage || isInstalling
+                          ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                          : 'bg-amber-500 hover:bg-amber-600 text-white'
+                      }`}
+                    >
+                      {updatingPackage === pkg.name
+                        ? <><RefreshCw className="h-3 w-3 animate-spin" /> Actualizando...</>
+                        : <><ArrowUpCircle className="h-3 w-3" /> Actualizar</>
+                      }
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           )}

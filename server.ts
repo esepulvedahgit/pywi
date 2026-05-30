@@ -125,6 +125,7 @@ interface RestoreJob {
   failed: string[];
 }
 const userRestoreJobs = new Map<string, RestoreJob>();
+const userUpdateCheckJobs = new Map<string, boolean>();
 
 function getVenvPythonPath(): string {
   if (fs.existsSync(VENV_DIR)) {
@@ -168,6 +169,29 @@ function checkInstalledPackages() {
     } catch (e) {
       console.warn('Failed to parse json pip list output.');
     }
+  });
+}
+
+function checkPackageUpdates(userId: string): void {
+  if (userUpdateCheckJobs.get(userId)) return;
+  const venvPython = getVenvPythonPath();
+  if (!venvPython) return;
+
+  userUpdateCheckJobs.set(userId, true);
+  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
+
+  execFile(pipPath, ['list', '--outdated', '--format=json'], { timeout: 60000 }, (err, stdout) => {
+    userUpdateCheckJobs.delete(userId);
+    if (err) return;
+    try {
+      const outdated = JSON.parse(stdout) as Array<{ name: string; version: string; latest_version: string }>;
+      const db = readDB();
+      const user = db.users.find(u => u.id === userId);
+      if (user) {
+        user.packageUpdates = { outdated, lastChecked: new Date().toISOString() };
+        writeDB(db);
+      }
+    } catch (e) { /* silent parse failure */ }
   });
 }
 
@@ -401,7 +425,18 @@ interface SmtpConfig {
 }
 
 interface SimpleDB {
-  users: Array<{ id: string; username: string; email: string; passwordHash: string; packages?: string[]; settings?: UserSettings }>;
+  users: Array<{
+    id: string;
+    username: string;
+    email: string;
+    passwordHash: string;
+    packages?: string[];
+    settings?: UserSettings;
+    packageUpdates?: {
+      outdated: Array<{ name: string; version: string; latest_version: string }>;
+      lastChecked: string | null;
+    };
+  }>;
   projects: Array<{ id: string; userId: string; name: string; createdAt: string }>;
   files: Array<{
     id: string;
@@ -525,6 +560,32 @@ app.get('/api/pip/packages', (req, res) => {
     success: true,
     packages: hasPython ? installedPackagesList : mockPackages
   });
+});
+
+// API: Get available package updates for the current user
+app.get('/api/pip/updates', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  res.json({
+    success: true,
+    outdated: user?.packageUpdates?.outdated ?? [],
+    lastChecked: user?.packageUpdates?.lastChecked ?? null,
+    isChecking: userUpdateCheckJobs.get(userId) ?? false
+  });
+});
+
+// API: Trigger manual update check
+app.post('/api/pip/check-updates', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  if (!hasPython || !venvStatus.created) {
+    return res.status(400).json({ success: false, error: 'Python o venv no disponible' });
+  }
+  if (userUpdateCheckJobs.get(userId)) {
+    return res.json({ success: true, message: 'Verificación ya en progreso' });
+  }
+  setImmediate(() => checkPackageUpdates(userId));
+  res.json({ success: true, message: 'Verificación iniciada en segundo plano' });
 });
 
 // API: Get env restore status
@@ -708,6 +769,48 @@ app.post('/api/pip/uninstall', requireAuth, (req, res) => {
   uninstallNext(0);
 });
 
+// API: Update a package to its latest version
+app.post('/api/pip/update', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  const { packageName } = req.body;
+
+  if (!packageName || !isValidPackageName(packageName.trim())) {
+    return res.status(400).json({ success: false, error: 'Nombre de paquete inválido' });
+  }
+
+  const sanitized = packageName.trim().toLowerCase();
+
+  if (!hasPython) {
+    return res.status(400).json({ success: false, error: 'Python no disponible en este entorno' });
+  }
+
+  const venvPython = getVenvPythonPath();
+  if (!venvPython) {
+    return res.status(500).json({ success: false, error: 'Entorno virtual no configurado' });
+  }
+
+  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
+
+  execFile(pipPath, ['install', '--upgrade', '--', sanitized], { timeout: 90000 }, (error, stdout, stderr) => {
+    if (error) {
+      return res.status(550).json({ success: false, error: error.message, stdout: stdout || '', stderr: stderr || '' });
+    }
+
+    // Remove this package from the outdated list in db.json
+    const db = readDB();
+    const user = db.users.find(u => u.id === userId);
+    if (user?.packageUpdates) {
+      user.packageUpdates.outdated = user.packageUpdates.outdated.filter(
+        p => p.name.toLowerCase() !== sanitized
+      );
+      writeDB(db);
+    }
+
+    checkInstalledPackages();
+    res.json({ success: true, stdout: stdout || '', stderr: stderr || '' });
+  });
+});
+
 // API: Auth registration
 app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
@@ -801,6 +904,14 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (missingPackages.length > 0) {
       restoreUserPackages(user.id, missingPackages);
+    }
+
+    // Trigger daily package update check in background
+    const lastChecked = user.packageUpdates?.lastChecked;
+    const TWENTY_THREE_HOURS = 23 * 60 * 60 * 1000;
+    if (hasPython && venvStatus.created && !venvStatus.installingBase &&
+        (!lastChecked || Date.now() - new Date(lastChecked).getTime() > TWENTY_THREE_HOURS)) {
+      setImmediate(() => checkPackageUpdates(user.id));
     }
 
     res.json({

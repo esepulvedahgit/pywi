@@ -1,7 +1,13 @@
+export interface UserSettings {
+  indentation: 2 | 4;
+  language: 'es' | 'en';
+}
+
 export interface User {
   id: string;
   username: string;
   email: string;
+  settings?: UserSettings;
 }
 
 export interface Project {
@@ -28,4 +34,24 @@ export interface ExecutionResult {
   exitCode: number | null;
   duration: number; // in milliseconds
   timestamp: string;
+}
+
+export interface EnvRestoreState {
+  inProgress: boolean;
+  pending: string[];
+  done: string[];
+  failed: string[];
+  total: number;
+}
+
+export interface OutdatedPackage {
+  name: string;
+  version: string;
+  latest_version: string;
+}
+
+export interface PackageUpdateState {
+  outdated: OutdatedPackage[];
+  lastChecked: string | null;
+  dismissed: boolean;
 }

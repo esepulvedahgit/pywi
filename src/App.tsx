@@ -1,37 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Play, 
-  Menu, 
-  ChevronRight, 
-  Terminal, 
-  Folder, 
-  FileCode, 
-  Sparkles, 
-  Download, 
+import {
+  Play,
+  Menu,
+  ChevronRight,
+  Terminal,
+  Folder,
+  FileCode,
+  Sparkles,
+  Download,
   RefreshCw,
   Clock,
   Code2,
   Palette,
   MoreVertical,
-  Keyboard
+  Keyboard,
+  Settings,
+  X,
+  Bell
 } from 'lucide-react';
 import { EditorView } from '@codemirror/view';
+import { indentUnit } from '@codemirror/language';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 
-import { User, Project, FileItem, ExecutionResult } from './types';
+import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState } from './types';
+import { LanguageProvider } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
 import SpecialKeys from './components/SpecialKeys';
 import ConsoleSheet from './components/ConsoleSheet';
 import PackageManagerModal from './components/PackageManagerModal';
+import SettingsModal from './components/SettingsModal';
+import EnvRestoreOverlay from './components/EnvRestoreOverlay';
 
-export default function App() {
+function AppContent() {
   // Authentication & session state
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('py_ide_user');
     return saved ? JSON.parse(saved) : null;
   });
+
+  // User settings & language state
+  const [userSettings, setUserSettings] = useState<UserSettings>({ indentation: 4, language: 'es' });
+  const [lang, setLang] = useState<'es' | 'en'>('es');
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Package Manager visibility state
   const [showPackageManager, setShowPackageManager] = useState(false);
@@ -72,9 +84,84 @@ export default function App() {
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
+  // Environment restoration state
+  const [envRestore, setEnvRestore] = useState<EnvRestoreState | null>(null);
+
+  // Package update notification state
+  const [packageUpdates, setPackageUpdates] = useState<PackageUpdateState>({
+    outdated: [], lastChecked: null, dismissed: false
+  });
+
   // Layout UI management
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const editorRef = useRef<EditorView | null>(null);
+
+  // Poll for environment restoration status
+  useEffect(() => {
+    if (!envRestore?.inProgress || !user) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const token = localStorage.getItem('py_ide_token');
+        const res = await fetch('/api/pip/restore-status', {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        const status = await res.json();
+        setEnvRestore(status);
+      } catch (err) {
+        console.error('Error polling restore status:', err);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [envRestore?.inProgress, user]);
+
+  // Load user settings on login
+  useEffect(() => {
+    if (user) {
+      const token = localStorage.getItem('py_ide_token');
+      fetch(`/api/users/${user.id}/settings`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      })
+        .then(res => res.json())
+        .then(settings => {
+          setUserSettings(settings);
+          setLang(settings.language);
+        })
+        .catch(err => console.error('Error loading settings:', err));
+    }
+  }, [user?.id]);
+
+  // Fetch package update state from server
+  const fetchPackageUpdates = async () => {
+    if (!user) return;
+    try {
+      const token = localStorage.getItem('py_ide_token');
+      const res = await fetch('/api/pip/updates', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setPackageUpdates(prev => ({
+            ...prev,
+            outdated: data.outdated,
+            lastChecked: data.lastChecked
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching package updates:', err);
+    }
+  };
+
+  // Fetch package updates 3s after login (background check has time to start)
+  useEffect(() => {
+    if (user) {
+      const t = setTimeout(fetchPackageUpdates, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [user?.id]);
 
   // Synchronization: Persist user session
   useEffect(() => {
@@ -404,33 +491,51 @@ export default function App() {
       case 'light':
       default:
         return {
-          wrapper: 'theme-light h-screen w-screen bg-slate-950 flex font-sans overflow-hidden text-slate-100',
-          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-[#f8fafc] overflow-hidden',
-          header: 'h-14 bg-white border-b border-slate-200 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-xs z-10 text-slate-800',
-          headerTitle: 'text-slate-800',
-          headerSub: 'text-[9px] text-slate-400 font-bold uppercase tracking-wider',
-          projectBadge: 'bg-slate-50 border border-slate-200 text-slate-600',
-          projectSubtext: 'text-slate-500',
-          fileNameText: 'font-mono text-slate-700 truncate',
-          btnSec: 'bg-white hover:bg-slate-55 text-slate-600 border border-slate-205 hover:text-slate-800 shadow-xs',
-          presetPanel: 'bg-white border-b border-slate-200 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
-          presetTitle: 'text-xs text-slate-500 font-bold uppercase tracking-wider',
-          presetBtn: 'bg-slate-55 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 shadow-2xs',
-          editorCanvas: 'flex-1 overflow-hidden relative bg-[#0d1117] flex flex-col p-2 sm:p-4',
-          indicatorBox: 'bg-slate-900/90 border border-slate-800',
-          userAvatar: 'bg-indigo-50 border border-indigo-100 text-indigo-700'
+          wrapper: 'theme-light h-screen w-screen bg-slate-100 flex font-sans overflow-hidden text-slate-900',
+          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-white overflow-hidden',
+          header: 'h-14 bg-white border-b border-slate-300 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-sm z-10 text-slate-900',
+          headerTitle: 'text-slate-900',
+          headerSub: 'text-[9px] text-slate-500 font-bold uppercase tracking-wider',
+          projectBadge: 'bg-slate-100 border border-slate-300 text-slate-700',
+          projectSubtext: 'text-slate-600',
+          fileNameText: 'font-mono text-slate-800 truncate',
+          btnSec: 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 hover:text-slate-900 shadow-sm',
+          presetPanel: 'bg-white border-b border-slate-300 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
+          presetTitle: 'text-xs text-slate-600 font-bold uppercase tracking-wider',
+          presetBtn: 'bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-700 border border-slate-300 shadow-sm',
+          editorCanvas: 'flex-1 overflow-hidden relative bg-white flex flex-col p-2 sm:p-4',
+          indicatorBox: 'bg-slate-100 border border-slate-300 text-slate-600',
+          userAvatar: 'bg-indigo-100 border border-indigo-300 text-indigo-800'
         };
     }
   };
 
+  const handleLoginSuccess = (data: any) => {
+    setUser(data);
+    setPackageUpdates({ outdated: [], lastChecked: null, dismissed: false });
+    if (data.restoreNeeded) {
+      const restoreCount = data.restoreCount ?? 0;
+      setEnvRestore({
+        inProgress: true,
+        pending: Array(restoreCount).fill('').map((_, i) => `Paquete ${i + 1}`),
+        done: [],
+        failed: [],
+        total: restoreCount
+      });
+    }
+  };
+
   if (!user) {
-    return <AuthScreen onLoginSuccess={(u) => setUser(u)} />;
+    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
   }
 
   const t = getThemeClasses(activeTheme);
 
   return (
     <div className={t.wrapper} id="main-ide-panel">
+      {/* Environment Restoration Overlay */}
+      {envRestore?.inProgress && <EnvRestoreOverlay restoreState={envRestore} />}
+
       {/* 1. Left Navigation Sidebar */}
       <Sidebar
         user={user}
@@ -461,6 +566,7 @@ export default function App() {
         onCloseMobile={() => setSidebarOpen(false)}
         activeTheme={activeTheme}
         onOpenPackageManager={() => setShowPackageManager(true)}
+        packageUpdateCount={packageUpdates.dismissed ? 0 : packageUpdates.outdated.length}
       />
 
       {/* Python Pip Package Manager Modal */}
@@ -468,6 +574,9 @@ export default function App() {
         isOpen={showPackageManager}
         onClose={() => setShowPackageManager(false)}
         activeTheme={activeTheme}
+        packageUpdates={packageUpdates}
+        onDismissUpdates={() => setPackageUpdates(prev => ({ ...prev, dismissed: true }))}
+        onUpdatesChanged={fetchPackageUpdates}
       />
 
       {/* 2. Main IDE Workspace */}
@@ -839,6 +948,22 @@ export default function App() {
               )}
             </div>
 
+            {/* Settings button */}
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className={`p-1.5 rounded-md border text-xs font-bold transition-all flex items-center justify-center shadow-2xs shrink-0 ${
+                activeTheme === 'light'
+                  ? 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  : activeTheme === 'vibrant-dark'
+                  ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                  : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
+              }`}
+              title="Configuración"
+              id="btn-settings"
+            >
+              <Settings className="h-4 w-4 shrink-0" />
+            </button>
+
             {/* Desktop Only user avatar */}
             <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 text-xs font-bold shrink-0 shadow-xs hidden md:flex">
               {user.username.substring(0, 2).toUpperCase()}
@@ -852,6 +977,43 @@ export default function App() {
             onInsertChar={handleInsertChar} 
             onClose={() => setShowSpecialKeys(false)} 
           />
+        )}
+
+        {/* Package Update Notification Banner */}
+        {!packageUpdates.dismissed && packageUpdates.outdated.length > 0 && (
+          <div className={`mx-2 mt-2 sm:mx-4 px-3 py-2 rounded-xl border flex items-center justify-between gap-3 shrink-0 ${
+            activeTheme === 'light'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : activeTheme === 'vibrant-dark'
+              ? 'bg-amber-950/20 border-amber-800/40 text-amber-300'
+              : 'bg-amber-950/10 border-amber-900/40 text-amber-400'
+          }`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <Bell className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span className="text-xs font-semibold truncate">
+                {packageUpdates.outdated.length} actualización{packageUpdates.outdated.length > 1 ? 'es' : ''} disponible{packageUpdates.outdated.length > 1 ? 's' : ''} para tus librerías
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setShowPackageManager(true)}
+                className={`text-xs font-bold underline underline-offset-2 hover:no-underline transition-all ${
+                  activeTheme === 'light' ? 'text-amber-700' : 'text-amber-400'
+                }`}
+              >
+                Ver actualizaciones
+              </button>
+              <button
+                onClick={() => setPackageUpdates(prev => ({ ...prev, dismissed: true }))}
+                className={`p-1 rounded transition-colors ${
+                  activeTheme === 'light' ? 'hover:bg-amber-100 text-amber-600' : 'hover:bg-amber-950/40 text-amber-500'
+                }`}
+                title="Descartar notificación"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Center Canvas: Interactive Python Editor panel */}
@@ -879,7 +1041,11 @@ export default function App() {
                   value={code}
                   height="100%"
                   theme={activeTheme === 'light' ? 'light' : 'dark'}
-                  extensions={[python(), EditorView.lineWrapping]}
+                  extensions={[
+                    python(),
+                    EditorView.lineWrapping,
+                    indentUnit.of(' '.repeat(userSettings.indentation))
+                  ]}
                   onChange={(val) => {
                     setCode(val);
                     // Automatic debounce-like quick save physically
@@ -889,18 +1055,28 @@ export default function App() {
                   onCreateEditor={(view) => {
                     editorRef.current = view;
                   }}
-                  className="h-full rounded-xl overflow-hidden shadow-lg border border-slate-800/80 font-mono text-[13px] sm:text-[14px]"
+                  className={`h-full rounded-xl overflow-hidden shadow-lg font-mono text-[13px] sm:text-[14px] ${
+                    activeTheme === 'light' ? 'border border-slate-300' : 'border border-slate-800/80'
+                  }`}
                   id="react-codemirror-editor"
                 />
               </div>
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center" id="empty-editor-fallback">
-              <div className="h-16 w-16 bg-slate-900 rounded-full flex items-center justify-center border border-slate-800 mb-4 animate-pulse">
-                <Code2 className="h-8 w-8 text-indigo-400" />
+              <div className={`h-16 w-16 rounded-full flex items-center justify-center border mb-4 animate-pulse ${
+                activeTheme === 'light'
+                  ? 'bg-slate-200 border-slate-300 text-indigo-600'
+                  : 'bg-slate-900 border-slate-800 text-indigo-400'
+              }`}>
+                <Code2 className="h-8 w-8" />
               </div>
-              <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-widest">Editor Vacío</h2>
-              <p className="text-xs text-slate-500 mt-1 max-w-[280px]">
+              <h2 className={`text-sm font-semibold uppercase tracking-widest ${
+                activeTheme === 'light' ? 'text-slate-700' : 'text-slate-300'
+              }`}>Editor Vacío</h2>
+              <p className={`text-xs mt-1 max-w-[280px] ${
+                activeTheme === 'light' ? 'text-slate-600' : 'text-slate-500'
+              }`}>
                 Selecciona o crea un archivo .py en la barra lateral para empezar a programar algoritmos.
               </p>
             </div>
@@ -927,7 +1103,29 @@ export default function App() {
           isExpanded={isConsoleExpanded}
           onToggleExpand={() => setIsConsoleExpanded(!isConsoleExpanded)}
         />
+
+        {/* Settings Modal */}
+        <SettingsModal
+          isOpen={showSettingsModal}
+          onClose={() => setShowSettingsModal(false)}
+          userId={user.id}
+          userSettings={userSettings}
+          onSettingsSaved={(settings) => {
+            setUserSettings(settings);
+            setLang(settings.language);
+          }}
+        />
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  const [lang, setLang] = React.useState<'es' | 'en'>('es');
+
+  return (
+    <LanguageProvider lang={lang} setLang={setLang}>
+      <AppContent />
+    </LanguageProvider>
   );
 }

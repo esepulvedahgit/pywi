@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
   Folder, 
@@ -35,6 +35,7 @@ interface SidebarProps {
   onCloseMobile: () => void;
   activeTheme?: 'light' | 'vibrant-dark' | 'midnight-obsidian';
   onOpenPackageManager?: () => void;
+  packageUpdateCount?: number;
 }
 
 const getThemeSidebarClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') => {
@@ -126,7 +127,8 @@ export default function Sidebar({
   isOpenOnMobile,
   onCloseMobile,
   activeTheme = 'light',
-  onOpenPackageManager
+  onOpenPackageManager,
+  packageUpdateCount = 0
 }: SidebarProps) {
   const [newProjName, setNewProjName] = useState('');
   const [showNewProjInput, setShowNewProjInput] = useState(false);
@@ -134,8 +136,36 @@ export default function Sidebar({
   const [showNewFileInput, setShowNewFileInput] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(false);
+  const [metrics, setMetrics] = useState({
+    memUsed: 0,
+    memTotal: 1,
+    cpuPercent: 0,
+    gpuAvailable: false,
+    gpuPercent: 0,
+    gpuMemUsed: 0,
+    gpuMemTotal: 1
+  });
 
   const s = getThemeSidebarClasses(activeTheme);
+
+  // Fetch metrics every 5 seconds
+  useEffect(() => {
+    const loadMetrics = async () => {
+      try {
+        const response = await fetch('/api/metrics');
+        if (response.ok) {
+          const data = await response.json();
+          setMetrics(data);
+        }
+      } catch (err) {
+        // Silently fail if metrics endpoint is unavailable
+      }
+    };
+
+    loadMetrics();
+    const interval = setInterval(loadMetrics, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleCreateProjSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -397,10 +427,10 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Datasets CSV, TXT files section */}
+          {/* Datasets CSV, TXT, XLSX, XLS, JSON, Parquet, LOG files section */}
           <div>
             <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5 mb-2`}>
-              <Database className="h-3.5 w-3.5 text-emerald-600" /> Datasets (.csv, .txt)
+              <Database className="h-3.5 w-3.5 text-emerald-600" /> Datasets
             </span>
 
             <div className="space-y-1 mb-3" id="datasets-list">
@@ -448,7 +478,7 @@ export default function Sidebar({
             >
               <input
                 type="file"
-                accept=".csv,.txt"
+                accept=".csv,.txt,.xlsx,.xls,.json,.parquet,.log"
                 onChange={handleFileChange}
                 className="absolute inset-0 opacity-0 cursor-pointer"
                 id="file-upload-raw-input"
@@ -463,7 +493,8 @@ export default function Sidebar({
                   <Upload className="h-5 w-5 text-slate-400 animate-bounce" />
                   <div>
                     <p className="text-[11px] font-bold">Sube Datasets</p>
-                    <p className={`text-[9px] ${s.subText}`}>Arrastra o haz click aquí (.csv, .txt)</p>
+                    <p className={`text-[9px] ${s.subText}`}>Arrastra o haz click aquí</p>
+                    <p className={`text-[8px] ${s.subText} mt-0.5`}>.csv, .txt, .xlsx, .xls, .json, .parquet, .log</p>
                   </div>
                 </div>
               )}
@@ -487,12 +518,22 @@ export default function Sidebar({
               id="sidebar-pip-packages-trigger"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <div className="p-1 rounded bg-indigo-600 text-white shrink-0">
+                <div className="p-1 rounded bg-indigo-600 text-white shrink-0 relative">
                   <Package className="h-3.5 w-3.5" />
+                  {packageUpdateCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 h-4 w-4 bg-amber-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+                      {packageUpdateCount > 9 ? '9+' : packageUpdateCount}
+                    </span>
+                  )}
                 </div>
                 <div className="text-left min-w-0">
                   <p className="text-[11px] font-bold truncate">Librerías & Dependencias</p>
-                  <p className={`text-[9px] ${s.subText} mt-0.5 truncate`}>Instalar y administrar con pip</p>
+                  <p className={`text-[9px] ${s.subText} mt-0.5 truncate`}>
+                    {packageUpdateCount > 0
+                      ? `${packageUpdateCount} actualización${packageUpdateCount > 1 ? 'es' : ''} disponible${packageUpdateCount > 1 ? 's' : ''}`
+                      : 'Instalar y administrar con pip'
+                    }
+                  </p>
                 </div>
               </div>
               <ChevronRight className="h-3.5 w-3.5 text-indigo-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
@@ -500,30 +541,50 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* Professional resource usage panel requested at bottom */}
+        {/* Container performance metrics panel */}
         <div className={`mt-auto p-4 border-t ${s.resPanel} select-none`}>
           <div className={`text-[10px] font-bold ${s.resLabel} uppercase tracking-widest mb-2 flex items-center gap-1`}>
-            <Sparkles className="h-3 w-3 text-indigo-500" /> Rendimiento de la GPU / CPU
+            <Sparkles className="h-3 w-3 text-indigo-500" /> Rendimiento del Contenedor
           </div>
           <div className="space-y-3">
             <div className="space-y-1">
               <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
-                <span>RAM de Contenerizador</span>
-                <span>1.2 GB / 4.0 GB</span>
+                <span>RAM</span>
+                <span>{(metrics.memUsed / 1e9).toFixed(1)} GB / {(metrics.memTotal / 1e9).toFixed(1)} GB</span>
               </div>
               <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
-                <div className="bg-indigo-500 h-full w-[30%] rounded-full"></div>
+                <div
+                  className="bg-indigo-500 h-full rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min(100, (metrics.memUsed / metrics.memTotal) * 100).toFixed(0)}%` }}
+                ></div>
               </div>
             </div>
             <div className="space-y-1">
               <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
-                <span>CPU de Ejecutor</span>
-                <span>14%</span>
+                <span>CPU</span>
+                <span>{metrics.cpuPercent.toFixed(1)}%</span>
               </div>
               <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
-                <div className="bg-emerald-500 h-full w-[14%] rounded-full"></div>
+                <div
+                  className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                  style={{ width: `${metrics.cpuPercent.toFixed(0)}%` }}
+                ></div>
               </div>
             </div>
+            {metrics.gpuAvailable && (
+              <div className="space-y-1">
+                <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
+                  <span>GPU</span>
+                  <span>{metrics.gpuPercent.toFixed(1)}% • {(metrics.gpuMemUsed / 1e9).toFixed(1)}GB / {(metrics.gpuMemTotal / 1e9).toFixed(1)}GB</span>
+                </div>
+                <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
+                  <div
+                    className="bg-purple-500 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${metrics.gpuPercent.toFixed(0)}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </aside>
