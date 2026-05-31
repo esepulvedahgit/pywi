@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { ExecutionResult } from '../types';
+import { useT } from '../i18n';
 
 interface ParsedPythonError {
   errorType: string;
@@ -95,6 +96,7 @@ export default function ConsoleSheet({
   onToggleExpand,
   isRunning = false,
 }: ConsoleSheetProps) {
+  const t = useT();
   const [showRawTrace, setShowRawTrace] = useState(false);
   const [customHeight, setCustomHeight] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -151,7 +153,7 @@ export default function ConsoleSheet({
           <div className="flex items-center gap-2">
             <Terminal className="h-4 w-4 text-indigo-400 shrink-0" />
             <h3 className="font-semibold text-xs tracking-tight text-slate-200 uppercase">
-              Stdout / Consola de Salida
+              {t('stdoutConsole')}
             </h3>
             {result && (
               <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ${
@@ -159,7 +161,7 @@ export default function ConsoleSheet({
                   ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
                   : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
               }`}>
-                {result.success ? 'ÉXITO (CODE 0)' : 'FALLIDO (CODE 1)'}
+                {result.success ? t('successCode0') : t('failed')}
               </span>
             )}
           </div>
@@ -168,7 +170,7 @@ export default function ConsoleSheet({
           <div className="flex items-center gap-3">
             {result && (
               <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
-                <span className="flex items-center gap-0.5 text-slate-500" title="Tiempo de ejecución">
+                <span className="flex items-center gap-0.5 text-slate-500" title={t('consoleExecutionTime')}>
                   <Clock className="h-3 w-3" /> {result.duration}ms
                 </span>
                 <span className="text-slate-600">|</span>
@@ -180,7 +182,7 @@ export default function ConsoleSheet({
               <button
                 onClick={onClear}
                 className="p-1 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded transition-colors"
-                title="Limpiar consola"
+                title={t('consoleClearTooltip')}
                 id="btn-clear-console"
               >
                 <Trash2 className="h-4 w-4" />
@@ -193,7 +195,7 @@ export default function ConsoleSheet({
                 onToggleExpand();
               }}
               className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors"
-              title={isExpanded ? 'Restaurar pantalla' : 'Maximizar pantalla'}
+              title={isExpanded ? t('consoleRestoreTooltip') : t('consoleMaximizeTooltip')}
               id="btn-toggle-expand-console"
             >
               {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
@@ -202,7 +204,7 @@ export default function ConsoleSheet({
             <button
               onClick={onClose}
               className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors"
-              title="Cerrar consola"
+              title={t('consoleCloseTooltip')}
               id="btn-close-console"
             >
               <X className="h-4 w-4" />
@@ -243,7 +245,7 @@ export default function ConsoleSheet({
                   {parsedError.codeSnippet && (
                     <div className="mx-3 mb-2 bg-slate-900/60 border border-red-500/20 rounded px-3 py-2">
                       <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1 select-none">
-                        Línea {parsedError.lineNumber}
+                        {t('lineNumber', { n: parsedError.lineNumber })}
                       </div>
                       <pre className="text-[11px] font-mono text-amber-300 whitespace-pre-wrap select-text">
                         {parsedError.codeSnippet}
@@ -262,7 +264,7 @@ export default function ConsoleSheet({
                           ? <ChevronDown className="h-3 w-3 shrink-0" />
                           : <ChevronRight className="h-3 w-3 shrink-0" />
                         }
-                        <span>{showRawTrace ? 'Ocultar' : 'Ver'} traceback completo</span>
+                        <span>{showRawTrace ? t('hideFullTraceback') : t('viewFullTraceback')}</span>
                       </button>
                       {showRawTrace && (
                         <pre className="px-3 pb-3 whitespace-pre-wrap text-[10px] font-mono text-slate-400 select-text opacity-80">
@@ -285,14 +287,14 @@ export default function ConsoleSheet({
               {result.success && (
                 <div className="bg-emerald-950/15 border-l-4 border-emerald-500/70 p-2.5 text-emerald-300 text-[11px] rounded-r-md flex items-center gap-2 select-text">
                   <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                  <span>Código de Python compilado y finalizado correctamente.</span>
+                  <span>{t('compiledSuccessfully')}</span>
                 </div>
               )}
 
               {/* General Output */}
               <div className="ml-1" id="stdout-console-pre-wrapper">
                 <pre className="whitespace-pre-wrap font-mono text-xs text-slate-300 select-text">
-                  {result.stdout || <span className="text-slate-500 italic">[El script no imprimió ninguna salida]</span>}
+                  {result.stdout || <span className="text-slate-500 italic">{t('noOutput')}</span>}
                 </pre>
               </div>
             </div>
@@ -300,9 +302,9 @@ export default function ConsoleSheet({
             <div className="h-full flex flex-col items-center justify-center text-slate-500 italic gap-2 py-8">
               <Terminal className="h-8 w-8 text-slate-700 animate-pulse" />
               {isRunning ? (
-                <span>En ejecución, esperando resultados...</span>
+                <span>{t('runningWaiting')}</span>
               ) : (
-                <span>Esperando ejecución... escribe código y presiona "Ejecutar"</span>
+                <span>{t('waiting')}</span>
               )}
             </div>
           )}

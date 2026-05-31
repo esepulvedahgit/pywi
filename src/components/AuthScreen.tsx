@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Shield, LogIn, UserPlus } from 'lucide-react';
 import { User } from '../types';
+import { useT } from '../i18n';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: User) => void;
@@ -8,6 +9,7 @@ interface AuthScreenProps {
 }
 
 export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenProps) {
+  const t = useT();
   const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -29,7 +31,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Error al iniciar sesión');
+        throw new Error(data.error || t('errorLoginFallback'));
       }
 
       if (data.token) {
@@ -37,7 +39,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
       }
       onLoginSuccess(data);
     } catch (err: any) {
-      setError(err.message || 'Error de conexión');
+      setError(err.message || t('errorConnectionFallback'));
     } finally {
       setLoading(false);
     }
@@ -57,7 +59,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Error al registrarse');
+        throw new Error(data.error || t('errorRegisterFallback'));
       }
 
       if (data.token) {
@@ -65,7 +67,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
       }
       onLoginSuccess(data);
     } catch (err: any) {
-      setError(err.message || 'Error de conexión');
+      setError(err.message || t('errorConnectionFallback'));
     } finally {
       setLoading(false);
     }
@@ -109,7 +111,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
                 }`}
                 id="tab-login"
               >
-                Iniciar Sesión
+                {t('authTabLogin')}
               </button>
               <button
                 onClick={() => { setIsRegistering(true); setError(''); }}
@@ -120,13 +122,13 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
                 }`}
                 id="tab-register"
               >
-                Registrarse
+                {t('authTabRegister')}
               </button>
             </div>
           ) : (
             <div className="pb-4 mb-2 border-b border-slate-200" id="auth-tab">
               <p className="text-center font-bold text-xs uppercase tracking-wider text-indigo-600 border-b-2 border-indigo-700 pb-3">
-                Iniciar Sesión
+                {t('authTabLogin')}
               </p>
             </div>
           )}
@@ -135,14 +137,14 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
             {isRegistering && (
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Nombre de usuario
+                  {t('username')}
                 </label>
                 <input
                   type="text"
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Ej. python_coder"
+                  placeholder={t('authUsernamePlaceholder')}
                   className="mt-1 block w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm font-medium"
                   id="input-username"
                 />
@@ -151,14 +153,14 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                Correo electrónico
+                {t('email')}
               </label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="Ej. usuario@ide.py"
+                placeholder={t('authEmailPlaceholder')}
                 className="mt-1 block w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm font-medium"
                 id="input-email"
               />
@@ -166,7 +168,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-                Contraseña
+                {t('password')}
               </label>
               <input
                 type="password"
@@ -188,15 +190,15 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
               {loading ? (
                 <>
                   <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Cargando...
+                  {t('authLoadingText')}
                 </>
               ) : isRegistering ? (
                 <>
-                  <UserPlus className="h-4 w-4" /> Registrarse e Iniciar
+                  <UserPlus className="h-4 w-4" /> {t('authRegisterAndLogin')}
                 </>
               ) : (
                 <>
-                  <LogIn className="h-4 w-4" /> Entrar al IDE
+                  <LogIn className="h-4 w-4" /> {t('authEnterIde')}
                 </>
               )}
             </button>

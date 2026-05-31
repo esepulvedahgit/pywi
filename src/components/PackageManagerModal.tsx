@@ -14,6 +14,7 @@ import {
   ArrowUpCircle
 } from 'lucide-react';
 import { PackageUpdateState } from '../types';
+import { useT } from '../i18n';
 
 interface PackageManagerModalProps {
   isOpen: boolean;
@@ -45,6 +46,7 @@ export default function PackageManagerModal({
   onDismissUpdates,
   onUpdatesChanged
 }: PackageManagerModalProps) {
+  const t = useT();
   const [status, setStatus] = useState<VenvStatus | null>(null);
   const [packages, setPackages] = useState<PythonLib[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,7 +68,7 @@ export default function PackageManagerModal({
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
 
-  // Common packages suggestion catalog
+  // Common packages suggestion catalog (descriptions stay in ES as they are technical/natural)
   const popularPackages = [
     { name: 'scipy', desc: 'Funciones avanzadas de álgebra, cálculo y estadística.' },
     { name: 'sympy', desc: 'Cálculo matemático simbólico (álgebra, límites, derivadas).' },
@@ -150,22 +152,22 @@ export default function PackageManagerModal({
         body: JSON.stringify({ packageName: name.trim() })
       });
       const data = await res.json();
-      
+
       if (res.ok && data.success) {
-        setInstallOutput(data.stdout || `¡Librería ${name} instalada exitosamente!`);
+        setInstallOutput(data.stdout || t('libInstalledSuccess', { name }));
         // clear input after success if user typed it
         if (name.toLowerCase() === installInput.toLowerCase()) {
           setInstallInput('');
         }
         await fetchStatusAndPackages();
       } else {
-        setInstallError(data.error || data.stderr || 'Ocurrió un error inesperado al descargar la librería.');
+        setInstallError(data.error || data.stderr || t('pkgInstallUnexpectedError'));
         if (data.stdout || data.stderr) {
           setInstallOutput((data.stdout || '') + '\n' + (data.stderr || ''));
         }
       }
     } catch (err: any) {
-      setInstallError(err.message || 'Error de conexión con el host de instalación.');
+      setInstallError(err.message || t('pkgInstallConnectionError'));
     } finally {
       setIsInstalling(false);
     }
@@ -176,7 +178,7 @@ export default function PackageManagerModal({
   // Theming classes adaptation
   const isLight = activeTheme === 'light';
   const isVibrant = activeTheme === 'vibrant-dark';
-  
+
   const c = {
     overlay: 'fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4',
     card: isLight
@@ -215,7 +217,7 @@ export default function PackageManagerModal({
       const removed: string[] = [];
       const failed: string[] = [];
 
-      for (const pkgName of packageNames) {
+      for (const pkgName of packageNames as string[]) {
         setUninstallProgress(prev => ({
           ...prev,
           currentPackage: pkgName
@@ -278,14 +280,14 @@ export default function PackageManagerModal({
       const data = await res.json();
 
       if (res.ok && data.success) {
-        setUpdateOutput(`${packageName} actualizado correctamente.`);
+        setUpdateOutput(t('pkgUpdatedSuccess', { name: packageName }));
         onUpdatesChanged?.();
         await fetchStatusAndPackages();
       } else {
-        setUpdateError(data.error || data.stderr || 'Error al actualizar el paquete.');
+        setUpdateError(data.error || data.stderr || t('pkgUpdateError'));
       }
     } catch (err: any) {
-      setUpdateError(err.message || 'Error de conexión.');
+      setUpdateError(err.message || t('pkgInstallConnectionError'));
     } finally {
       setUpdatingPackage(null);
     }
@@ -336,9 +338,9 @@ export default function PackageManagerModal({
           }`}
           onClick={e => e.stopPropagation()}
         >
-          <h3 className="text-base font-bold mb-3">Confirmar eliminación</h3>
+          <h3 className="text-base font-bold mb-3">{t('pkgConfirmTitle')}</h3>
           <p className="text-xs mb-4 leading-relaxed text-slate-500 dark:text-slate-400">
-            ¿Desinstalar {selectedPackages.size} librería{selectedPackages.size > 1 ? 's' : ''}? Se eliminarán de tu entorno y <strong>no se restaurarán</strong> en próximos logins.
+            {t('uninstallConfirm', { count: selectedPackages.size })}
           </p>
           <p className="text-xs mb-4 p-3 rounded-lg bg-slate-100 dark:bg-slate-800 font-mono break-words">
             {selectedList}
@@ -350,7 +352,7 @@ export default function PackageManagerModal({
                 isLight ? 'bg-slate-200 hover:bg-slate-300 text-slate-800' : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
               }`}
             >
-              Cancelar
+              {t('pkgCancelBtn')}
             </button>
             <button
               onClick={() => {
@@ -359,7 +361,7 @@ export default function PackageManagerModal({
               }}
               className="px-4 py-2 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition-colors"
             >
-              Eliminar
+              {t('pkgDeleteBtn')}
             </button>
           </div>
         </div>
@@ -377,7 +379,7 @@ export default function PackageManagerModal({
             isLight ? 'bg-white text-slate-800' : isVibrant ? 'bg-slate-900 text-slate-200' : 'bg-neutral-950 text-neutral-200'
           }`}
         >
-          <h3 className="text-base font-bold mb-4">Desinstalando paquetes</h3>
+          <h3 className="text-base font-bold mb-4">{t('pkgUninstallingTitle')}</h3>
 
           {uninstallProgress.currentPackage && (
             <div className="mb-4 flex items-center gap-3">
@@ -388,7 +390,9 @@ export default function PackageManagerModal({
 
           {uninstallProgress.removed.length > 0 && (
             <div className="mb-4">
-              <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mb-1.5">Desinstaladas ({uninstallProgress.removed.length}):</p>
+              <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mb-1.5">
+                {t('packagesUninstalled', { count: uninstallProgress.removed.length })}
+              </p>
               <div className="space-y-1">
                 {uninstallProgress.removed.map(pkg => (
                   <div key={pkg} className="text-xs flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
@@ -402,7 +406,9 @@ export default function PackageManagerModal({
 
           {uninstallProgress.failed.length > 0 && (
             <div>
-              <p className="text-[10px] font-bold text-red-600 dark:text-red-400 mb-1.5">Fallaron ({uninstallProgress.failed.length}):</p>
+              <p className="text-[10px] font-bold text-red-600 dark:text-red-400 mb-1.5">
+                {t('packagesFailed', { count: uninstallProgress.failed.length })}
+              </p>
               <div className="space-y-1">
                 {uninstallProgress.failed.map(pkg => (
                   <div key={pkg} className="text-xs flex items-center gap-2 text-red-600 dark:text-red-400">
@@ -421,7 +427,7 @@ export default function PackageManagerModal({
   return (
     <div className={c.overlay} id="package-manager-overlay-container" onClick={onClose}>
       <div className={c.card} id="package-manager-modal-card" onClick={e => e.stopPropagation()}>
-        
+
         {/* Modal Header */}
         <div className={c.header}>
           <div className="flex items-center justify-between">
@@ -430,11 +436,11 @@ export default function PackageManagerModal({
                 <Package className="h-5 w-5" />
               </div>
               <div>
-                <h2 className={`text-base font-bold tracking-tight ${c.title}`}>Gestor de Entorno Virtual Pip (.venv)</h2>
-                <p className={`text-[11px] ${c.subText}`}>Instala librerías científicas, de análisis y Machine Learning en tiempo real.</p>
+                <h2 className={`text-base font-bold tracking-tight ${c.title}`}>{t('pkgModalTitle')}</h2>
+                <p className={`text-[11px] ${c.subText}`}>{t('pkgModalSubtitle')}</p>
               </div>
             </div>
-            <button 
+            <button
               onClick={onClose}
               className={`p-1.5 rounded-lg transition-colors ${c.closeBtn}`}
               id="close-pkg-modal-btn"
@@ -446,12 +452,12 @@ export default function PackageManagerModal({
 
         {/* Modal Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          
+
           {/* Status Bar */}
           {isLoading ? (
             <div className="flex items-center justify-center py-6">
               <RefreshCw className="h-6 w-6 text-indigo-500 animate-spin mr-2" />
-              <span className="text-xs font-semibold">Cargando estado del entorno virtual...</span>
+              <span className="text-xs font-semibold">{t('pkgLoadingEnv')}</span>
             </div>
           ) : (
             <div className={`p-3.5 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 ${c.statusBadge}`}>
@@ -459,30 +465,30 @@ export default function PackageManagerModal({
                 <Layers className="h-5 w-5 text-indigo-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-xs font-bold flex items-center gap-1.5">
-                    {status?.hasPython ? 'Entorno Virtual Activo (.venv)' : 'Ejecutor Local Virtual/Simulado'}
+                    {status?.hasPython ? t('pkgVenvActive') : t('pkgVenvSimulated')}
                     {status?.installingBase && (
                       <span className="animate-pulse bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
-                        Preinstalando dependencias en segundo plano...
+                        {t('pkgPreinstalling')}
                       </span>
                     )}
                   </p>
                   <p className={`text-[11px] font-medium leading-relaxed opacity-90 mt-0.5`}>
-                    {status?.hasPython 
-                      ? 'Nuestra plataforma provee aislamiento de dependencias. Los scripts que ejecutes utilizarán las librerías instaladas abajo.'
-                      : 'El software está corriendo en un sandbox sin Python nativo. Las librerías agregadas serán simuladas en nuestro ejecutor lógico.'
+                    {status?.hasPython
+                      ? t('pkgVenvActiveDesc')
+                      : t('pkgVenvSimulatedDesc')
                     }
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0 md:self-center flex-wrap justify-end">
                 <div className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${c.statusInstalledBg}`}>
-                  Librerías: {status?.installingBase ? 'Instalando...' : status?.installedCount || 0}
+                  {t('pkgLibraries')} {status?.installingBase ? t('installing') : status?.installedCount || 0}
                 </div>
                 {status?.hasPython && (
                   <button
                     onClick={handleCheckUpdates}
                     disabled={isCheckingUpdates}
-                    title="Buscar actualizaciones de paquetes"
+                    title={t('pkgRefreshTooltip')}
                     className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all flex items-center gap-1 ${
                       isCheckingUpdates
                         ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
@@ -492,14 +498,14 @@ export default function PackageManagerModal({
                     }`}
                   >
                     {isCheckingUpdates
-                      ? <><RefreshCw className="h-3 w-3 animate-spin" /> Verificando...</>
-                      : <><ArrowUpCircle className="h-3 w-3" /> Buscar act.</>
+                      ? <><RefreshCw className="h-3 w-3 animate-spin" /> {t('pkgCheckingUpdates')}</>
+                      : <><ArrowUpCircle className="h-3 w-3" /> {t('pkgSearchUpdates')}</>
                     }
                   </button>
                 )}
                 <button
                   onClick={fetchStatusAndPackages}
-                  title="Refrescar estado de librerías"
+                  title={t('pkgRefreshTooltip')}
                   className="p-1.5 hover:bg-indigo-350/15 rounded-md transition-colors"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
@@ -514,13 +520,13 @@ export default function PackageManagerModal({
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
                   <ArrowUpCircle className="h-4 w-4" />
-                  Actualizaciones disponibles ({packageUpdates.outdated.length})
+                  {t('updatesAvailableCount', { count: packageUpdates.outdated.length })}
                 </h3>
                 <button
                   onClick={onDismissUpdates}
                   className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
                 >
-                  Descartar
+                  {t('pkgDismiss')}
                 </button>
               </div>
 
@@ -557,8 +563,8 @@ export default function PackageManagerModal({
                       }`}
                     >
                       {updatingPackage === pkg.name
-                        ? <><RefreshCw className="h-3 w-3 animate-spin" /> Actualizando...</>
-                        : <><ArrowUpCircle className="h-3 w-3" /> Actualizar</>
+                        ? <><RefreshCw className="h-3 w-3 animate-spin" /> {t('pkgUpdating')}</>
+                        : <><ArrowUpCircle className="h-3 w-3" /> {t('pkgUpdate')}</>
                       }
                     </button>
                   </div>
@@ -570,7 +576,7 @@ export default function PackageManagerModal({
           {/* Quick Installation form input with pip command prefix */}
           <div className="space-y-2">
             <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${c.title}`}>
-              <Terminal className="h-4 w-4 text-slate-400" /> Descargar nueva librería desde PyPI
+              <Terminal className="h-4 w-4 text-slate-400" /> {t('pkgDownloadTitle')}
             </h3>
             <div className="flex gap-2">
               <div className="relative flex-1 group">
@@ -579,7 +585,7 @@ export default function PackageManagerModal({
                 </span>
                 <input
                   type="text"
-                  placeholder="ej. scipy, sympy, plotly, requests, openpyxl"
+                  placeholder={t('pkgInstallPlaceholder')}
                   value={installInput}
                   onChange={e => setInstallInput(e.target.value)}
                   disabled={isInstalling}
@@ -601,12 +607,12 @@ export default function PackageManagerModal({
                 {isInstalling ? (
                   <>
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>Instalando...</span>
+                    <span>{t('installing')}</span>
                   </>
                 ) : (
                   <>
                     <Plus className="h-3.5 w-3.5" />
-                    <span>Instalar</span>
+                    <span>{t('pkgInstallBtn')}</span>
                   </>
                 )}
               </button>
@@ -623,12 +629,12 @@ export default function PackageManagerModal({
                 {isUninstalling ? (
                   <>
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    <span>Desinstalando...</span>
+                    <span>{t('pkgUninstallBtn')}</span>
                   </>
                 ) : (
                   <>
                     <X className="h-3.5 w-3.5" />
-                    <span>Eliminar ({selectedPackages.size})</span>
+                    <span>{t('pkgUninstallSelected', { count: selectedPackages.size })}</span>
                   </>
                 )}
               </button>
@@ -639,42 +645,42 @@ export default function PackageManagerModal({
           {(installOutput || installError) && (
             <div className="space-y-1.5">
               <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-400 flex items-center justify-between">
-                <span>Salida del Log (Pip Terminal)</span>
-                <button 
+                <span>{t('pkgLogTitle')}</span>
+                <button
                   onClick={() => { setInstallOutput(null); setInstallError(null); }}
                   className="text-indigo-400 hover:text-rose-400 transition-colors text-[9px] font-semibold"
                 >
-                  Limpiar terminal
+                  {t('pkgClearTerminal')}
                 </button>
               </p>
               <div className={`p-3.5 rounded-xl font-mono text-[11px] leading-relaxed max-h-[140px] overflow-y-auto whitespace-pre-wrap select-text ${c.terminal}`} id="pip-output-terminal">
                 {installError && (
                   <div className="text-rose-400 mb-1 flex items-start gap-1">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    <span>Error: {installError}</span>
+                    <span>{t('pkgError')} {installError}</span>
                   </div>
                 )}
-                {installOutput || 'Descargando paquetes de PyPI y resolviendo dependencias...'}
+                {installOutput || t('pkgDownloading')}
               </div>
             </div>
           )}
 
           {/* Grid Layout: Recommended libraries & Installed Libraries Catalog */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5 pt-1.5">
-            
+
             {/* Catalog list section */}
             <div className="col-span-1 md:col-span-12 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
                 <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${c.title}`}>
-                  <Package className="h-4 w-4 text-emerald-500" /> Librerías Instaladas en tu Entorno
+                  <Package className="h-4 w-4 text-emerald-500" /> {t('pkgInstalledHeader')}
                 </h3>
-                
+
                 {/* Search query input */}
                 <div className="relative max-w-sm w-full sm:w-[240px]">
                   <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="Filtrar librerías..."
+                    placeholder={t('pkgFilterPlaceholder')}
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     className={`w-full py-1.5 pl-8 pr-2.5 ${c.input} rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-indigo-505`}
@@ -686,11 +692,11 @@ export default function PackageManagerModal({
               {/* Installed Libraries Section */}
               <div className="space-y-2">
                 <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${c.title}`}>
-                  <Check className="h-4 w-4 text-emerald-500" /> Librerías Instaladas ({filteredPackages.length})
+                  <Check className="h-4 w-4 text-emerald-500" /> {t('installedCount', { count: filteredPackages.length })}
                 </h3>
                 {filteredPackages.length === 0 ? (
                   <div className={`p-3.5 rounded-lg text-xs text-center ${c.cardItem}`}>
-                    {packages.length === 0 ? 'Sin librerías instaladas aún.' : 'Sin coincidencias en la búsqueda.'}
+                    {packages.length === 0 ? t('pkgNoInstalled') : t('pkgNoMatch')}
                   </div>
                 ) : (
                   <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
@@ -708,7 +714,7 @@ export default function PackageManagerModal({
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold truncate">{pkg.name}</p>
-                          <p className="text-[10px] text-slate-500">{pkg.version || 'version desconocida'}</p>
+                          <p className="text-[10px] text-slate-500">{pkg.version || t('pkgVersionUnknown')}</p>
                         </div>
                       </div>
                     ))}
@@ -720,14 +726,14 @@ export default function PackageManagerModal({
             {/* Popular packages suggestions bento block */}
             <div className="col-span-1 md:col-span-12 space-y-3 pt-2">
               <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 ${c.title}`}>
-                <Sparkles className="h-4 w-4 text-indigo-400" /> Librerías científicas y de IA sugeridas
+                <Sparkles className="h-4 w-4 text-indigo-400" /> {t('pkgSuggestedTitle')}
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {popularPackages.map((pkg) => {
                   const alreadyInstalled = packages.some(p => p.name.toLowerCase() === pkg.name.toLowerCase());
                   return (
-                    <div 
-                      key={pkg.name} 
+                    <div
+                      key={pkg.name}
                       className={`p-3 rounded-xl transition-all flex flex-col justify-between gap-1.5 ${c.cardItem}`}
                     >
                       <div>
@@ -735,7 +741,7 @@ export default function PackageManagerModal({
                           <span className="font-mono font-bold text-xs text-indigo-500">{pkg.name}</span>
                           {alreadyInstalled ? (
                             <span className="text-[9px] font-bold text-emerald-500 flex items-center gap-0.5 select-none bg-emerald-500/10 dark:bg-emerald-950/30 px-1 py-0.5 rounded border border-emerald-500/20">
-                              <Check className="h-2.5 w-2.5" /> Instalado
+                              <Check className="h-2.5 w-2.5" /> {t('installed')}
                             </span>
                           ) : (
                             <button
@@ -746,7 +752,7 @@ export default function PackageManagerModal({
                               disabled={isInstalling}
                               className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 active:scale-95 transition-all"
                             >
-                              Descargar
+                              {t('pkgDownloadBtn')}
                             </button>
                           )}
                         </div>
@@ -771,7 +777,7 @@ export default function PackageManagerModal({
             className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${c.btnPrimary}`}
             id="close-package-manager-foot-btn"
           >
-            Aceptar
+            {t('pkgFooterClose')}
           </button>
         </div>
 

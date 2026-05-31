@@ -2,12 +2,14 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { Terminal, CheckCircle2, AlertCircle } from 'lucide-react';
 import { EnvRestoreState } from '../types';
+import { useT } from '../i18n';
 
 interface EnvRestoreOverlayProps {
   restoreState: EnvRestoreState;
 }
 
 export default function EnvRestoreOverlay({ restoreState }: EnvRestoreOverlayProps) {
+  const t = useT();
   const progress = restoreState.total > 0
     ? ((restoreState.done.length / restoreState.total) * 100).toFixed(0)
     : 0;
@@ -31,8 +33,8 @@ export default function EnvRestoreOverlay({ restoreState }: EnvRestoreOverlayPro
 
         {/* Main message */}
         <div>
-          <h2 className="text-2xl font-bold text-slate-100 mb-2">Preparando tu entorno Python</h2>
-          <p className="text-sm text-slate-400">Instalando paquetes necesarios...</p>
+          <h2 className="text-2xl font-bold text-slate-100 mb-2">{t('envRestoreTitle')}</h2>
+          <p className="text-sm text-slate-400">{t('envRestoreSubtitle')}</p>
         </div>
 
         {/* Progress bar */}
@@ -47,7 +49,7 @@ export default function EnvRestoreOverlay({ restoreState }: EnvRestoreOverlayPro
 
         {/* Progress text */}
         <div className="text-sm text-slate-300 font-mono">
-          {restoreState.done.length} de {restoreState.total} paquetes instalados
+          {t('envProgress', { current: restoreState.done.length, total: restoreState.total })}
         </div>
 
         {/* Package list */}
@@ -92,7 +94,7 @@ export default function EnvRestoreOverlay({ restoreState }: EnvRestoreOverlayPro
 
         {/* Status message */}
         <p className="text-xs text-slate-500">
-          No cierres ni recargues la página durante este proceso
+          {t('envNoClose')}
         </p>
       </div>
     </motion.div>

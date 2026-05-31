@@ -86,15 +86,15 @@ export default function SettingsModal({
     setPasswordError('');
     setPasswordMessage('');
     if (!currentPassword || !newPassword || !confirmPassword) {
-      setPasswordError('Completa todos los campos');
+      setPasswordError(t('passwordErrorEmpty'));
       return;
     }
     if (newPassword.length < 8) {
-      setPasswordError('La nueva contraseña debe tener al menos 8 caracteres');
+      setPasswordError(t('passwordErrorTooShort'));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPasswordError('Las contraseñas nuevas no coinciden');
+      setPasswordError(t('passwordErrorMismatch'));
       return;
     }
     setSavingPassword(true);
@@ -110,16 +110,16 @@ export default function SettingsModal({
       });
       const data = await res.json();
       if (!res.ok) {
-        setPasswordError(data.error || 'Error al cambiar la contraseña');
+        setPasswordError(data.error || t('passwordErrorChange'));
       } else {
-        setPasswordMessage('Contraseña cambiada correctamente');
+        setPasswordMessage(t('passwordChangedOk'));
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
         setTimeout(() => setPasswordMessage(''), 4000);
       }
     } catch {
-      setPasswordError('Error de conexión');
+      setPasswordError(t('passwordErrorConnection'));
     } finally {
       setSavingPassword(false);
     }
@@ -137,7 +137,7 @@ export default function SettingsModal({
     setUsersError('');
     setUsersMessage('');
     if (!newUsername || !newEmail || !newUserPassword) {
-      setUsersError('Completa todos los campos');
+      setUsersError(t('usersErrorEmpty'));
       return;
     }
     setCreatingUser(true);
@@ -153,9 +153,9 @@ export default function SettingsModal({
       });
       const data = await res.json();
       if (!res.ok) {
-        setUsersError(data.error || 'Error al crear usuario');
+        setUsersError(data.error || t('usersErrorCreate'));
       } else {
-        setUsersMessage(`Usuario "${newUsername}" creado correctamente`);
+        setUsersMessage(t('userCreatedSuccess', { name: newUsername }));
         setNewUsername('');
         setNewEmail('');
         setNewUserPassword('');
@@ -163,7 +163,7 @@ export default function SettingsModal({
         setTimeout(() => setUsersMessage(''), 4000);
       }
     } catch {
-      setUsersError('Error de conexión');
+      setUsersError(t('usersErrorConnection'));
     } finally {
       setCreatingUser(false);
     }
@@ -189,7 +189,7 @@ export default function SettingsModal({
         setTimeout(() => setSavedOk(false), 2000);
       }
     } catch (err) {
-      setSmtpMessage('Error guardando configuración');
+      setSmtpMessage(t('smtpSavingError'));
       setTimeout(() => setSmtpMessage(''), 3000);
     } finally {
       setSaving(false);
@@ -214,7 +214,7 @@ export default function SettingsModal({
         setTimeout(() => setSmtpMessage(''), 3000);
       }
     } catch (err) {
-      setSmtpMessage('Error guardando SMTP');
+      setSmtpMessage(t('smtpSavingError2'));
       setTimeout(() => setSmtpMessage(''), 3000);
     } finally {
       setSaving(false);
@@ -333,7 +333,7 @@ export default function SettingsModal({
               className={`${c.tab} ${activeTab === 'security' ? c.tabActive : c.tabInactive}`}
             >
               <Lock className="h-4 w-4" />
-              Seguridad
+              {t('securityTab')}
             </button>
             {userRole === 'admin' && (
               <button
@@ -341,7 +341,7 @@ export default function SettingsModal({
                 className={`${c.tab} ${activeTab === 'users' ? c.tabActive : c.tabInactive}`}
               >
                 <Users className="h-4 w-4" />
-                Usuarios
+                {t('usersTab')}
               </button>
             )}
           </div>
@@ -411,9 +411,9 @@ export default function SettingsModal({
             {/* Security Tab */}
             {activeTab === 'security' && (
               <div className="space-y-4">
-                <p className="text-xs text-slate-400">Cambia tu contraseña de acceso. Debes introducir tu contraseña actual para confirmar el cambio.</p>
+                <p className="text-xs text-slate-400">{t('securityDescription')}</p>
                 <div>
-                  <label className={c.label}>Contraseña actual</label>
+                  <label className={c.label}>{t('currentPassword')}</label>
                   <input
                     type="password"
                     value={currentPassword}
@@ -423,23 +423,23 @@ export default function SettingsModal({
                   />
                 </div>
                 <div>
-                  <label className={c.label}>Nueva contraseña</label>
+                  <label className={c.label}>{t('newPassword')}</label>
                   <input
                     type="password"
                     value={newPassword}
                     onChange={e => setNewPassword(e.target.value)}
                     className={c.input}
-                    placeholder="Mínimo 8 caracteres"
+                    placeholder={t('newPasswordPlaceholder')}
                   />
                 </div>
                 <div>
-                  <label className={c.label}>Confirmar nueva contraseña</label>
+                  <label className={c.label}>{t('confirmNewPassword')}</label>
                   <input
                     type="password"
                     value={confirmPassword}
                     onChange={e => setConfirmPassword(e.target.value)}
                     className={c.input}
-                    placeholder="Repite la nueva contraseña"
+                    placeholder={t('repeatNewPassword')}
                   />
                 </div>
                 {passwordError && <p className="text-xs text-red-400">{passwordError}</p>}
@@ -449,7 +449,7 @@ export default function SettingsModal({
                   disabled={savingPassword}
                   className={c.button}
                 >
-                  {savingPassword ? 'Guardando...' : 'Cambiar contraseña'}
+                  {savingPassword ? t('savingPassword') : t('changePassword')}
                 </button>
               </div>
             )}
@@ -460,36 +460,36 @@ export default function SettingsModal({
                 {/* Create user form */}
                 <div className="space-y-3">
                   <p className="text-xs font-bold uppercase text-slate-400 flex items-center gap-1.5">
-                    <UserPlus className="h-3.5 w-3.5" /> Crear nuevo usuario
+                    <UserPlus className="h-3.5 w-3.5" /> {t('createNewUser')}
                   </p>
                   <div>
-                    <label className={c.label}>Nombre de usuario</label>
+                    <label className={c.label}>{t('username')}</label>
                     <input
                       type="text"
                       value={newUsername}
                       onChange={e => setNewUsername(e.target.value)}
                       className={c.input}
-                      placeholder="Ej. python_dev"
+                      placeholder={t('usernamePlaceholder')}
                     />
                   </div>
                   <div>
-                    <label className={c.label}>Correo electrónico</label>
+                    <label className={c.label}>{t('email')}</label>
                     <input
                       type="email"
                       value={newEmail}
                       onChange={e => setNewEmail(e.target.value)}
                       className={c.input}
-                      placeholder="usuario@example.com"
+                      placeholder={t('emailPlaceholder')}
                     />
                   </div>
                   <div>
-                    <label className={c.label}>Contraseña temporal</label>
+                    <label className={c.label}>{t('tempPassword')}</label>
                     <input
                       type="password"
                       value={newUserPassword}
                       onChange={e => setNewUserPassword(e.target.value)}
                       className={c.input}
-                      placeholder="Mínimo 8 caracteres"
+                      placeholder={t('newPasswordPlaceholder')}
                     />
                   </div>
                   {usersError && <p className="text-xs text-red-400">{usersError}</p>}
@@ -499,14 +499,14 @@ export default function SettingsModal({
                     disabled={creatingUser}
                     className={c.button}
                   >
-                    {creatingUser ? 'Creando...' : 'Crear usuario'}
+                    {creatingUser ? t('creatingUser') : t('createUserBtn')}
                   </button>
                 </div>
 
                 {/* Users list */}
                 <div>
                   <p className="text-xs font-bold uppercase text-slate-400 mb-3 flex items-center gap-1.5">
-                    <Users className="h-3.5 w-3.5" /> Usuarios registrados
+                    <Users className="h-3.5 w-3.5" /> {t('registeredUsers')}
                   </p>
                   <div className="space-y-2">
                     {adminUsers.map(u => (
@@ -520,12 +520,12 @@ export default function SettingsModal({
                             ? 'bg-indigo-900/60 text-indigo-300 border border-indigo-700'
                             : 'bg-slate-700 text-slate-400 border border-slate-600'
                         }`}>
-                          {u.role === 'admin' ? 'Admin' : 'Usuario'}
+                          {u.role === 'admin' ? t('roleAdmin') : t('roleUser')}
                         </span>
                       </div>
                     ))}
                     {adminUsers.length === 0 && (
-                      <p className="text-xs text-slate-500">No hay usuarios registrados.</p>
+                      <p className="text-xs text-slate-500">{t('noRegisteredUsers')}</p>
                     )}
                   </div>
                 </div>
@@ -595,7 +595,7 @@ export default function SettingsModal({
                     value={smtpConfig.password}
                     onChange={e => setSmtpConfig({ ...smtpConfig, password: e.target.value })}
                     className={c.input}
-                    placeholder={smtpConfig.password === '••••••' ? '••••••' : 'Contraseña'}
+                    placeholder={smtpConfig.password === '••••••' ? '••••••' : t('password')}
                   />
                 </div>
 
@@ -618,7 +618,7 @@ export default function SettingsModal({
                     disabled={smtpLoading}
                     className={c.buttonSecondary}
                   >
-                    {smtpLoading ? 'Probando...' : t('testConnection')}
+                    {smtpLoading ? t('smtpTestingBtn') : t('testConnection')}
                   </button>
                 </div>
               </div>

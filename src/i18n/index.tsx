@@ -5,7 +5,7 @@ import { en } from './en';
 export type Lang = 'es' | 'en';
 
 interface LanguageContextType {
-  t: (key: string) => string;
+  t: (key: string, vars?: Record<string, string | number>) => string;
   lang: Lang;
   setLang: (lang: Lang) => void;
 }
@@ -23,9 +23,15 @@ export function LanguageProvider({
   lang: Lang;
   setLang: (lang: Lang) => void;
 }) {
-  const t = (key: string): string => {
+  const t = (key: string, vars?: Record<string, string | number>): string => {
     const dict = translations[lang] as Record<string, string>;
-    return dict[key] || key;
+    let str = dict[key] || key;
+    if (vars) {
+      Object.entries(vars).forEach(([k, v]) => {
+        str = str.replace(new RegExp(`{{${k}}}`, 'g'), String(v));
+      });
+    }
+    return str;
   };
 
   return (

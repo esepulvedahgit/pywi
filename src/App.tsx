@@ -24,7 +24,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 
 import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState } from './types';
-import { LanguageProvider, useLang } from './i18n';
+import { LanguageProvider, useLang, useT } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
 import SpecialKeys from './components/SpecialKeys';
@@ -40,6 +40,7 @@ const authHeaders = (extra: Record<string, string> = {}): Record<string, string>
 };
 
 function AppContent() {
+  const tl = useT();
   // Authentication & session state
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('py_ide_user');
@@ -352,7 +353,7 @@ function AppContent() {
           setCurrentFile(data);
         }
       } else {
-        alert(data.error || 'Error al crear archivo');
+        alert(data.error || tl('errorCreateFile'));
       }
     } catch (err) {
       console.error('Error creating file:', err);
@@ -401,7 +402,7 @@ function AppContent() {
         fetchFiles(currentProject.id);
         setUploadNotice(data.filename);
       } else {
-        alert(data.error || 'Error al subir dataset');
+        alert(data.error || tl('errorUploadDataset'));
       }
     } catch (err) {
       console.error('Error uploading dataset:', err);
@@ -427,7 +428,7 @@ function AppContent() {
         if (folder) setFolders(prev => prev.includes(folder) ? prev : [...prev, folder]);
         setCurrentFile(data);
       } else {
-        alert(data.error || 'Error al subir script');
+        alert(data.error || tl('errorUploadScript'));
       }
     } catch (err) {
       console.error('Error uploading script:', err);
@@ -448,7 +449,7 @@ function AppContent() {
         setFolders(prev => prev.includes(folderName) ? prev : [...prev, folderName]);
       } else {
         const data = await res.json();
-        alert(data.error || 'Error al crear carpeta');
+        alert(data.error || tl('errorCreateFolder'));
       }
     } catch (err) {
       console.error('Error creating folder:', err);
@@ -475,7 +476,7 @@ function AppContent() {
         setFiles(prev => [...prev, data]);
         setCurrentFile(data);
       } else {
-        alert(data.error || 'Error al crear archivo');
+        alert(data.error || tl('errorCreateFile'));
       }
     } catch (err) {
       console.error('Error creating file in folder:', err);
@@ -496,7 +497,7 @@ function AppContent() {
         setFiles(prev => prev.map(f => f.id === fileId ? { ...f, filename: data.filename, filepath: data.filepath } : f));
         if (currentFile?.id === fileId) setCurrentFile(prev => prev ? { ...prev, filename: data.filename } : prev);
       } else {
-        alert(data.error || 'Error al renombrar');
+        alert(data.error || tl('errorRenameFile'));
       }
     } catch (err) {
       console.error('Error renaming file:', err);
@@ -525,7 +526,7 @@ function AppContent() {
         }));
       } else {
         const data = await res.json();
-        alert(data.error || 'Error al renombrar carpeta');
+        alert(data.error || tl('errorRenameFolder'));
       }
     } catch (err) {
       console.error('Error renaming folder:', err);
@@ -555,7 +556,7 @@ function AppContent() {
         });
       } else {
         const data = await res.json();
-        alert(data.error || 'Error al eliminar carpeta');
+        alert(data.error || tl('errorDeleteFolder'));
       }
     } catch (err) {
       console.error('Error deleting folder:', err);
@@ -585,7 +586,7 @@ function AppContent() {
       setExecutionResult({
         success: false,
         stdout: '',
-        stderr: `Error al llamar al motor de ejecución: ${err.message}`,
+        stderr: `${tl('errorExecutionEngine')}: ${err.message}`,
         exitCode: -1,
         duration: 0,
         timestamp: new Date().toISOString()
@@ -794,11 +795,11 @@ function AppContent() {
             <div className={`hidden lg:flex items-center gap-1.5 px-2 py-1 ${t.projectBadge} rounded text-xs font-semibold max-w-[150px] lg:max-w-[260px] xl:max-w-[360px] min-w-0 shrink`}>
               <Folder className="h-3.5 w-3.5 text-slate-400 shrink-0" />
               <span className={`truncate ${t.projectSubtext} font-medium max-w-[60px] lg:max-w-[120px]`}>
-                {currentProject ? currentProject.name : 'Sin Proyecto'}
+                {currentProject ? currentProject.name : tl('noProjectLabel')}
               </span>
               <span className="text-slate-300 shrink-0">/</span>
               <span className={`truncate max-w-[70px] lg:max-w-[120px] ${t.fileNameText}`}>
-                {currentFile ? currentFile.filename : 'sin_archivo.py'}
+                {currentFile ? currentFile.filename : tl('noFileLabel')}
               </span>
             </div>
 
@@ -808,7 +809,7 @@ function AppContent() {
               <span className={`font-mono text-[11px] font-bold truncate max-w-[80px] sm:max-w-[150px] ${
                 activeTheme === 'light' ? 'text-slate-800' : 'text-slate-200'
               }`}>
-                {currentFile ? currentFile.filename : 'sin_archivo.py'}
+                {currentFile ? currentFile.filename : tl('noFileLabel')}
               </span>
             </div>
           </div>
@@ -818,7 +819,7 @@ function AppContent() {
             {/* Desktop Only Service Status */}
             <div className="flex items-center gap-1.5 text-xs text-slate-500 mr-1 hidden xl:flex shrink-0">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-              <span className="font-medium text-slate-605">Servicio Activo</span>
+              <span className="font-medium text-slate-605">{tl('serviceActive')}</span>
             </div>
 
             {/* Desktop Only raw download button */}
@@ -826,10 +827,10 @@ function AppContent() {
               <button
                 onClick={handleDownloadFile}
                 className={`p-1 px-2.5 ${t.btnSec} font-bold text-xs rounded-md transition-all flex items-center gap-1 shadow-xs hidden lg:flex shrink-0`}
-                title="Descargar script a tu dispositivo"
+                title={tl('downloadTooltip')}
                 id="btn-download-script-raw"
               >
-                <Download className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Descargar</span>
+                <Download className="h-3.5 w-3.5" /> <span className="hidden sm:inline">{tl('downloadBtn')}</span>
               </button>
             )}
 
@@ -843,14 +844,14 @@ function AppContent() {
               {isRunning ? (
                 <>
                   <div className="h-3 w-3 sm:h-3.5 sm:w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
-                  <span className="hidden xs:inline">Ejecutando...</span>
+                  <span className="hidden xs:inline">{tl('running')}</span>
                   <span className="xs:hidden">...</span>
                 </>
               ) : (
                 <>
                   <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current shrink-0" />
-                  <span>Ejecutar</span>
-                  <span className="hidden xs:inline">script</span>
+                  <span>{tl('run')}</span>
+                  <span className="hidden xs:inline">{tl('runScript')}</span>
                 </>
               )}
             </button>
@@ -866,11 +867,11 @@ function AppContent() {
                     ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                     : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
                 }`}
-                title="Configuración de Tema"
+                title={tl('themeTooltip')}
                 id="btn-trigger-theme-selector-desktop"
               >
                 <Palette className="h-3.5 w-3.5 text-indigo-505 shrink-0" />
-                <span className="hidden lg:inline">Tema</span>
+                <span className="hidden lg:inline">{tl('themeBtn')}</span>
               </button>
 
               {showThemeMenu && (
@@ -891,7 +892,7 @@ function AppContent() {
                     id="theme-selection-popover-desktop"
                   >
                     <p className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1.5 ${activeTheme === 'light' ? 'text-slate-400' : 'text-slate-500'}`}>
-                      Temas de Interfaz
+                      {tl('themesTitle')}
                     </p>
                     <div className="space-y-1 mt-1">
                       <button
@@ -968,7 +969,7 @@ function AppContent() {
                   ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                   : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
               }`}
-              title={showSpecialKeys ? "Ocultar teclado táctil móvil" : "Mostrar teclado táctil móvil"}
+              title={showSpecialKeys ? tl('hideMobileKbTooltip') : tl('showMobilKbTooltip')}
               id="btn-toggle-special-keys-mobile"
             >
               <Keyboard className="h-4 w-4 shrink-0" />
@@ -985,7 +986,7 @@ function AppContent() {
                     ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                     : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
                 }`}
-                title="Más acciones"
+                title={tl('moreActions')}
                 id="btn-trigger-mobile-options"
               >
                 <MoreVertical className="h-4 w-4 shrink-0" />
@@ -1011,7 +1012,7 @@ function AppContent() {
                     <p className={`text-[10px] font-bold uppercase tracking-widest px-1 mb-2 ${
                       activeTheme === 'light' ? 'text-slate-400' : 'text-slate-500'
                     }`}>
-                      Proyecto y Script
+                      {tl('projectAndScript')}
                     </p>
                     
                     <div className="space-y-2 mt-1">
@@ -1019,10 +1020,10 @@ function AppContent() {
                       <div className={`p-2 rounded-lg text-[11px] leading-5 border text-left ${
                         activeTheme === 'light' ? 'bg-slate-50 border-slate-100 text-slate-700' : 'bg-slate-900/60 border-slate-800/80 text-slate-300'
                       }`}>
-                        <div className="font-semibold text-[9px] uppercase opacity-60">Proyecto Activo:</div>
-                        <div className="truncate font-bold mb-1.5">{currentProject ? currentProject.name : 'Sin Proyecto'}</div>
-                        <div className="font-semibold text-[9px] uppercase opacity-60">Script actual (.py):</div>
-                        <div className="truncate font-mono text-[11px] font-bold text-indigo-500">{currentFile ? currentFile.filename : 'sin_archivo.py'}</div>
+                        <div className="font-semibold text-[9px] uppercase opacity-60">{tl('activeProject')}</div>
+                        <div className="truncate font-bold mb-1.5">{currentProject ? currentProject.name : tl('noProjectLabel')}</div>
+                        <div className="font-semibold text-[9px] uppercase opacity-60">{tl('currentScript')}</div>
+                        <div className="truncate font-mono text-[11px] font-bold text-indigo-500">{currentFile ? currentFile.filename : tl('noFileLabel')}</div>
                       </div>
 
                       {/* Download option */}
@@ -1037,7 +1038,7 @@ function AppContent() {
                           }`}
                         >
                           <Download className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                          <span>Descargar script (.py)</span>
+                          <span>{tl('downloadScript')}</span>
                         </button>
                       )}
 
@@ -1052,7 +1053,7 @@ function AppContent() {
                         }`}
                       >
                         <Keyboard className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
-                        <span>{showSpecialKeys ? 'Ocultar teclado especial' : 'Mostrar teclado especial'}</span>
+                        <span>{showSpecialKeys ? tl('hideSpecialKeys') : tl('showSpecialKeys')}</span>
                       </button>
 
                       {/* Switch theme directly drawer option */}
@@ -1062,7 +1063,7 @@ function AppContent() {
                         <p className={`text-[9px] font-bold uppercase tracking-wider px-1 ${
                           activeTheme === 'light' ? 'text-slate-400' : 'text-slate-500'
                         }`}>
-                          Cambiar Tema:
+                          {tl('changeTheme')}
                         </p>
                         <div className="grid grid-cols-3 gap-1">
                           <button
@@ -1071,13 +1072,12 @@ function AppContent() {
                               setShowMobileOptions(false);
                             }}
                             className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
-                              activeTheme === 'light' 
-                                ? 'bg-indigo-50 border-indigo-200 text-indigo-700' 
+                              activeTheme === 'light'
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
                                 : 'bg-slate-100/50 border-transparent text-slate-500'
                             }`}
-                            title="Claro"
                           >
-                            Claro
+                            {tl('themeLight')}
                           </button>
                           <button
                             onClick={() => {
@@ -1085,13 +1085,12 @@ function AppContent() {
                               setShowMobileOptions(false);
                             }}
                             className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
-                              activeTheme === 'vibrant-dark' 
-                                ? 'bg-indigo-950/50 border-indigo-800 text-indigo-300' 
+                              activeTheme === 'vibrant-dark'
+                                ? 'bg-indigo-950/50 border-indigo-800 text-indigo-300'
                                 : 'bg-slate-900/40 border-transparent text-slate-400'
                             }`}
-                            title="Pizarra"
                           >
-                            Pizarra
+                            {tl('themeSlate')}
                           </button>
                           <button
                             onClick={() => {
@@ -1099,20 +1098,19 @@ function AppContent() {
                               setShowMobileOptions(false);
                             }}
                             className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
-                              activeTheme === 'midnight-obsidian' 
-                                ? 'bg-neutral-800 border-neutral-600 text-white' 
+                              activeTheme === 'midnight-obsidian'
+                                ? 'bg-neutral-800 border-neutral-600 text-white'
                                 : 'bg-neutral-900/40 border-transparent text-neutral-400'
                             }`}
-                            title="Negro"
                           >
-                            Obsidiana
+                            {tl('themeObsidian')}
                           </button>
                         </div>
                       </div>
 
                       {/* Status Row */}
                       <div className="flex items-center justify-between px-1 py-1 bg-emerald-50/50 dark:bg-emerald-950/20 rounded border border-emerald-100/40 mt-1">
-                        <span className="text-[10px] opacity-75 text-emerald-600 font-medium">Servicio en línea</span>
+                        <span className="text-[10px] opacity-75 text-emerald-600 font-medium">{tl('serviceOnline')}</span>
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                       </div>
 
@@ -1145,7 +1143,7 @@ function AppContent() {
                   ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                   : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
               }`}
-              title="Configuración"
+              title={tl('settingsTooltip')}
               id="btn-settings"
             >
               <Settings className="h-4 w-4 shrink-0" />
@@ -1178,7 +1176,7 @@ function AppContent() {
             <div className="flex items-center gap-2 min-w-0">
               <Bell className="h-3.5 w-3.5 shrink-0 text-amber-500" />
               <span className="text-xs font-semibold truncate">
-                {packageUpdates.outdated.length} actualización{packageUpdates.outdated.length > 1 ? 'es' : ''} disponible{packageUpdates.outdated.length > 1 ? 's' : ''} para tus librerías
+                {tl('packageUpdatesAvailable', { count: packageUpdates.outdated.length })}
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -1188,14 +1186,14 @@ function AppContent() {
                   activeTheme === 'light' ? 'text-amber-700' : 'text-amber-400'
                 }`}
               >
-                Ver actualizaciones
+                {tl('viewUpdates')}
               </button>
               <button
                 onClick={() => setPackageUpdates(prev => ({ ...prev, dismissed: true }))}
                 className={`p-1 rounded transition-colors ${
                   activeTheme === 'light' ? 'hover:bg-amber-100 text-amber-600' : 'hover:bg-amber-950/40 text-amber-500'
                 }`}
-                title="Descartar notificación"
+                title={tl('dismissNotification')}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -1212,12 +1210,12 @@ function AppContent() {
                 {isSaving ? (
                   <>
                     <RefreshCw className="h-3 w-3 animate-spin text-indigo-400" />
-                    <span>Autoguardando...</span>
+                    <span>{tl('autoSaving')}</span>
                   </>
                 ) : (
                   <>
                     <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    <span>Guardado local</span>
+                    <span>{tl('savedLocal')}</span>
                   </>
                 )}
               </div>
@@ -1260,11 +1258,11 @@ function AppContent() {
               </div>
               <h2 className={`text-sm font-semibold uppercase tracking-widest ${
                 activeTheme === 'light' ? 'text-slate-700' : 'text-slate-300'
-              }`}>Editor Vacío</h2>
+              }`}>{tl('editorEmpty')}</h2>
               <p className={`text-xs mt-1 max-w-[280px] ${
                 activeTheme === 'light' ? 'text-slate-600' : 'text-slate-500'
               }`}>
-                Selecciona o crea un archivo .py en la barra lateral para empezar a programar algoritmos.
+                {tl('editorEmptyDesc')}
               </p>
             </div>
           )}
@@ -1275,7 +1273,7 @@ function AppContent() {
           <button
             onClick={() => setIsConsoleOpen(true)}
             className="absolute bottom-4 right-4 z-20 h-10 w-10 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border border-indigo-400/40"
-            title="Abrir terminal"
+            title={tl('openTerminal')}
             id="floating-btn-open-console"
           >
             <Terminal className="h-5 w-5" />
@@ -1313,15 +1311,15 @@ function AppContent() {
               <div className="flex items-start gap-3 mb-4">
                 <span className="text-amber-400 text-xl shrink-0">⚠️</span>
                 <div>
-                  <p className="text-slate-100 text-sm font-semibold mb-1">Archivo subido correctamente</p>
+                  <p className="text-slate-100 text-sm font-semibold mb-1">{tl('uploadFileSuccess')}</p>
                   <p className="text-slate-300 text-xs leading-relaxed">
-                    Para usarlo en tu script, reemplaza el valor de tu variable de ruta por:
+                    {tl('uploadFilePathInfo')}
                   </p>
                   <div className="mt-2 px-3 py-2 bg-slate-800 rounded-lg border border-slate-700">
                     <code className="text-amber-300 text-sm font-mono">'{uploadNotice}'</code>
                   </div>
                   <p className="text-slate-400 text-[11px] mt-2">
-                    Si usas otra ruta obtendrás un error al ejecutar.
+                    {tl('uploadFilePathWarning')}
                   </p>
                 </div>
               </div>
@@ -1329,7 +1327,7 @@ function AppContent() {
                 onClick={() => setUploadNotice(null)}
                 className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
               >
-                Aceptar
+                {tl('accept')}
               </button>
             </div>
           </div>
@@ -1340,10 +1338,16 @@ function AppContent() {
 }
 
 export default function App() {
-  const [lang, setLang] = React.useState<'es' | 'en'>('es');
+  const [lang, setLang] = React.useState<'es' | 'en'>(
+    (localStorage.getItem('py_ide_lang') as 'es' | 'en') || 'es'
+  );
+  const handleSetLang = (l: 'es' | 'en') => {
+    localStorage.setItem('py_ide_lang', l);
+    setLang(l);
+  };
 
   return (
-    <LanguageProvider lang={lang} setLang={setLang}>
+    <LanguageProvider lang={lang} setLang={handleSetLang}>
       <AppContent />
     </LanguageProvider>
   );

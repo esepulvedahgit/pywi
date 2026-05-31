@@ -17,6 +17,7 @@ import {
   Pencil
 } from 'lucide-react';
 import { Project, FileItem } from '../types';
+import { useT } from '../i18n';
 
 interface SidebarProps {
   user: { username: string; email: string; id: string };
@@ -32,7 +33,7 @@ interface SidebarProps {
   onDeleteFile: (fileId: string) => void;
   folders: string[];
   onUploadDataset: (file: File) => void;
-  onUploadScript: (file: File) => void;
+  onUploadScript: (file: File, folder?: string) => void;
   onCreateFolder: (folderName: string) => void;
   onCreateFileInFolder: (filename: string, folder: string) => void;
   onRenameFile: (fileId: string, newFilename: string) => void;
@@ -145,6 +146,7 @@ export default function Sidebar({
   onOpenPackageManager,
   packageUpdateCount = 0
 }: SidebarProps) {
+  const t = useT();
   const [newProjName, setNewProjName] = useState('');
   const [showNewProjInput, setShowNewProjInput] = useState(false);
   const [newFileName, setNewFileName] = useState('');
@@ -304,7 +306,7 @@ export default function Sidebar({
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    
+
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
       setUploadProgress(true);
@@ -333,7 +335,7 @@ export default function Sidebar({
     <>
       {/* Mobile Back-drop overlay (when Sidebar is shown as offcanvas) */}
       {isOpenOnMobile && (
-        <div 
+        <div
           onClick={onCloseMobile}
           className="fixed inset-0 z-30 bg-black/60 backdrop-blur-xs lg:hidden"
           id="sidebar-backdrop"
@@ -358,9 +360,9 @@ export default function Sidebar({
               <p className={`text-[10px] ${s.subText} truncate`}>{user.email}</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={onLogout}
-            title="Cerrar sesión"
+            title={t('logoutTooltip')}
             className={`p-1.5 rounded-lg transition-colors border border-transparent ${s.logoutHover}`}
             id="logout-btn"
           >
@@ -371,7 +373,7 @@ export default function Sidebar({
         {/* Project Selector section */}
         <div className={`p-4 ${s.activeProjBox}`}>
           <label className={`block text-[10px] ${s.subText} uppercase font-bold tracking-wider mb-2`}>
-            Proyecto Activo
+            {t('activeProjectLabel')}
           </label>
           <div className="flex flex-col gap-2">
             <select
@@ -393,17 +395,17 @@ export default function Sidebar({
                 className={`flex-1 py-1 px-2 ${s.buttonSec} rounded-md text-[11px] font-bold flex items-center justify-center gap-1 transition-all`}
                 id="btn-trigger-new-project"
               >
-                <FolderPlus className="h-3.5 w-3.5" /> Nuevo Proyecto
+                <FolderPlus className="h-3.5 w-3.5" /> {t('newProjectBtn')}
               </button>
               {currentProject && (
                 <button
                   onClick={() => {
-                    if (confirm(`¿Estás seguro de eliminar el proyecto "${currentProject.name}"? Esto borrará sus archivos de forma irreversible.`)) {
+                    if (confirm(t('confirmDeleteProject', { name: currentProject.name }))) {
                       onDeleteProject(currentProject.id);
                     }
                   }}
                   className={`p-1 px-2 ${s.buttonDel} rounded-md text-[11px] font-semibold flex items-center justify-center transition-all`}
-                  title="Eliminar proyecto"
+                  title={t('deleteProjectTooltip')}
                   id="btn-delete-active-project"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -417,7 +419,7 @@ export default function Sidebar({
               <input
                 type="text"
                 required
-                placeholder="Nombre del proyecto..."
+                placeholder={t('projectName') + '...'}
                 value={newProjName}
                 onChange={(e) => setNewProjName(e.target.value)}
                 className={`w-full px-2 py-1 ${s.input} rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-505`}
@@ -429,13 +431,13 @@ export default function Sidebar({
                   onClick={() => { setShowNewProjInput(false); setNewProjName(''); }}
                   className={`px-1.5 py-0.5 text-[10px] ${s.subText} hover:text-slate-600`}
                 >
-                  Cancelar
+                  {t('cancelBtn')}
                 </button>
                 <button
                   type="submit"
                   className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-medium"
                 >
-                  Crear
+                  {t('createBtn')}
                 </button>
               </div>
             </form>
@@ -449,21 +451,22 @@ export default function Sidebar({
             {/* Header: buttons + active context indicator */}
             <div className="flex items-center justify-between mb-1">
               <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1`}>
-                <FileCode className="h-3.5 w-3.5 text-indigo-500" /> Scripts (.py)
+                <FileCode className="h-3.5 w-3.5 text-indigo-500" /> {t('scriptsSectionLabel')}
               </span>
               <div className="flex items-center gap-1">
-                <label className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors cursor-pointer relative" title={activeFolder ? `Subir .py en ${activeFolder}/` : 'Subir .py'}>
+                <label className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors cursor-pointer relative"
+                  title={activeFolder ? t('uploadPyInFolderTooltip', { folder: activeFolder }) : t('uploadPyTooltip')}>
                   <Upload className="h-3.5 w-3.5" />
                   <input type="file" accept=".py" onChange={handleScriptUpload} className="absolute inset-0 opacity-0 w-full cursor-pointer" />
                 </label>
                 <button onClick={() => { setShowNewFolderInput(!showNewFolderInput); setShowNewFileInput(false); }}
                   className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors"
-                  title={activeFolder ? `Nueva carpeta en ${activeFolder}/` : 'Nueva carpeta'}>
+                  title={activeFolder ? t('newFolderInFolderTooltip', { folder: activeFolder }) : t('newFolderTooltip')}>
                   <FolderPlus className="h-3.5 w-3.5" />
                 </button>
                 <button onClick={() => { setShowNewFileInput(!showNewFileInput); setShowNewFolderInput(false); }}
                   className="p-0.5 text-indigo-500 hover:bg-slate-200/80 rounded transition-colors"
-                  title={activeFolder ? `Nuevo script en ${activeFolder}/` : 'Nuevo script'}>
+                  title={activeFolder ? t('newScriptInFolderTooltip', { folder: activeFolder }) : t('newScriptTooltip')}>
                   <Plus className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -483,32 +486,32 @@ export default function Sidebar({
             {scriptUploadProgress && (
               <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded bg-indigo-50 text-indigo-600 text-[10px]">
                 <div className="h-3 w-3 border border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                Subiendo script...
+                {t('uploadingScript')}
               </div>
             )}
 
             {showNewFileInput && (
               <form onSubmit={handleCreateFileSubmit} className={`mb-2 p-1.5 ${s.scriptForm} rounded-lg border`}>
-                <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? `En: ${activeFolder}/` : 'En: raíz'}</p>
-                <input type="text" required placeholder="ej. modelo.py" autoFocus
+                <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? t('inFolder', { folder: activeFolder }) : t('inRoot')}</p>
+                <input type="text" required placeholder={t('newFileInputPlaceholder')} autoFocus
                   value={newFileName} onChange={(e) => setNewFileName(e.target.value)}
                   className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
                 <div className="flex justify-end gap-1 mt-1">
-                  <button type="button" onClick={() => { setShowNewFileInput(false); setNewFileName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
-                  <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                  <button type="button" onClick={() => { setShowNewFileInput(false); setNewFileName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+                  <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
                 </div>
               </form>
             )}
 
             {showNewFolderInput && (
               <form onSubmit={handleCreateFolderSubmit} className={`mb-2 p-1.5 ${s.scriptForm} rounded-lg border`}>
-                <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? `En: ${activeFolder}/` : 'En: raíz'}</p>
-                <input type="text" required placeholder="ej. modelos" autoFocus
+                <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? t('inFolder', { folder: activeFolder }) : t('inRoot')}</p>
+                <input type="text" required placeholder={t('newFolderInputPlaceholder')} autoFocus
                   value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
                   className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
                 <div className="flex justify-end gap-1 mt-1">
-                  <button type="button" onClick={() => { setShowNewFolderInput(false); setNewFolderName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
-                  <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                  <button type="button" onClick={() => { setShowNewFolderInput(false); setNewFolderName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+                  <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
                 </div>
               </form>
             )}
@@ -537,11 +540,11 @@ export default function Sidebar({
                       {f.filename !== 'main.py' && (
                         <div className="flex items-center gap-0.5 shrink-0">
                           <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
-                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar">
+                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                             <Pencil className="h-2.5 w-2.5" />
                           </button>
-                          <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Eliminar "${f.filename}"?`)) onDeleteFile(f.id); }}
-                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar">
+                          <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                             <Trash2 className="h-2.5 w-2.5" />
                           </button>
                         </div>
@@ -584,11 +587,11 @@ export default function Sidebar({
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           <button onClick={(e) => { e.stopPropagation(); setRenamingId(folder); setRenameValue(folder.split('/').pop()!); }}
-                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar carpeta">
+                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameFolderTooltip')}>
                             <Pencil className="h-2.5 w-2.5" />
                           </button>
                           <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteFolder(folder); }}
-                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar carpeta">
+                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                             <Trash2 className="h-2.5 w-2.5" />
                           </button>
                         </div>
@@ -598,12 +601,14 @@ export default function Sidebar({
                     {/* Folder delete confirmation */}
                     {confirmDeleteFolder === folder && (
                       <div className="ml-2 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-red-300">¿Eliminar <span className="font-mono font-bold">{folder}/</span> y todo su contenido?</span>
+                        <span className="text-[10px] text-red-300">
+                          {t('deleteFolderWithContent', { name: folder })}
+                        </span>
                         <div className="flex gap-1 shrink-0">
                           <button onClick={() => { onDeleteFolder(folder); setConfirmDeleteFolder(null); setActiveFolder(null); }}
-                            className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">Sí</button>
+                            className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">{t('confirmDeleteFolderYes')}</button>
                           <button onClick={() => setConfirmDeleteFolder(null)}
-                            className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">No</button>
+                            className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">{t('confirmDeleteFolderNo')}</button>
                         </div>
                       </div>
                     )}
@@ -611,23 +616,23 @@ export default function Sidebar({
                     {/* New file/subfolder forms */}
                     {newFileInFolder?.folder === folder && (
                       <form onSubmit={handleCreateFileInFolderSubmit} className={`ml-4 mb-1 p-1.5 ${s.scriptForm} rounded-lg border`}>
-                        <input type="text" required placeholder="ej. pipeline.py" autoFocus
+                        <input type="text" required placeholder={t('newFileInFolderPlaceholder')} autoFocus
                           value={newFileInFolder.name} onChange={(e) => setNewFileInFolder({ folder, name: e.target.value })}
                           className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
                         <div className="flex justify-end gap-1 mt-1">
-                          <button type="button" onClick={() => setNewFileInFolder(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
-                          <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                          <button type="button" onClick={() => setNewFileInFolder(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+                          <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
                         </div>
                       </form>
                     )}
                     {newSubFolderFor?.parent === folder && (
                       <form onSubmit={handleCreateSubFolderSubmit} className={`ml-4 mb-1 p-1.5 ${s.scriptForm} rounded-lg border`}>
-                        <input type="text" required placeholder="ej. utils" autoFocus
+                        <input type="text" required placeholder={t('newSubFolderPlaceholder')} autoFocus
                           value={newSubFolderFor.name} onChange={(e) => setNewSubFolderFor({ parent: folder, name: e.target.value })}
                           className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
                         <div className="flex justify-end gap-1 mt-1">
-                          <button type="button" onClick={() => setNewSubFolderFor(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
-                          <button type="submit" className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-[9px] font-medium">Crear</button>
+                          <button type="button" onClick={() => setNewSubFolderFor(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+                          <button type="submit" className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
                         </div>
                       </form>
                     )}
@@ -654,11 +659,11 @@ export default function Sidebar({
                                 </div>
                                 <div className="flex items-center gap-0.5 shrink-0">
                                   <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
-                                    className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar">
+                                    className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                                     <Pencil className="h-2.5 w-2.5" />
                                   </button>
-                                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Eliminar "${f.filename}"?`)) onDeleteFile(f.id); }}
-                                    className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar">
+                                  <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                                    className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                                     <Trash2 className="h-2.5 w-2.5" />
                                   </button>
                                 </div>
@@ -690,11 +695,11 @@ export default function Sidebar({
                                   </div>
                                   <div className="flex items-center gap-0.5 shrink-0">
                                     <button onClick={(e) => { e.stopPropagation(); setRenamingId(subPath); setRenameValue(subPath.split('/').pop()!); }}
-                                      className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar">
+                                      className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                                       <Pencil className="h-2.5 w-2.5" />
                                     </button>
                                     <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteFolder(subPath); }}
-                                      className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar subcarpeta">
+                                      className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteSubfolderTooltip')}>
                                       <Trash2 className="h-2.5 w-2.5" />
                                     </button>
                                   </div>
@@ -703,24 +708,26 @@ export default function Sidebar({
 
                               {confirmDeleteFolder === subPath && (
                                 <div className="ml-2 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                                  <span className="text-[10px] text-red-300">¿Eliminar <span className="font-mono font-bold">{subPath.split('/').pop()}/</span>?</span>
+                                  <span className="text-[10px] text-red-300">
+                                    {t('deleteFolderConfirmText', { name: subPath.split('/').pop()! })}
+                                  </span>
                                   <div className="flex gap-1 shrink-0">
                                     <button onClick={() => { onDeleteFolder(subPath); setConfirmDeleteFolder(null); if (activeFolder === subPath) setActiveFolder(null); }}
-                                      className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">Sí</button>
+                                      className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">{t('confirmDeleteFolderYes')}</button>
                                     <button onClick={() => setConfirmDeleteFolder(null)}
-                                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">No</button>
+                                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">{t('confirmDeleteFolderNo')}</button>
                                   </div>
                                 </div>
                               )}
 
                               {newFileInFolder?.folder === subPath && (
                                 <form onSubmit={handleCreateFileInFolderSubmit} className={`ml-4 mb-1 p-1.5 ${s.scriptForm} rounded-lg border`}>
-                                  <input type="text" required placeholder="ej. helper.py" autoFocus
+                                  <input type="text" required placeholder={t('newFileInFolderPlaceholder')} autoFocus
                                     value={newFileInFolder.name} onChange={(e) => setNewFileInFolder({ folder: subPath, name: e.target.value })}
                                     className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
                                   <div className="flex justify-end gap-1 mt-1">
-                                    <button type="button" onClick={() => setNewFileInFolder(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
-                                    <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                                    <button type="button" onClick={() => setNewFileInFolder(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+                                    <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
                                   </div>
                                 </form>
                               )}
@@ -746,9 +753,9 @@ export default function Sidebar({
                                           </div>
                                           <div className="flex items-center gap-0.5 shrink-0">
                                             <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
-                                              className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors"><Pencil className="h-2.5 w-2.5" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Eliminar "${f.filename}"?`)) onDeleteFile(f.id); }}
-                                              className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors"><Trash2 className="h-2.5 w-2.5" /></button>
+                                              className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}><Pencil className="h-2.5 w-2.5" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                                              className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}><Trash2 className="h-2.5 w-2.5" /></button>
                                           </div>
                                         </div>
                                       )}
@@ -766,7 +773,7 @@ export default function Sidebar({
               })}
 
               {files.filter(f => f.type === 'script').length === 0 && folders.length === 0 && (
-                <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>No hay scripts creados.</p>
+                <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('noScripts')}</p>
               )}
             </div>
           </div>
@@ -774,10 +781,10 @@ export default function Sidebar({
           {/* Datasets section */}
           <div>
             <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5 mb-1`}>
-              <Database className="h-3.5 w-3.5 text-emerald-600" /> Datasets
+              <Database className="h-3.5 w-3.5 text-emerald-600" /> {t('datasetSection')}
             </span>
             <p className={`text-[9px] ${s.subText} mb-2 pl-0.5`}>
-              Click en un dataset para insertar su ruta en el editor
+              {t('datasetClickHint')}
             </p>
 
             <div className="space-y-1 mb-3" id="datasets-list">
@@ -786,7 +793,7 @@ export default function Sidebar({
                   <div
                     className={`group flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-all ${s.datasetInactive} ${copiedDataset === f.filename ? 'ring-1 ring-emerald-500/60' : ''}`}
                     onClick={() => { setConfirmDeleteId(null); handleDatasetClick(f.filename); }}
-                    title="Click para ver ruta del archivo"
+                    title={t('datasetClickHint')}
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       <FileText className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
@@ -796,7 +803,7 @@ export default function Sidebar({
                     <button
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); setCopiedDataset(null); }}
                       className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 rounded transition-all shrink-0"
-                      title="Eliminar dataset"
+                      title={t('deleteDatasetTooltip')}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -805,19 +812,19 @@ export default function Sidebar({
                   {/* Inline delete confirmation — avoids window.confirm() issues */}
                   {confirmDeleteId === f.id && (
                     <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-red-300">¿Eliminar <span className="font-mono font-bold">{f.filename}</span>?</span>
+                      <span className="text-[10px] text-red-300">{t('deleteDatasetConfirm', { name: f.filename })}</span>
                       <div className="flex gap-1 shrink-0">
                         <button
                           onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
                           className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors"
                         >
-                          Sí
+                          {t('confirmDeleteFolderYes')}
                         </button>
                         <button
                           onClick={() => setConfirmDeleteId(null)}
                           className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors"
                         >
-                          No
+                          {t('confirmDeleteFolderNo')}
                         </button>
                       </div>
                     </div>
@@ -826,7 +833,7 @@ export default function Sidebar({
                   {/* Path snippet */}
                   {copiedDataset === f.filename && confirmDeleteId !== f.id && (
                     <div className="mx-1 mb-1 px-2 py-1.5 bg-slate-800 rounded-md border border-emerald-600/40">
-                      <p className="text-[9px] text-emerald-400 font-bold mb-1 uppercase tracking-wide">Ruta en tu script:</p>
+                      <p className="text-[9px] text-emerald-400 font-bold mb-1 uppercase tracking-wide">{t('datasetPathLabel')}</p>
                       <code className="text-[10px] text-amber-300 font-mono block">
                         DATASET_PATH = '{f.filename}'
                       </code>
@@ -835,7 +842,7 @@ export default function Sidebar({
                 </div>
               ))}
               {files.filter(f => f.type === 'dataset').length === 0 && (
-                <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>Sin datasets subidos.</p>
+                <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('noDatasets')}</p>
               )}
             </div>
 
@@ -857,14 +864,14 @@ export default function Sidebar({
               {uploadProgress ? (
                 <div className="flex flex-col items-center justify-center p-1.5 gap-1.5">
                   <div className="h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                  <span className={`text-[10px] font-semibold ${s.progressText}`}>Subiendo...</span>
+                  <span className={`text-[10px] font-semibold ${s.progressText}`}>{t('uploadingLabel')}</span>
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center gap-1.5">
                   <Upload className="h-5 w-5 text-slate-400 animate-bounce" />
                   <div>
-                    <p className="text-[11px] font-bold">Sube Datasets</p>
-                    <p className={`text-[9px] ${s.subText}`}>Arrastra o haz click aquí</p>
+                    <p className="text-[11px] font-bold">{t('uploadDatasetsTitle')}</p>
+                    <p className={`text-[9px] ${s.subText}`}>{t('uploadDragOrClick')}</p>
                     <p className={`text-[8px] ${s.subText} mt-0.5`}>.csv .txt .xlsx .xls .json .parquet .log</p>
                   </div>
                 </div>
@@ -875,7 +882,7 @@ export default function Sidebar({
           {/* Entorno Python & Pip libraries section */}
           <div className="pt-2 border-t border-slate-200/50 dark:border-slate-800/40 animate-fadeIn">
             <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5 mb-2`}>
-              <Package className="h-3.5 w-3.5 text-indigo-500" /> Entorno Python (.venv)
+              <Package className="h-3.5 w-3.5 text-indigo-500" /> {t('pythonEnvSection')}
             </span>
             <button
               onClick={onOpenPackageManager}
@@ -898,11 +905,11 @@ export default function Sidebar({
                   )}
                 </div>
                 <div className="text-left min-w-0">
-                  <p className="text-[11px] font-bold truncate">Librerías & Dependencias</p>
+                  <p className="text-[11px] font-bold truncate">{t('librariesAndDeps')}</p>
                   <p className={`text-[9px] ${s.subText} mt-0.5 truncate`}>
                     {packageUpdateCount > 0
-                      ? `${packageUpdateCount} actualización${packageUpdateCount > 1 ? 'es' : ''} disponible${packageUpdateCount > 1 ? 's' : ''}`
-                      : 'Instalar y administrar con pip'
+                      ? t('libraryUpdatesAvailable', { count: packageUpdateCount, plural: packageUpdateCount > 1 ? 's' : '' })
+                      : t('librariesManage')
                     }
                   </p>
                 </div>
@@ -915,7 +922,7 @@ export default function Sidebar({
         {/* Container performance metrics panel */}
         <div className={`mt-auto p-4 border-t ${s.resPanel} select-none`}>
           <div className={`text-[10px] font-bold ${s.resLabel} uppercase tracking-widest mb-2 flex items-center gap-1`}>
-            <Sparkles className="h-3 w-3 text-indigo-500" /> Rendimiento del Contenedor
+            <Sparkles className="h-3 w-3 text-indigo-500" /> {t('containerPerformance')}
           </div>
           <div className="space-y-3">
             <div className="space-y-1">
