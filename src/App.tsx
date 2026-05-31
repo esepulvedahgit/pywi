@@ -33,6 +33,12 @@ import PackageManagerModal from './components/PackageManagerModal';
 import SettingsModal from './components/SettingsModal';
 import EnvRestoreOverlay from './components/EnvRestoreOverlay';
 
+// Helper: construye headers con el JWT del usuario actual
+const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
+  const token = localStorage.getItem('py_ide_token');
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
+};
+
 function AppContent() {
   // Authentication & session state
   const [user, setUser] = useState<User | null>(() => {
@@ -206,7 +212,8 @@ function AppContent() {
   const fetchProjects = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/users/${user.id}/projects`);
+      const res = await fetch(`/api/users/${user.id}/projects`, { headers: authHeaders() });
+      if (res.status === 401) { handleLogout(); return; }
       const data = await res.json();
       if (Array.isArray(data)) {
         setProjects(data);
@@ -225,7 +232,7 @@ function AppContent() {
   // API Call: Fetch files for active project
   const fetchFiles = async (projectId: string) => {
     try {
-      const res = await fetch(`/api/projects/${projectId}/files`);
+      const res = await fetch(`/api/projects/${projectId}/files`, { headers: authHeaders() });
       const data = await res.json();
       if (Array.isArray(data)) {
         setFiles(data);
@@ -250,7 +257,7 @@ function AppContent() {
   const fetchFileContent = async (projectId: string, fileId: string) => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/projects/${projectId}/files/${fileId}/content?userId=${user.id}`);
+      const res = await fetch(`/api/projects/${projectId}/files/${fileId}/content?userId=${user.id}`, { headers: authHeaders() });
       const data = await res.json();
       if (data && data.content !== undefined) {
         setCode(data.content);
@@ -266,7 +273,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/users/${user.id}/projects`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name })
       });
       const data = await res.json();
@@ -285,7 +292,8 @@ function AppContent() {
     if (!user) return;
     try {
       const res = await fetch(`/api/users/${user.id}/projects/${projectId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: authHeaders()
       });
       if (res.ok) {
         const remaining = projects.filter(p => p.id !== projectId);
@@ -313,7 +321,7 @@ function AppContent() {
     try {
       await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/content`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, content: contentToSave })
       });
     } catch (err) {
@@ -329,7 +337,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           userId: user.id,
           filename,
@@ -357,7 +365,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files/${fileId}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id })
       });
       if (res.ok) {
@@ -385,6 +393,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/upload/${user.id}`, {
         method: 'POST',
+        headers: authHeaders(),
         body: formData
       });
       const data = await res.json();
@@ -409,6 +418,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/upload/${user.id}${query}`, {
         method: 'POST',
+        headers: authHeaders(),
         body: formData
       });
       const data = await res.json();
@@ -430,7 +440,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/folders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, folderName })
       });
       if (res.ok) {
@@ -451,7 +461,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           userId: user.id,
           filename,
@@ -478,7 +488,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files/${fileId}/rename`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, newFilename })
       });
       const data = await res.json();
@@ -499,7 +509,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/folders/rename`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, oldPath, newPath })
       });
       if (res.ok) {
@@ -528,7 +538,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/folders`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, folderPath })
       });
       if (res.ok) {
@@ -566,7 +576,7 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, runCode: code })
       });
       const data = await res.json();
@@ -617,6 +627,7 @@ function AppContent() {
     setUser(null);
     localStorage.removeItem('py_ide_user');
     localStorage.removeItem('py_ide_last_proj');
+    localStorage.removeItem('py_ide_token');
   };
 
   const getThemeClasses = (theme: string) => {
