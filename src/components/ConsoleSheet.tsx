@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2, BarChart2 } from 'lucide-react';
+import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2, BarChart2, Download } from 'lucide-react';
 import { ExecutionResult } from '../types';
 import { useT } from '../i18n';
 import PlotsPanel from './PlotsPanel';
@@ -106,6 +106,23 @@ export default function ConsoleSheet({
   const [customHeight, setCustomHeight] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'console' | 'plots'>('console');
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleDownload = async (filename: string) => {
+    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch { /* silencioso */ }
+  };
   const parsedError = result && !result.success && result.stderr
     ? parsePythonError(result.stderr)
     : null;
@@ -194,20 +211,29 @@ export default function ConsoleSheet({
               </div>
             )}
 
-            {/* Plots toggle button */}
+            {/* Plots toggle + download buttons */}
             {result?.generatedFiles && result.generatedFiles.length > 0 && (
-              <button
-                onClick={() => setViewMode(v => v === 'console' ? 'plots' : 'console')}
-                title={viewMode === 'plots' ? t('switchToConsole') : t('switchToPlots')}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                  viewMode === 'plots'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-800 text-indigo-400 hover:bg-slate-700'
-                }`}
-              >
-                <BarChart2 className="h-3.5 w-3.5" />
-                <span>{result.generatedFiles.length} {t('plotsLabel')}</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setViewMode(v => v === 'console' ? 'plots' : 'console')}
+                  title={viewMode === 'plots' ? t('switchToConsole') : t('switchToPlots')}
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                    viewMode === 'plots'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-800 text-indigo-400 hover:bg-slate-700'
+                  }`}
+                >
+                  <BarChart2 className="h-3.5 w-3.5" />
+                  <span>{result.generatedFiles.length} {t('plotsLabel')}</span>
+                </button>
+                <button
+                  onClick={() => result.generatedFiles!.forEach((f, i) => setTimeout(() => handleDownload(f), i * 300))}
+                  title={t('downloadPlot')}
+                  className="p-1 rounded transition-colors bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
+              </>
             )}
 
             {result && (

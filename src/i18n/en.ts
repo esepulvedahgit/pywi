@@ -307,4 +307,5 @@ export const en = {
   switchToConsole: 'View console',
   plotsLabel: 'plot(s)',
   noPlots: 'No plots were generated in this run',
+  downloadPlot: 'Download plot',
 };

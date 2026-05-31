@@ -307,4 +307,5 @@ export const es = {
   switchToConsole: 'Ver consola',
   plotsLabel: 'gráfico(s)',
   noPlots: 'No se generaron gráficos en esta ejecución',
+  downloadPlot: 'Descargar gráfico',
 };
