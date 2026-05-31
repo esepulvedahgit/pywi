@@ -32,6 +32,7 @@ import ConsoleSheet from './components/ConsoleSheet';
 import PackageManagerModal from './components/PackageManagerModal';
 import SettingsModal from './components/SettingsModal';
 import EnvRestoreOverlay from './components/EnvRestoreOverlay';
+import ResetPasswordScreen from './components/ResetPasswordScreen';
 
 // Helper: construye headers con el JWT del usuario actual
 const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
@@ -1351,9 +1352,25 @@ export default function App() {
     setLang(l);
   };
 
+  // Detect reset-password route
+  const [isResetRoute, setIsResetRoute] = React.useState(
+    window.location.pathname === '/reset-password' && !!new URLSearchParams(window.location.search).get('token')
+  );
+  const resetToken = new URLSearchParams(window.location.search).get('token') ?? '';
+
   return (
     <LanguageProvider lang={lang} setLang={handleSetLang}>
-      <AppContent />
+      {isResetRoute ? (
+        <ResetPasswordScreen
+          token={resetToken}
+          onDone={() => {
+            history.pushState({}, '', '/');
+            setIsResetRoute(false);
+          }}
+        />
+      ) : (
+        <AppContent />
+      )}
     </LanguageProvider>
   );
 }

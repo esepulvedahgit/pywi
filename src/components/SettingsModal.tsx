@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Settings, Mail, Code, Lock, Users, UserPlus } from 'lucide-react';
+import { X, Settings, Mail, Code, Lock, Users, UserPlus, Trash2 } from 'lucide-react';
 import { useT, useLang } from '../i18n';
 import { UserSettings } from '../types';
 
@@ -62,6 +62,8 @@ export default function SettingsModal({
   const [usersMessage, setUsersMessage] = useState('');
   const [usersError, setUsersError] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [backupLoading, setBackupLoading] = useState(false);
 
   // Load SMTP config and admin users on mount
   useEffect(() => {
@@ -166,6 +168,55 @@ export default function SettingsModal({
       setUsersError(t('usersErrorConnection'));
     } finally {
       setCreatingUser(false);
+    }
+  };
+
+  const handleDeleteUser = async (targetId: string) => {
+    const token = localStorage.getItem('py_ide_token');
+    try {
+      const res = await fetch(`/api/admin/users/${targetId}`, {
+        method: 'DELETE',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUsersError(data.error || 'Error al eliminar usuario');
+      } else {
+        setUsersMessage(t('userDeletedOk'));
+        setConfirmDeleteUserId(null);
+        loadAdminUsers();
+        setTimeout(() => setUsersMessage(''), 4000);
+      }
+    } catch {
+      setUsersError(t('connectionError2'));
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    setBackupLoading(true);
+    const token = localStorage.getItem('py_ide_token');
+    try {
+      const res = await fetch(`/api/users/${userId}/backup`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSmtpMessage(data.error || t('backupError'));
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `backup_${userId}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      setSmtpMessage(t('backupError'));
+    } finally {
+      setBackupLoading(false);
     }
   };
 
@@ -373,6 +424,20 @@ export default function SettingsModal({
                     ))}
                   </div>
                 </div>
+
+                {/* Backup section */}
+                <div className="border-t border-slate-800 pt-4">
+                  <label className={c.label}>{t('backupTitle')}</label>
+                  <p className="text-xs text-slate-500 mb-3">{t('backupDesc')}</p>
+                  {smtpMessage && <p className={c.message}>{smtpMessage}</p>}
+                  <button
+                    onClick={handleDownloadBackup}
+                    disabled={backupLoading}
+                    className={c.button}
+                  >
+                    {backupLoading ? t('backupGenerating') : t('backupDownload')}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -510,18 +575,50 @@ export default function SettingsModal({
                   </p>
                   <div className="space-y-2">
                     {adminUsers.map(u => (
-                      <div key={u.id} className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded px-3 py-2">
-                        <div>
-                          <p className="text-sm text-slate-200 font-medium">{u.username}</p>
-                          <p className="text-xs text-slate-500">{u.email}</p>
+                      <div key={u.id}>
+                        <div className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded px-3 py-2">
+                          <div>
+                            <p className="text-sm text-slate-200 font-medium">{u.username}</p>
+                            <p className="text-xs text-slate-500">{u.email}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                              u.role === 'admin'
+                                ? 'bg-indigo-900/60 text-indigo-300 border border-indigo-700'
+                                : 'bg-slate-700 text-slate-400 border border-slate-600'
+                            }`}>
+                              {u.role === 'admin' ? t('roleAdmin') : t('roleUser')}
+                            </span>
+                            {u.role !== 'admin' && u.id !== userId && (
+                              <button
+                                onClick={() => setConfirmDeleteUserId(u.id)}
+                                className="p-1 text-slate-500 hover:text-red-400 rounded transition-colors"
+                                title={t('deleteUser')}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                          u.role === 'admin'
-                            ? 'bg-indigo-900/60 text-indigo-300 border border-indigo-700'
-                            : 'bg-slate-700 text-slate-400 border border-slate-600'
-                        }`}>
-                          {u.role === 'admin' ? t('roleAdmin') : t('roleUser')}
-                        </span>
+                        {confirmDeleteUserId === u.id && (
+                          <div className="mx-0 mt-1 px-3 py-2 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                            <span className="text-xs text-red-300">{t('confirmDeleteUser', { name: u.username })}</span>
+                            <div className="flex gap-2 shrink-0">
+                              <button
+                                onClick={() => handleDeleteUser(u.id)}
+                                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded transition-colors"
+                              >
+                                {t('confirmDeleteFolderYes')}
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteUserId(null)}
+                                className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-bold rounded transition-colors"
+                              >
+                                {t('confirmDeleteFolderNo')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                     {adminUsers.length === 0 && (

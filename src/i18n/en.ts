@@ -308,4 +308,26 @@ export const en = {
   plotsLabel: 'plot(s)',
   noPlots: 'No plots were generated in this run',
   downloadPlot: 'Download plot',
+
+  // Feature 1 — Admin: delete user
+  deleteUser: 'Delete user',
+  confirmDeleteUser: 'Delete "{{name}}" and all their data permanently?',
+  userDeletedOk: 'User deleted successfully',
+  connectionError2: 'Connection error',
+
+  // Feature 2 — Reset password UI
+  forgotPasswordTitle: 'Recover password',
+  emailForReset: 'Enter your email to receive recovery instructions.',
+  resetLinkSent: 'If the email exists, you will receive instructions shortly.',
+  resetPasswordTitle: 'New password',
+  resetTokenInvalid: 'The link is invalid or has expired. Request a new one.',
+  requestNewLink: 'Request new link',
+  passwordMin8: 'Password must be at least 8 characters',
+
+  // Feature 3 — Backup
+  backupTitle: 'Backup',
+  backupDesc: 'Download a .tar.gz file with all your projects and files.',
+  backupDownload: 'Download backup',
+  backupGenerating: 'Generating backup...',
+  backupError: 'Error generating backup',
 };

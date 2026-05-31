@@ -308,4 +308,26 @@ export const es = {
   plotsLabel: 'gráfico(s)',
   noPlots: 'No se generaron gráficos en esta ejecución',
   downloadPlot: 'Descargar gráfico',
+
+  // Feature 1 — Admin: delete user
+  deleteUser: 'Eliminar usuario',
+  confirmDeleteUser: '¿Eliminar a "{{name}}" y todos sus datos permanentemente?',
+  userDeletedOk: 'Usuario eliminado correctamente',
+  connectionError2: 'Error de conexión',
+
+  // Feature 2 — Reset password UI
+  forgotPasswordTitle: 'Recuperar contraseña',
+  emailForReset: 'Ingresa tu correo para recibir instrucciones de recuperación.',
+  resetLinkSent: 'Si el correo existe, recibirás instrucciones en breve.',
+  resetPasswordTitle: 'Nueva contraseña',
+  resetTokenInvalid: 'El enlace es inválido o ha expirado. Solicita uno nuevo.',
+  requestNewLink: 'Solicitar nuevo enlace',
+  passwordMin8: 'La contraseña debe tener al menos 8 caracteres',
+
+  // Feature 3 — Backup
+  backupTitle: 'Copia de seguridad',
+  backupDesc: 'Descarga un archivo .tar.gz con todos tus proyectos y archivos.',
+  backupDownload: 'Descargar backup',
+  backupGenerating: 'Generando backup...',
+  backupError: 'Error al generar el backup',
 };

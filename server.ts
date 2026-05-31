@@ -1137,6 +1137,52 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   }
 });
 
+// API: Admin — delete user and all their resources
+app.delete('/api/admin/users/:targetUserId', requireAdmin, (req, res) => {
+  const { targetUserId } = req.params;
+  const adminUserId = (req as any).userId;
+
+  if (targetUserId === adminUserId) {
+    return res.status(400).json({ error: 'No puedes eliminar tu propia cuenta' });
+  }
+
+  const database = readDB();
+  const targetUser = database.users.find(u => u.id === targetUserId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+
+  if (targetUser.role === 'admin') {
+    return res.status(400).json({ error: 'No se puede eliminar a otro administrador' });
+  }
+
+  // Get all project IDs belonging to this user
+  const projectIds = database.projects
+    .filter(p => p.userId === targetUserId)
+    .map(p => p.id);
+
+  // Clean DB collections
+  database.files = database.files.filter(f => !projectIds.includes(f.projectId));
+  database.projects = database.projects.filter(p => p.userId !== targetUserId);
+  database.resetTokens = (database.resetTokens || []).filter((t: any) => t.userId !== targetUserId);
+  database.users = database.users.filter(u => u.id !== targetUserId);
+
+  writeDB(database);
+
+  // Delete user's filesystem directory
+  try {
+    const userDir = safePath(APP_DATA_DIR, targetUserId);
+    if (fs.existsSync(userDir)) {
+      fs.rmSync(userDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.error('[SEC] Error deleting user directory:', err);
+    // Continue — DB already cleaned
+  }
+
+  res.json({ success: true });
+});
+
 // API: Get SMTP configuration
 app.get('/api/system/smtp', requireAdmin, (req, res) => {
   const config = readSmtpConfig();
@@ -1279,6 +1325,62 @@ app.post('/api/auth/reset-password', authStrictLimiter, (req, res) => {
   writeDB(database);
 
   res.json({ success: true, message: 'Contraseña restablecida' });
+});
+
+// API: Download user backup as .tar.gz
+app.get('/api/users/:userId/backup', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  if (userId !== req.params.userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  let userDataDir: string;
+  try {
+    userDataDir = safePath(APP_DATA_DIR, userId);
+  } catch {
+    return res.status(400).json({ error: 'Ruta inválida' });
+  }
+
+  if (!fs.existsSync(userDataDir)) {
+    return res.status(404).json({ error: 'No hay datos para respaldar' });
+  }
+
+  const database = readDB();
+  const userRecord = database.users.find(u => u.id === userId);
+  const username = userRecord?.username ?? userId;
+  const date = new Date().toISOString().split('T')[0];
+
+  // Write metadata JSON to temp file
+  const tmpMeta = path.join(os.tmpdir(), `meta_${userId}_${Date.now()}.json`);
+  const meta = {
+    exportedAt: new Date().toISOString(),
+    user: { id: userId, username: userRecord?.username, email: userRecord?.email },
+    projects: database.projects.filter(p => p.userId === userId),
+    files: database.files.filter(f =>
+      database.projects.some(p => p.userId === userId && p.id === f.projectId)
+    )
+  };
+  fs.writeFileSync(tmpMeta, JSON.stringify(meta, null, 2));
+
+  const filename = `backup_${username}_${date}.tar.gz`;
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  const tar = spawn('tar', [
+    '-czf', '-',
+    '-C', userDataDir, '.',
+    '-C', os.tmpdir(),
+    path.basename(tmpMeta)
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  tar.stdout.pipe(res);
+  tar.stderr.on('data', (d: Buffer) => console.error('[BACKUP]', d.toString()));
+  tar.on('close', () => {
+    try { fs.unlinkSync(tmpMeta); } catch {}
+  });
+  res.on('close', () => {
+    if (tar.exitCode === null) tar.kill();
+  });
 });
 
 // API: Get container metrics (CPU, RAM, GPU)
