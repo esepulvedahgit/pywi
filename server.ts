@@ -1237,11 +1237,10 @@ app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
     const transporter = nodemailer.default.createTransport({
       host: config.host,
       port: config.port,
-      secure: config.secure,
-      auth: {
-        user: config.user,
-        pass: config.password
-      }
+      secure: config.secure,           // true=SSL directo (465), false=STARTTLS (587/25)
+      requireTLS: !config.secure,      // fuerza STARTTLS cuando secure=false
+      auth: { user: config.user, pass: config.password },
+      tls: { rejectUnauthorized: false } // acepta certificados autofirmados
     });
 
     await transporter.verify();
@@ -1278,7 +1277,9 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
             host: config.host,
             port: config.port,
             secure: config.secure,
-            auth: { user: config.user, pass: config.password }
+            requireTLS: !config.secure,
+            auth: { user: config.user, pass: config.password },
+            tls: { rejectUnauthorized: false }
           });
 
           const resetUrl = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password?token=${token}`;
