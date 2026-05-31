@@ -542,9 +542,29 @@ export default function Sidebar({
                           className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                           <Pencil className="h-2.5 w-2.5" />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                        <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                           className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                           <Trash2 className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {/* Inline delete confirmation — avoids window.confirm() issues */}
+                  {confirmDeleteId === f.id && (
+                    <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-red-300">{t('deleteFileConfirm', { name: f.filename })}</span>
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
+                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors"
+                        >
+                          {t('confirmDeleteFolderYes')}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors"
+                        >
+                          {t('confirmDeleteFolderNo')}
                         </button>
                       </div>
                     </div>
@@ -660,9 +680,24 @@ export default function Sidebar({
                                     className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                                     <Pencil className="h-2.5 w-2.5" />
                                   </button>
-                                  <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                                  <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                                     className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                                     <Trash2 className="h-2.5 w-2.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {confirmDeleteId === f.id && (
+                              <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                                <span className="text-[10px] text-red-300">{t('deleteFileConfirm', { name: f.filename })}</span>
+                                <div className="flex gap-1 shrink-0">
+                                  <button onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
+                                    className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors">
+                                    {t('confirmDeleteFolderYes')}
+                                  </button>
+                                  <button onClick={() => setConfirmDeleteId(null)}
+                                    className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors">
+                                    {t('confirmDeleteFolderNo')}
                                   </button>
                                 </div>
                               </div>
@@ -752,8 +787,23 @@ export default function Sidebar({
                                           <div className="flex items-center gap-0.5 shrink-0">
                                             <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
                                               className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}><Pencil className="h-2.5 w-2.5" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                                            <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                                               className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}><Trash2 className="h-2.5 w-2.5" /></button>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {confirmDeleteId === f.id && (
+                                        <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                                          <span className="text-[10px] text-red-300">{t('deleteFileConfirm', { name: f.filename })}</span>
+                                          <div className="flex gap-1 shrink-0">
+                                            <button onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
+                                              className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors">
+                                              {t('confirmDeleteFolderYes')}
+                                            </button>
+                                            <button onClick={() => setConfirmDeleteId(null)}
+                                              className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors">
+                                              {t('confirmDeleteFolderNo')}
+                                            </button>
                                           </div>
                                         </div>
                                       )}
