@@ -22,9 +22,13 @@ services:
       # Pass environment variables (or fallbacks)
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - APP_URL=${APP_URL:-http://localhost:3000}
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
     restart: always
     deploy:
       resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
         reservations:
           devices:
             - driver: nvidia

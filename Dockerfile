@@ -24,6 +24,11 @@ RUN python3 -m venv .venv && \
 # Copy the rest of the application source code
 COPY . .
 
+# Create a non-root user and transfer ownership of the app directory
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
+RUN chown -R appuser:appgroup /app
+USER appuser
+
 # Expose the application port
 EXPOSE 3000
 

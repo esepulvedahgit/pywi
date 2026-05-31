@@ -1,17 +1,23 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { exec, execSync, execFile } from 'child_process';
+import { exec, execSync, execFile, spawnSync, spawn } from 'child_process';
 import crypto from 'crypto';
 import os from 'os';
 import multer from 'multer';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { createServer as createViteServer } from 'vite';
+import rateLimit from 'express-rate-limit';
 
 const app = express();
 const PORT = 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production';
+
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set. Set it before starting the server.');
+  process.exit(1);
+}
+const JWT_SECRET = process.env.JWT_SECRET as string;
 
 // Authentication utilities
 function generateToken(userId: string): string {
@@ -81,6 +87,17 @@ function isValidPackageName(pkg: string): boolean {
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const APP_DATA_DIR = path.join(DATA_DIR, 'app_data');
+
+// Helper: safe path construction — prevents path traversal attacks
+function safePath(base: string, ...parts: string[]): string {
+  const joined = path.join(base, ...parts);
+  const resolved = path.resolve(joined);
+  const resolvedBase = path.resolve(base);
+  if (!resolved.startsWith(resolvedBase + path.sep) && resolved !== resolvedBase) {
+    throw new Error('Path traversal detectado');
+  }
+  return resolved;
+}
 
 // Ensure base directories exist
 if (!fs.existsSync(DATA_DIR)) {
@@ -515,6 +532,23 @@ const db = readDB();
 // Basic JSON APIs with Express
 app.use(express.json());
 
+// Rate limiters
+const authStrictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos. Inténtalo de nuevo en 15 minutos.' }
+});
+
+const runLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Límite de ejecuciones alcanzado. Inténtalo de nuevo en un minuto.' }
+});
+
 // API: Venv status & stats
 app.get('/api/pip/status', (req, res) => {
   res.json({
@@ -910,7 +944,7 @@ print(f"La suma de {a} y {b} es {suma}")
 });
 
 // API: Auth login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authStrictLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'Credenciales inválidas' });
@@ -1172,7 +1206,7 @@ app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
 });
 
 // API: Forgot password
-app.post('/api/auth/forgot-password', (req, res) => {
+app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
   const { email } = req.body;
 
   if (!email) {
@@ -1219,7 +1253,7 @@ app.post('/api/auth/forgot-password', (req, res) => {
 });
 
 // API: Reset password
-app.post('/api/auth/reset-password', (req, res) => {
+app.post('/api/auth/reset-password', authStrictLimiter, (req, res) => {
   const { token, newPassword } = req.body;
 
   if (!token || !newPassword) {
@@ -1258,16 +1292,24 @@ app.get('/api/metrics', async (req, res) => {
 });
 
 // API: Get projects list for a user
-app.get('/api/users/:userId/projects', (req, res) => {
+app.get('/api/users/:userId/projects', requireAuth, (req, res) => {
   const { userId } = req.params;
+  const currentUserId = (req as any).userId;
+  if (currentUserId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
   const database = readDB();
   const userProjects = database.projects.filter(p => p.userId === userId);
   res.json(userProjects);
 });
 
 // API: Create new project
-app.post('/api/users/:userId/projects', (req, res) => {
+app.post('/api/users/:userId/projects', requireAuth, (req, res) => {
   const { userId } = req.params;
+  const currentUserId = (req as any).userId;
+  if (currentUserId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
   const { name } = req.body;
 
   if (!name) {
@@ -1312,14 +1354,23 @@ app.post('/api/users/:userId/projects', (req, res) => {
 });
 
 // API: Delete project
-app.delete('/api/users/:userId/projects/:projectId', (req, res) => {
+app.delete('/api/users/:userId/projects/:projectId', requireAuth, (req, res) => {
   const { userId, projectId } = req.params;
+  const currentUserId = (req as any).userId;
+  if (currentUserId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
   const database = readDB();
 
   database.projects = database.projects.filter(p => !(p.id === projectId && p.userId === userId));
   database.files = database.files.filter(f => f.projectId !== projectId);
 
-  const projPath = path.join(APP_DATA_DIR, userId, projectId);
+  let projPath: string;
+  try {
+    projPath = safePath(APP_DATA_DIR, userId, projectId);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de proyecto inválida' });
+  }
   if (fs.existsSync(projPath)) {
     try {
       fs.rmSync(projPath, { recursive: true, force: true });
@@ -1333,20 +1384,26 @@ app.delete('/api/users/:userId/projects/:projectId', (req, res) => {
 });
 
 // API: Get files listed in a project
-app.get('/api/projects/:projectId/files', (req, res) => {
+app.get('/api/projects/:projectId/files', requireAuth, (req, res) => {
   const { projectId } = req.params;
+  const currentUserId = (req as any).userId;
   const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== currentUserId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
   const projectFiles = database.files.filter(f => f.projectId === projectId);
   res.json(projectFiles);
 });
 
 // API: Create a new file in a project
-app.post('/api/projects/:projectId/files', (req, res) => {
+app.post('/api/projects/:projectId/files', requireAuth, (req, res) => {
   const { projectId } = req.params;
-  const { userId, filename, content, type, folder } = req.body;
+  const userId = (req as any).userId;
+  const { filename, content, type, folder } = req.body;
 
-  if (!filename || !userId) {
-    return res.status(400).json({ error: 'Nombre de archivo e ID de usuario son requeridos' });
+  if (!filename) {
+    return res.status(400).json({ error: 'Nombre de archivo es requerido' });
   }
 
   const validExtensions = ['.py', '.csv', '.txt', '.xlsx', '.xls', '.json', '.parquet', '.log'];
@@ -1363,17 +1420,24 @@ app.post('/api/projects/:projectId/files', (req, res) => {
   const database = readDB();
   const project = database.projects.find(p => p.id === projectId && p.userId === userId);
   if (!project) {
-    return res.status(404).json({ error: 'Proyecto no encontrado' });
+    return res.status(403).json({ error: 'Acceso denegado' });
   }
 
   const isScript = filename.endsWith('.py');
-  const projPath = path.join(APP_DATA_DIR, userId, projectId);
-  const targetDir = folder ? path.join(projPath, folder) : projPath;
+  let projPath: string;
+  let targetDir: string;
+  let targetPath: string;
+  try {
+    projPath = safePath(APP_DATA_DIR, userId, projectId);
+    targetDir = folder ? safePath(projPath, folder) : projPath;
+    targetPath = safePath(targetDir, filename);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de archivo inválida' });
+  }
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  const targetPath = path.join(targetDir, filename);
   const fileContent = content || '';
   fs.writeFileSync(targetPath, fileContent);
 
@@ -1540,21 +1604,28 @@ app.delete('/api/projects/:projectId/folders', requireAuth, (req, res) => {
 });
 
 // API: Get file content
-app.get('/api/projects/:projectId/files/:fileId/content', (req, res) => {
+app.get('/api/projects/:projectId/files/:fileId/content', requireAuth, (req, res) => {
   const { projectId, fileId } = req.params;
-  const { userId } = req.query;
-
-  if (!userId) {
-    return res.status(400).json({ error: 'userId parameter is required' });
-  }
+  const userId = (req as any).userId;
 
   const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
   const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
   if (!fileRecord) {
     return res.status(404).json({ error: 'Archivo no encontrado' });
   }
 
-  const actualPath = path.join(APP_DATA_DIR, userId as string, projectId, fileRecord.filename);
+  let actualPath: string;
+  try {
+    actualPath = safePath(APP_DATA_DIR, userId, projectId, fileRecord.folder || '', fileRecord.filename);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de archivo inválida' });
+  }
+
   if (!fs.existsSync(actualPath)) {
     return res.status(404).json({ error: 'Archivo físico no encontrado en disco' });
   }
@@ -1564,47 +1635,66 @@ app.get('/api/projects/:projectId/files/:fileId/content', (req, res) => {
 });
 
 // API: Update file content (Save editor script)
-app.put('/api/projects/:projectId/files/:fileId/content', (req, res) => {
+app.put('/api/projects/:projectId/files/:fileId/content', requireAuth, (req, res) => {
   const { projectId, fileId } = req.params;
-  const { userId, content } = req.body;
+  const userId = (req as any).userId;
+  const { content } = req.body;
 
-  if (!userId || content === undefined) {
-    return res.status(400).json({ error: 'userId y content son obligatorios' });
+  if (content === undefined) {
+    return res.status(400).json({ error: 'content es obligatorio' });
   }
 
   const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
   const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
   if (!fileRecord) {
     return res.status(404).json({ error: 'Archivo no encontrado en BD' });
   }
 
-  const actualPath = path.join(APP_DATA_DIR, userId, projectId, fileRecord.filename);
+  let actualPath: string;
+  try {
+    actualPath = safePath(APP_DATA_DIR, userId, projectId, fileRecord.folder || '', fileRecord.filename);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de archivo inválida' });
+  }
+
   fs.writeFileSync(actualPath, content);
 
   // Update DB metadata
   fileRecord.size = Buffer.byteLength(content);
   fileRecord.updatedAt = new Date().toISOString();
-  
+
   writeDB(database);
   res.json(fileRecord);
 });
 
 // API: Delete file
-app.delete('/api/projects/:projectId/files/:fileId', (req, res) => {
+app.delete('/api/projects/:projectId/files/:fileId', requireAuth, (req, res) => {
   const { projectId, fileId } = req.params;
-  const { userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: 'userId es obligatorio' });
-  }
+  const userId = (req as any).userId;
 
   const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
   const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
   if (!fileRecord) {
     return res.status(404).json({ error: 'Archivo no encontrado' });
   }
 
-  const actualPath = path.join(APP_DATA_DIR, userId, projectId, fileRecord.folder || '', fileRecord.filename);
+  let actualPath: string;
+  try {
+    actualPath = safePath(APP_DATA_DIR, userId, projectId, fileRecord.folder || '', fileRecord.filename);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de archivo inválida' });
+  }
+
   if (fs.existsSync(actualPath)) {
     try {
       fs.unlinkSync(actualPath);
@@ -1620,7 +1710,13 @@ app.delete('/api/projects/:projectId/files/:fileId', (req, res) => {
 });
 
 // API: Upload dataset or script file
-app.post('/api/projects/:projectId/upload/:userId', (req, res) => {
+app.post('/api/projects/:projectId/upload/:userId', requireAuth, (req, res) => {
+  // Verify ownership before processing the multipart upload
+  const currentUserId = (req as any).userId;
+  if (currentUserId !== req.params.userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
   upload.single('dataset')(req, res, (err) => {
     if (err) {
       return res.status(500).json({ error: 'Error al subir archivo: ' + err.message });
@@ -1664,21 +1760,33 @@ app.post('/api/projects/:projectId/upload/:userId', (req, res) => {
 });
 
 // API: Execute code (Crucial Engine Flow)
-app.post('/api/projects/:projectId/files/:fileId/run', (req, res) => {
+app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, (req, res) => {
   const { projectId, fileId } = req.params;
-  const { userId, runCode } = req.body; // Can run custom temp code, or saved script code
-
-  if (!userId) {
-    return res.status(400).json({ error: 'userId es obligatorio para la ejecución' });
-  }
+  const userId = (req as any).userId; // Always use userId from JWT, never from body
+  const { runCode } = req.body;
 
   const database = readDB();
+
+  // Ownership check: verify the project belongs to the authenticated user
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
   const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
   if (!fileRecord) {
     return res.status(404).json({ error: 'Archivo ejecutable no encontrado' });
   }
 
-  const projectDir = path.join(APP_DATA_DIR, userId, projectId);
+  let projectDir: string;
+  let filepath: string;
+  try {
+    projectDir = safePath(APP_DATA_DIR, userId, projectId);
+    filepath = safePath(projectDir, fileRecord.folder || '', fileRecord.filename);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de archivo inválida' });
+  }
+
   if (!fs.existsSync(projectDir)) {
     fs.mkdirSync(projectDir, { recursive: true });
   }
@@ -1686,7 +1794,6 @@ app.post('/api/projects/:projectId/files/:fileId/run', (req, res) => {
   const scriptRelPath = fileRecord.folder
     ? path.join(fileRecord.folder, fileRecord.filename)
     : fileRecord.filename;
-  const filepath = path.join(projectDir, scriptRelPath);
 
   // If editor is sending updated script code before run, save it first
   if (runCode !== undefined) {
@@ -1701,34 +1808,102 @@ app.post('/api/projects/:projectId/files/:fileId/run', (req, res) => {
   const handleCompilationOrExecution = () => {
     // If we have actual python installed, run it!
     if (hasPython) {
-      const venvPython = getVenvPythonPath();
-      let cmd = venvPython ? `"${venvPython}" "${scriptRelPath}"` : `python3 "${scriptRelPath}"`;
-
-      if (!venvPython) {
+      // Resolve the Python interpreter path
+      let pythonPath = getVenvPythonPath();
+      if (!pythonPath) {
         try {
           execSync('python3 --version', { stdio: 'ignore' });
-        } catch (err) {
-          cmd = `python "${scriptRelPath}"`;
+          pythonPath = 'python3';
+        } catch {
+          pythonPath = 'python';
         }
       }
 
-      // Security boundaries:
-      // - Strict timeout: 30 seconds
-      // - Max standard output buffer: 2MB
-      exec(cmd, { cwd: projectDir, timeout: 30000, maxBuffer: 1024 * 1024 * 2 }, (error, stdout, stderr) => {
+      // --- Fix 1: Run code_inspector.py before execution ---
+      const inspectorPath = path.join(process.cwd(), '.claude', 'scripts', 'security', 'code_inspector.py');
+      if (fs.existsSync(inspectorPath)) {
+        const inspectorPython = getVenvPythonPath() || pythonPath;
+        const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], {
+          encoding: 'utf8',
+          timeout: 10000
+        });
+        if (inspectResult.status !== 0) {
+          const violation = inspectResult.stdout?.trim() || inspectResult.stderr?.trim() || 'Código rechazado por el inspector de seguridad';
+          return res.status(403).json({
+            success: false,
+            stdout: '',
+            stderr: violation,
+            exitCode: 1,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+
+      // --- Fix 3: Use spawn() without shell instead of exec() ---
+      // Run the script file directly — no shell interpolation possible
+      const MAX_OUTPUT = 1024 * 1024 * 2; // 2 MB cap
+      let stdoutChunks = '';
+      let stderrChunks = '';
+      let outputSize = 0;
+      let limitReached = false;
+
+      const child = spawn(pythonPath, [scriptRelPath], {
+        cwd: projectDir,
+        shell: false,
+        env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      });
+
+      // 30 second hard timeout
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, 30000);
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        const str = chunk.toString();
+        outputSize += str.length;
+        if (outputSize <= MAX_OUTPUT) {
+          stdoutChunks += str;
+        } else if (!limitReached) {
+          limitReached = true;
+          stdoutChunks += '\n[OUTPUT TRUNCADO: límite de 2MB alcanzado]';
+        }
+      });
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderrChunks += chunk.toString();
+      });
+
+      child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        clearTimeout(timer);
         const duration = Date.now() - startTime;
-        const exitCode = error ? (error.code || 1) : 0;
+        const killed = signal === 'SIGKILL';
+        const exitCode = killed ? 1 : (code ?? 1);
         const success = exitCode === 0;
 
         res.json({
           success,
-          stdout: stdout || '',
-          stderr: stderr || (error && error.killed ? 'ERROR: Tiempo de ejecución excedido (Timeout de 30s)' : ''),
+          stdout: stdoutChunks,
+          stderr: stderrChunks || (killed ? 'ERROR: Tiempo de ejecución excedido (Timeout de 30s)' : ''),
           exitCode,
           duration,
           timestamp: new Date().toISOString()
         });
       });
+
+      child.on('error', (err: Error) => {
+        clearTimeout(timer);
+        const duration = Date.now() - startTime;
+        res.json({
+          success: false,
+          stdout: stdoutChunks,
+          stderr: `Error al iniciar el proceso: ${err.message}`,
+          exitCode: 1,
+          duration,
+          timestamp: new Date().toISOString()
+        });
+      });
+
     } else {
       // Python Fallback Simulator: Handles standard logical algorithms, file outputs, and reads CSV if imported!
       const userCode = fs.readFileSync(filepath, 'utf8');
