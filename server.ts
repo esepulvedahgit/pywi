@@ -1234,13 +1234,15 @@ app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
 
   try {
     const nodemailer = await import('nodemailer');
+    // Puerto 465 = SSL implícito (secure:true); cualquier otro puerto con TLS = STARTTLS
+    const implicitSSL = config.port === 465;
     const transporter = nodemailer.default.createTransport({
       host: config.host,
       port: config.port,
-      secure: config.secure,           // true=SSL directo (465), false=STARTTLS (587/25)
-      requireTLS: !config.secure,      // fuerza STARTTLS cuando secure=false
+      secure: implicitSSL,
+      requireTLS: config.secure && !implicitSSL,
       auth: { user: config.user, pass: config.password },
-      tls: { rejectUnauthorized: false } // acepta certificados autofirmados
+      tls: { rejectUnauthorized: false }
     });
 
     await transporter.verify();
@@ -1273,11 +1275,12 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
       (async () => {
         try {
           const nodemailer = await import('nodemailer');
+          const implicitSSL2 = config.port === 465;
           const transporter = nodemailer.default.createTransport({
             host: config.host,
             port: config.port,
-            secure: config.secure,
-            requireTLS: !config.secure,
+            secure: implicitSSL2,
+            requireTLS: config.secure && !implicitSSL2,
             auth: { user: config.user, pass: config.password },
             tls: { rejectUnauthorized: false }
           });
