@@ -368,7 +368,7 @@ export default function SettingsModal({
                           className={c.checkbox}
                         />
                         <span className="text-sm text-slate-300">
-                          {size} {t('indent2').split(' ')[0]}
+                          {t(`indent${size}` as 'indent2' | 'indent4')}
                         </span>
                       </label>
                     ))}
