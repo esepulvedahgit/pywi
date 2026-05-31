@@ -318,7 +318,7 @@ export default function SettingsModal({
       checkbox: 'w-4 h-4 cursor-pointer',
       button: 'px-4 py-2 rounded text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50',
       buttonSecondary: 'px-4 py-2 rounded text-sm font-medium transition-colors bg-slate-700 hover:bg-slate-600 text-slate-100',
-      footer: 'border-t border-slate-800 px-6 py-4 flex justify-end gap-2 bg-slate-900',
+      footer: 'border-t border-slate-800 px-6 py-4 flex justify-between items-center gap-2 bg-slate-900',
       message: 'text-xs text-emerald-400',
     };
   };
@@ -425,19 +425,6 @@ export default function SettingsModal({
                   </div>
                 </div>
 
-                {/* Backup section */}
-                <div className="border-t border-slate-800 pt-4">
-                  <label className={c.label}>{t('backupTitle')}</label>
-                  <p className="text-xs text-slate-500 mb-3">{t('backupDesc')}</p>
-                  {smtpMessage && <p className={c.message}>{smtpMessage}</p>}
-                  <button
-                    onClick={handleDownloadBackup}
-                    disabled={backupLoading}
-                    className={c.button}
-                  >
-                    {backupLoading ? t('backupGenerating') : t('backupDownload')}
-                  </button>
-                </div>
               </div>
             )}
 
@@ -724,6 +711,21 @@ export default function SettingsModal({
 
           {/* Footer */}
           <div className={c.footer}>
+            {/* Left side — backup (independent action, always available in editor tab) */}
+            <div>
+              {activeTab === 'editor' && (
+                <button
+                  onClick={handleDownloadBackup}
+                  disabled={backupLoading}
+                  className={c.buttonSecondary}
+                  title={t('backupDesc')}
+                >
+                  {backupLoading ? t('backupGenerating') : t('backupDownload')}
+                </button>
+              )}
+            </div>
+            {/* Right side — save / cancel */}
+            <div className="flex gap-2">
             {(activeTab === 'editor' || activeTab === 'language') && (
               <motion.button
                 onClick={handleSaveSettings}
@@ -747,6 +749,7 @@ export default function SettingsModal({
             <button onClick={onClose} className={c.buttonSecondary}>
               {t('cancel')}
             </button>
+            </div>
           </div>
         </motion.div>
       </motion.div>
