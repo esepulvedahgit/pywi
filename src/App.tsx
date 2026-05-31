@@ -24,7 +24,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 
 import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState } from './types';
-import { LanguageProvider } from './i18n';
+import { LanguageProvider, useLang } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
 import SpecialKeys from './components/SpecialKeys';
@@ -50,7 +50,7 @@ function AppContent() {
 
   // User settings & language state
   const [userSettings, setUserSettings] = useState<UserSettings>({ indentation: 4, language: 'es' });
-  const [lang, setLang] = useState<'es' | 'en'>('es');
+  const { setLang } = useLang();
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Package Manager visibility state

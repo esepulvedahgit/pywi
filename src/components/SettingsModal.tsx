@@ -44,6 +44,7 @@ export default function SettingsModal({
   const [smtpLoading, setSmtpLoading] = useState(false);
   const [smtpMessage, setSmtpMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savedOk, setSavedOk] = useState(false);
 
   // Security (password change) state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -183,11 +184,12 @@ export default function SettingsModal({
 
       if (res.ok) {
         onSettingsSaved(localSettings);
-        if (localSettings.language !== userSettings.language) {
-          setLang(localSettings.language);
-        }
-        setSmtpMessage(t('saved'));
-        setTimeout(() => setSmtpMessage(''), 3000);
+        setLang(localSettings.language);
+        setSavedOk(true);
+        setTimeout(() => {
+          setSavedOk(false);
+          onClose();
+        }, 700);
       }
     } catch (err) {
       setSmtpMessage('Error guardando configuración');
@@ -629,13 +631,15 @@ export default function SettingsModal({
           {/* Footer */}
           <div className={c.footer}>
             {(activeTab === 'editor' || activeTab === 'language') && (
-              <button
+              <motion.button
                 onClick={handleSaveSettings}
-                disabled={saving}
+                disabled={saving || savedOk}
+                animate={savedOk ? { scale: [1, 1.08, 1], backgroundColor: ['#4f46e5', '#16a34a', '#16a34a'] } : {}}
+                transition={{ duration: 0.35 }}
                 className={c.button}
               >
-                {saving ? 'Guardando...' : t('save')}
-              </button>
+                {saving ? t('save') + '...' : savedOk ? '✓ ' + t('saved') : t('save')}
+              </motion.button>
             )}
             {activeTab === 'smtp' && (
               <button
@@ -643,7 +647,7 @@ export default function SettingsModal({
                 disabled={saving}
                 className={c.button}
               >
-                {saving ? 'Guardando...' : t('save')}
+                {saving ? t('save') + '...' : t('save')}
               </button>
             )}
             <button onClick={onClose} className={c.buttonSecondary}>
