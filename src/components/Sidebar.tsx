@@ -537,18 +537,16 @@ export default function Sidebar({
                         <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
                         <span className="font-mono truncate">{f.filename}</span>
                       </div>
-                      {f.filename !== 'main.py' && (
-                        <div className="flex items-center gap-0.5 shrink-0">
-                          <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
-                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
-                            <Pencil className="h-2.5 w-2.5" />
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
-                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
-                            <Trash2 className="h-2.5 w-2.5" />
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
+                          className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
+                          <Pencil className="h-2.5 w-2.5" />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); if (confirm(t('deleteFileConfirm', { name: f.filename }))) onDeleteFile(f.id); }}
+                          className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
+                          <Trash2 className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
