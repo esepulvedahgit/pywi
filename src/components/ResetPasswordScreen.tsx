@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useT } from '../i18n';
+import { isValidPassword } from '../utils/passwordPolicy';
+import PasswordStrengthMeter from './PasswordStrengthMeter';
 
 interface ResetPasswordScreenProps {
   token: string;
@@ -17,7 +19,7 @@ export default function ResetPasswordScreen({ token, onDone }: ResetPasswordScre
   const handleReset = async () => {
     setError('');
     if (!newPassword || !confirmPassword) { setError(t('errorEmptyFields')); return; }
-    if (newPassword.length < 8) { setError(t('passwordMin8')); return; }
+    if (!isValidPassword(newPassword)) { setError(t('passwordMin8')); return; }
     if (newPassword !== confirmPassword) { setError(t('passwordsDoNotMatch')); return; }
 
     setLoading(true);
@@ -62,8 +64,9 @@ export default function ResetPasswordScreen({ token, onDone }: ResetPasswordScre
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 text-sm focus:outline-none focus:border-indigo-500"
-                placeholder="Mínimo 8 caracteres"
+                placeholder={t('newPasswordPlaceholder')}
               />
+              <PasswordStrengthMeter password={newPassword} dark />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1.5">{t('confirmPassword')}</label>
@@ -72,13 +75,13 @@ export default function ResetPasswordScreen({ token, onDone }: ResetPasswordScre
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
                 className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-200 text-sm focus:outline-none focus:border-indigo-500"
-                placeholder="Repite la contraseña"
+                placeholder={t('repeatNewPasswordPlaceholder')}
               />
             </div>
             {error && <p className="text-xs text-red-400">{error}</p>}
             <button
               onClick={handleReset}
-              disabled={loading}
+              disabled={loading || !isValidPassword(newPassword)}
               className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"
             >
               {loading ? '...' : t('resetPasswordTitle')}

@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Settings, Mail, Code, Lock, Users, UserPlus, Trash2 } from 'lucide-react';
 import { useT, useLang } from '../i18n';
 import { UserSettings } from '../types';
+import { isValidPassword } from '../utils/passwordPolicy';
+import PasswordStrengthMeter from './PasswordStrengthMeter';
 
 interface AdminUser {
   id: string;
@@ -92,7 +94,7 @@ export default function SettingsModal({
       setPasswordError(t('passwordErrorEmpty'));
       return;
     }
-    if (newPassword.length < 8) {
+    if (!isValidPassword(newPassword)) {
       setPasswordError(t('passwordErrorTooShort'));
       return;
     }
@@ -141,6 +143,10 @@ export default function SettingsModal({
     setUsersMessage('');
     if (!newUsername || !newEmail || !newUserPassword) {
       setUsersError(t('usersErrorEmpty'));
+      return;
+    }
+    if (!isValidPassword(newUserPassword)) {
+      setUsersError(t('passwordErrorTooShort'));
       return;
     }
     setCreatingUser(true);
@@ -484,6 +490,7 @@ export default function SettingsModal({
                     className={c.input}
                     placeholder={t('newPasswordPlaceholder')}
                   />
+                  <PasswordStrengthMeter password={newPassword} dark />
                 </div>
                 <div>
                   <label className={c.label}>{t('confirmNewPassword')}</label>
@@ -544,6 +551,7 @@ export default function SettingsModal({
                       className={c.input}
                       placeholder={t('newPasswordPlaceholder')}
                     />
+                    <PasswordStrengthMeter password={newUserPassword} dark />
                   </div>
                   {usersError && <p className="text-xs text-red-400">{usersError}</p>}
                   {usersMessage && <p className="text-xs text-emerald-400">{usersMessage}</p>}

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Shield, LogIn, UserPlus } from 'lucide-react';
 import { User } from '../types';
 import { useT } from '../i18n';
+import { isValidPassword } from '../utils/passwordPolicy';
+import PasswordStrengthMeter from './PasswordStrengthMeter';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: User) => void;
@@ -53,6 +55,10 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (!isValidPassword(password)) {
+      setError(t('passwordErrorTooShort'));
+      return;
+    }
     setLoading(true);
 
     try {
@@ -254,11 +260,12 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
                   className="mt-1 block w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                   id="input-password"
                 />
+                {isRegistering && <PasswordStrengthMeter password={password} />}
               </div>
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || (isRegistering && !isValidPassword(password))}
                 className="w-full mt-6 flex justify-center items-center gap-2 py-2.5 px-4 rounded-lg shadow-xs text-xs uppercase tracking-wider font-bold text-white bg-indigo-700 hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-600 disabled:opacity-50 transition-colors"
                 id="auth-submit-btn"
               >

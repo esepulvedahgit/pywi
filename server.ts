@@ -32,6 +32,17 @@ function verifyToken(token: string): { userId: string } | null {
   }
 }
 
+// Password policy validator — must stay in sync with src/utils/passwordPolicy.ts
+// Rules: min 10 chars, lowercase letter, uppercase letter, digit, special character
+function validatePassword(pw: string): string | null {
+  if (!pw || pw.length < 10) return 'La contraseña debe tener al menos 10 caracteres';
+  if (!/[a-z]/.test(pw)) return 'Debe incluir al menos una letra minúscula';
+  if (!/[A-Z]/.test(pw)) return 'Debe incluir al menos una letra mayúscula';
+  if (!/[0-9]/.test(pw)) return 'Debe incluir al menos un número';
+  if (!/[^A-Za-z0-9]/.test(pw)) return 'Debe incluir al menos un carácter especial';
+  return null;
+}
+
 // Middleware: Require authentication
 const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -880,6 +891,8 @@ app.post('/api/auth/register', async (req, res) => {
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'Todos los campos son obligatorios' });
   }
+  const pwError = validatePassword(password);
+  if (pwError) return res.status(400).json({ error: pwError });
 
   const database = readDB();
 
@@ -1057,9 +1070,8 @@ app.put('/api/users/:userId/password', requireAuth, async (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'Contraseña actual y nueva son obligatorias' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres' });
-  }
+  const pwError = validatePassword(newPassword);
+  if (pwError) return res.status(400).json({ error: pwError });
 
   try {
     const database = readDB();
@@ -1095,9 +1107,8 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'Todos los campos son obligatorios' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
-  }
+  const pwError2 = validatePassword(password);
+  if (pwError2) return res.status(400).json({ error: pwError2 });
 
   const database = readDB();
   const exists = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
@@ -1265,7 +1276,7 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
 
   if (user) {
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
 
     database.resetTokens.push({ userId: user.id, token, expiresAt });
     writeDB(database);
@@ -1290,7 +1301,7 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
             from: config.from,
             to: email,
             subject: 'Restablecer contraseña - Python Web IDE',
-            html: `<p>Haz clic en el enlace para restablecer tu contraseña:</p><a href="${resetUrl}">${resetUrl}</a><p>Este enlace expira en 1 hora.</p>`
+            html: `<p>Haz clic en el enlace para restablecer tu contraseña:</p><a href="${resetUrl}">${resetUrl}</a><p>Este enlace expira en 15 minutos.</p>`
           });
         } catch (err) {
           console.warn('Error enviando email de recuperación:', err);
@@ -1309,6 +1320,8 @@ app.post('/api/auth/reset-password', authStrictLimiter, (req, res) => {
   if (!token || !newPassword) {
     return res.status(400).json({ error: 'Token y contraseña requeridos' });
   }
+  const pwErr = validatePassword(newPassword);
+  if (pwErr) return res.status(400).json({ error: pwErr });
 
   const database = readDB();
   const resetToken = database.resetTokens.find(t => t.token === token);
