@@ -44,7 +44,7 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
   next();
 };
 
-// Middleware: Require admin (for now, only user_default is admin)
+// Middleware: Require admin — verifies role from DB (not from JWT payload)
 const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -54,7 +54,13 @@ const requireAdmin = (req: express.Request, res: express.Response, next: express
   }
 
   const payload = verifyToken(token);
-  if (!payload || payload.userId !== 'user_default') {
+  if (!payload) {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
+  const database = readDB();
+  const user = database.users.find(u => u.id === payload.userId);
+  if (!user || user.role !== 'admin') {
     return res.status(403).json({ error: 'Acceso denegado: se requieren permisos de administrador' });
   }
 
@@ -392,7 +398,10 @@ async function getMetrics(): Promise<ContainerMetrics> {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const { userId, projectId } = req.params;
-    const dest = path.join(APP_DATA_DIR, userId, projectId);
+    const folder = (req.query?.folder as string) || '';
+    // Validate folder path to prevent traversal
+    const safeFolder = /^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(folder) ? folder : '';
+    const dest = path.join(APP_DATA_DIR, userId, projectId, safeFolder);
     if (!fs.existsSync(dest)) {
       fs.mkdirSync(dest, { recursive: true });
     }
@@ -430,6 +439,7 @@ interface SimpleDB {
     username: string;
     email: string;
     passwordHash: string;
+    role: 'admin' | 'user';
     packages?: string[];
     settings?: UserSettings;
     packageUpdates?: {
@@ -443,6 +453,7 @@ interface SimpleDB {
     projectId: string;
     filename: string;
     filepath: string;
+    folder?: string;
     type: 'script' | 'dataset';
     size: number;
     updatedAt: string;
@@ -488,8 +499,18 @@ function writeSmtpConfig(cfg: SmtpConfig) {
   fs.writeFileSync(SMTP_CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
-// Read database (demo user initialization removed)
+// Read database and migrate roles if missing
 const db = readDB();
+{
+  let migrated = false;
+  db.users.forEach((u, i) => {
+    if (!(u as any).role) {
+      (u as any).role = i === 0 ? 'admin' : 'user';
+      migrated = true;
+    }
+  });
+  if (migrated) writeDB(db);
+}
 
 // Basic JSON APIs with Express
 app.use(express.json());
@@ -811,7 +832,14 @@ app.post('/api/pip/update', requireAuth, (req, res) => {
   });
 });
 
-// API: Auth registration
+// API: Check if admin exists (public — used by frontend to hide register tab)
+app.get('/api/auth/admin-exists', (req, res) => {
+  const database = readDB();
+  const adminExists = database.users.some(u => u.role === 'admin');
+  res.json({ adminExists });
+});
+
+// API: Auth registration (only allowed when no users exist; first user becomes admin)
 app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
 
@@ -820,6 +848,11 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const database = readDB();
+
+  if (database.users.length > 0) {
+    return res.status(403).json({ error: 'El registro está deshabilitado. Contacta al administrador.' });
+  }
+
   const exists = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
   if (exists) {
     return res.status(400).json({ error: 'El correo electrónico ya está registrado' });
@@ -829,7 +862,7 @@ app.post('/api/auth/register', async (req, res) => {
     const userId = 'user_' + Math.random().toString(36).substr(2, 9);
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const newUser = { id: userId, username, email, passwordHash };
+    const newUser = { id: userId, username, email, passwordHash, role: 'admin' as const };
     database.users.push(newUser);
     writeDB(database);
 
@@ -870,7 +903,7 @@ print(f"La suma de {a} y {b} es {suma}")
     writeDB(database);
 
     const token = generateToken(userId);
-    res.json({ id: userId, username, email, token });
+    res.json({ id: userId, username, email, role: 'admin', token });
   } catch (err: any) {
     return res.status(500).json({ error: 'Error al registrar usuario' });
   }
@@ -918,6 +951,7 @@ app.post('/api/auth/login', async (req, res) => {
       id: user.id,
       username: user.username,
       email: user.email,
+      role: user.role,
       token,
       restoreNeeded: missingPackages.length > 0,
       restoreCount: missingPackages.length
@@ -932,11 +966,12 @@ app.get('/api/users/:userId/settings', requireAuth, (req, res) => {
   const { userId } = req.params;
   const currentUserId = (req as any).userId;
 
-  if (currentUserId !== userId && currentUserId !== 'user_default') {
+  const database = readDB();
+  const requestingUser = database.users.find(u => u.id === currentUserId);
+  if (currentUserId !== userId && requestingUser?.role !== 'admin') {
     return res.status(403).json({ error: 'Acceso denegado' });
   }
 
-  const database = readDB();
   const user = database.users.find(u => u.id === userId);
 
   if (!user) {
@@ -953,15 +988,16 @@ app.put('/api/users/:userId/settings', requireAuth, (req, res) => {
   const currentUserId = (req as any).userId;
   const { indentation, language } = req.body;
 
-  if (currentUserId !== userId && currentUserId !== 'user_default') {
-    return res.status(403).json({ error: 'Acceso denegado' });
-  }
-
   if (![2, 4].includes(indentation) || !['es', 'en'].includes(language)) {
     return res.status(400).json({ error: 'Configuración inválida' });
   }
 
   const database = readDB();
+  const requestingUser = database.users.find(u => u.id === currentUserId);
+  if (currentUserId !== userId && requestingUser?.role !== 'admin') {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
   const user = database.users.find(u => u.id === userId);
 
   if (!user) {
@@ -972,6 +1008,99 @@ app.put('/api/users/:userId/settings', requireAuth, (req, res) => {
   writeDB(database);
 
   res.json({ success: true, settings: user.settings });
+});
+
+// API: Change own password (any authenticated user)
+app.put('/api/users/:userId/password', requireAuth, async (req, res) => {
+  const { userId } = req.params;
+  const currentUserId = (req as any).userId;
+
+  if (currentUserId !== userId) {
+    return res.status(403).json({ error: 'Sin permisos para cambiar la contraseña de otro usuario' });
+  }
+
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Contraseña actual y nueva son obligatorias' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres' });
+  }
+
+  try {
+    const database = readDB();
+    const user = database.users.find(u => u.id === userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    writeDB(database);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al cambiar la contraseña' });
+  }
+});
+
+// API: List all users (admin only — passwordHash excluded)
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  const database = readDB();
+  const users = database.users.map(({ passwordHash, ...u }) => u);
+  res.json(users);
+});
+
+// API: Create user (admin only)
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  const { username, email, password } = req.body;
+
+  if (!username || !email || !password) {
+    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+  }
+
+  const database = readDB();
+  const exists = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  if (exists) {
+    return res.status(400).json({ error: 'El correo electrónico ya está registrado' });
+  }
+
+  try {
+    const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const newUser = { id: userId, username, email, passwordHash, role: 'user' as const };
+    database.users.push(newUser);
+
+    const projectId = 'proj_' + Math.random().toString(36).substr(2, 9);
+    database.projects.push({ id: projectId, userId, name: 'Mi Primer Proyecto Python', createdAt: new Date().toISOString() });
+
+    const projPath = path.join(APP_DATA_DIR, userId, projectId);
+    if (!fs.existsSync(projPath)) fs.mkdirSync(projPath, { recursive: true });
+
+    const defaultCode = `print("¡Hola Mundo desde el IDE Web para Python!")\na = 15\nb = 27\nprint(f"La suma de {a} y {b} es {a + b}")\n`;
+    fs.writeFileSync(path.join(projPath, 'main.py'), defaultCode);
+
+    database.files.push({
+      id: 'file_' + Math.random().toString(36).substr(2, 9),
+      projectId,
+      filename: 'main.py',
+      filepath: path.join(userId, projectId, 'main.py'),
+      type: 'script',
+      size: Buffer.byteLength(defaultCode),
+      updatedAt: new Date().toISOString()
+    });
+
+    writeDB(database);
+    res.json({ id: userId, username, email, role: 'user' });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al crear el usuario' });
+  }
 });
 
 // API: Get SMTP configuration
@@ -1214,17 +1343,21 @@ app.get('/api/projects/:projectId/files', (req, res) => {
 // API: Create a new file in a project
 app.post('/api/projects/:projectId/files', (req, res) => {
   const { projectId } = req.params;
-  const { userId, filename, content, type } = req.body;
+  const { userId, filename, content, type, folder } = req.body;
 
   if (!filename || !userId) {
     return res.status(400).json({ error: 'Nombre de archivo e ID de usuario son requeridos' });
   }
 
-  // Validate filename is acceptable
   const validExtensions = ['.py', '.csv', '.txt', '.xlsx', '.xls', '.json', '.parquet', '.log'];
   const isValidExt = validExtensions.some(ext => filename.endsWith(ext));
   if (!isValidExt) {
     return res.status(400).json({ error: 'Extensión de archivo inválida. Permitido: .py, .csv, .txt, .xlsx, .xls, .json, .parquet, .log' });
+  }
+
+  // folder allows one level of nesting (e.g. "models" or "models/utils") — no traversal
+  if (folder && !/^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(folder)) {
+    return res.status(400).json({ error: 'Nombre de carpeta inválido' });
   }
 
   const database = readDB();
@@ -1234,14 +1367,13 @@ app.post('/api/projects/:projectId/files', (req, res) => {
   }
 
   const isScript = filename.endsWith('.py');
-  const fileType = isScript ? 'script' : 'dataset';
-
   const projPath = path.join(APP_DATA_DIR, userId, projectId);
-  if (!fs.existsSync(projPath)) {
-    fs.mkdirSync(projPath, { recursive: true });
+  const targetDir = folder ? path.join(projPath, folder) : projPath;
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  const targetPath = path.join(projPath, filename);
+  const targetPath = path.join(targetDir, filename);
   const fileContent = content || '';
   fs.writeFileSync(targetPath, fileContent);
 
@@ -1250,7 +1382,8 @@ app.post('/api/projects/:projectId/files', (req, res) => {
     id: fileId,
     projectId,
     filename,
-    filepath: path.join(userId, projectId, filename),
+    filepath: path.join(userId, projectId, folder || '', filename),
+    ...(folder ? { folder } : {}),
     type: isScript ? 'script' : 'dataset',
     size: Buffer.byteLength(fileContent),
     updatedAt: new Date().toISOString()
@@ -1260,6 +1393,133 @@ app.post('/api/projects/:projectId/files', (req, res) => {
   writeDB(database);
 
   res.json(newFile);
+});
+
+// API: Create folder inside project (scripts only)
+app.post('/api/projects/:projectId/folders', (req, res) => {
+  const { projectId } = req.params;
+  const { userId, folderName } = req.body;
+
+  if (!userId || !folderName) {
+    return res.status(400).json({ error: 'userId y folderName son requeridos' });
+  }
+  if (!/^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(folderName)) {
+    return res.status(400).json({ error: 'Nombre de carpeta inválido. Permite letras, números, guiones y una subcarpeta (ej: modelos/utils).' });
+  }
+
+  const folderPath = path.join(APP_DATA_DIR, userId, projectId, folderName);
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+
+  res.json({ success: true, folderName });
+});
+
+// API: Rename file
+app.patch('/api/projects/:projectId/files/:fileId/rename', (req, res) => {
+  const { projectId, fileId } = req.params;
+  const { userId, newFilename } = req.body;
+
+  if (!userId || !newFilename) {
+    return res.status(400).json({ error: 'userId y newFilename son requeridos' });
+  }
+  if (!newFilename.endsWith('.py') || newFilename.includes('/') || newFilename.includes('..')) {
+    return res.status(400).json({ error: 'Nombre de archivo inválido' });
+  }
+
+  const database = readDB();
+  const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
+  if (!fileRecord) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+  const projectDir = path.join(APP_DATA_DIR, userId, projectId);
+  const oldPath = path.join(projectDir, fileRecord.folder || '', fileRecord.filename);
+  const newPath = path.join(projectDir, fileRecord.folder || '', newFilename);
+
+  try {
+    fs.renameSync(oldPath, newPath);
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al renombrar el archivo en disco' });
+  }
+
+  fileRecord.filename = newFilename;
+  fileRecord.filepath = path.join(userId, projectId, fileRecord.folder || '', newFilename);
+  fileRecord.updatedAt = new Date().toISOString();
+  writeDB(database);
+
+  res.json(fileRecord);
+});
+
+// API: Rename folder (updates all file records referencing the old path)
+app.patch('/api/projects/:projectId/folders/rename', (req, res) => {
+  const { projectId } = req.params;
+  const { userId, oldPath: oldFolderPath, newPath: newFolderPath } = req.body;
+
+  if (!userId || !oldFolderPath || !newFolderPath) {
+    return res.status(400).json({ error: 'userId, oldPath y newPath son requeridos' });
+  }
+  const folderRegex = /^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/;
+  if (!folderRegex.test(oldFolderPath) || !folderRegex.test(newFolderPath)) {
+    return res.status(400).json({ error: 'Nombre de carpeta inválido' });
+  }
+
+  const projectDir = path.join(APP_DATA_DIR, userId, projectId);
+  const oldFsPath = path.join(projectDir, oldFolderPath);
+  const newFsPath = path.join(projectDir, newFolderPath);
+
+  if (!fs.existsSync(oldFsPath)) {
+    return res.status(404).json({ error: 'Carpeta no encontrada' });
+  }
+  try {
+    fs.renameSync(oldFsPath, newFsPath);
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al renombrar la carpeta en disco' });
+  }
+
+  const database = readDB();
+  database.files.forEach(f => {
+    if (f.projectId !== projectId) return;
+    if (f.folder === oldFolderPath) {
+      f.folder = newFolderPath;
+      f.filepath = path.join(userId, projectId, newFolderPath, f.filename);
+    } else if (f.folder?.startsWith(oldFolderPath + '/')) {
+      f.folder = newFolderPath + f.folder.slice(oldFolderPath.length);
+      f.filepath = path.join(userId, projectId, f.folder, f.filename);
+    }
+  });
+  writeDB(database);
+
+  res.json({ success: true });
+});
+
+// API: Delete folder and all its contents (cascade)
+app.delete('/api/projects/:projectId/folders', (req, res) => {
+  const { projectId } = req.params;
+  const { userId, folderPath } = req.body;
+
+  if (!userId || !folderPath) {
+    return res.status(400).json({ error: 'userId y folderPath son requeridos' });
+  }
+  if (!/^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(folderPath)) {
+    return res.status(400).json({ error: 'Nombre de carpeta inválido' });
+  }
+
+  const fsDirPath = path.join(APP_DATA_DIR, userId, projectId, folderPath);
+  try {
+    if (fs.existsSync(fsDirPath)) {
+      fs.rmSync(fsDirPath, { recursive: true, force: true });
+    }
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al eliminar la carpeta del disco' });
+  }
+
+  const database = readDB();
+  database.files = database.files.filter(f =>
+    f.projectId !== projectId ||
+    (f.folder !== folderPath && !f.folder?.startsWith(folderPath + '/'))
+  );
+  writeDB(database);
+
+  res.json({ success: true });
 });
 
 // API: Get file content
@@ -1327,7 +1587,7 @@ app.delete('/api/projects/:projectId/files/:fileId', (req, res) => {
     return res.status(404).json({ error: 'Archivo no encontrado' });
   }
 
-  const actualPath = path.join(APP_DATA_DIR, userId, projectId, fileRecord.filename);
+  const actualPath = path.join(APP_DATA_DIR, userId, projectId, fileRecord.folder || '', fileRecord.filename);
   if (fs.existsSync(actualPath)) {
     try {
       fs.unlinkSync(actualPath);
@@ -1342,7 +1602,7 @@ app.delete('/api/projects/:projectId/files/:fileId', (req, res) => {
   res.json({ success: true });
 });
 
-// API: Upload dataset
+// API: Upload dataset or script file
 app.post('/api/projects/:projectId/upload/:userId', (req, res) => {
   upload.single('dataset')(req, res, (err) => {
     if (err) {
@@ -1353,27 +1613,32 @@ app.post('/api/projects/:projectId/upload/:userId', (req, res) => {
     }
 
     const { projectId, userId } = req.params;
+    const rawFolder = req.query?.folder as string | undefined;
+    const uploadFolder = rawFolder && /^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(rawFolder) ? rawFolder : undefined;
     const database = readDB();
 
-    // Check if file metadata already exists
     const filename = req.file.filename;
-    let fileRecord = database.files.find(f => f.projectId === projectId && f.filename === filename);
+    const isScript = filename.endsWith('.py');
+    const fileType: 'script' | 'dataset' = isScript ? 'script' : 'dataset';
+
+    let fileRecord = database.files.find(f => f.projectId === projectId && f.filename === filename && f.folder === uploadFolder);
 
     if (fileRecord) {
       fileRecord.size = req.file.size;
       fileRecord.updatedAt = new Date().toISOString();
     } else {
-      const newDataset: SimpleDB['files'][0] = {
+      const newFile: SimpleDB['files'][0] = {
         id: 'file_' + Math.random().toString(36).substr(2, 9),
         projectId,
         filename,
-        filepath: path.join(userId, projectId, filename),
-        type: 'dataset',
+        filepath: path.join(userId, projectId, uploadFolder || '', filename),
+        ...(uploadFolder ? { folder: uploadFolder } : {}),
+        type: fileType,
         size: req.file.size,
         updatedAt: new Date().toISOString()
       };
-      database.files.push(newDataset);
-      fileRecord = newDataset;
+      database.files.push(newFile);
+      fileRecord = newFile;
     }
 
     writeDB(database);
@@ -1401,7 +1666,10 @@ app.post('/api/projects/:projectId/files/:fileId/run', (req, res) => {
     fs.mkdirSync(projectDir, { recursive: true });
   }
 
-  const filepath = path.join(projectDir, fileRecord.filename);
+  const scriptRelPath = fileRecord.folder
+    ? path.join(fileRecord.folder, fileRecord.filename)
+    : fileRecord.filename;
+  const filepath = path.join(projectDir, scriptRelPath);
 
   // If editor is sending updated script code before run, save it first
   if (runCode !== undefined) {
@@ -1417,14 +1685,13 @@ app.post('/api/projects/:projectId/files/:fileId/run', (req, res) => {
     // If we have actual python installed, run it!
     if (hasPython) {
       const venvPython = getVenvPythonPath();
-      let cmd = venvPython ? `"${venvPython}" "${fileRecord.filename}"` : `python3 "${fileRecord.filename}"`;
-      
+      let cmd = venvPython ? `"${venvPython}" "${scriptRelPath}"` : `python3 "${scriptRelPath}"`;
+
       if (!venvPython) {
         try {
-          // Fallback cmd if python3 returns error on Windows dev hosts
           execSync('python3 --version', { stdio: 'ignore' });
         } catch (err) {
-          cmd = `python "${fileRecord.filename}"`;
+          cmd = `python "${scriptRelPath}"`;
         }
       }
 

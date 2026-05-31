@@ -7,6 +7,7 @@ export interface User {
   id: string;
   username: string;
   email: string;
+  role: 'admin' | 'user';
   settings?: UserSettings;
 }
 
@@ -22,6 +23,7 @@ export interface FileItem {
   projectId: string;
   filename: string;
   filepath: string; // relative to workspace root
+  folder?: string;  // subfolder within project (scripts only)
   type: 'script' | 'dataset'; // script is .py, dataset is csv/txt/etc.
   size: number; // in bytes
   updatedAt: string;

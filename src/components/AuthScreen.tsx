@@ -4,9 +4,10 @@ import { User } from '../types';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: User) => void;
+  adminExists: boolean;
 }
 
-export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
+export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenProps) {
   const [isRegistering, setIsRegistering] = useState(false);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -97,30 +98,38 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
             </div>
           )}
 
-          <div className="flex border-b border-slate-200 mb-6" id="auth-tab">
-            <button
-              onClick={() => { setIsRegistering(false); setError(''); }}
-              className={`flex-1 pb-3 text-center font-bold text-xs uppercase tracking-wider transition-colors border-b-2 ${
-                !isRegistering
-                  ? 'border-indigo-700 text-indigo-600'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-              id="tab-login"
-            >
-              Iniciar Sesión
-            </button>
-            <button
-              onClick={() => { setIsRegistering(true); setError(''); }}
-              className={`flex-1 pb-3 text-center font-bold text-xs uppercase tracking-wider transition-colors border-b-2 ${
-                isRegistering
-                  ? 'border-indigo-700 text-indigo-600'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-              id="tab-register"
-            >
-              Registrarse
-            </button>
-          </div>
+          {!adminExists ? (
+            <div className="flex border-b border-slate-200 mb-6" id="auth-tab">
+              <button
+                onClick={() => { setIsRegistering(false); setError(''); }}
+                className={`flex-1 pb-3 text-center font-bold text-xs uppercase tracking-wider transition-colors border-b-2 ${
+                  !isRegistering
+                    ? 'border-indigo-700 text-indigo-600'
+                    : 'border-transparent text-slate-400 hover:text-slate-600'
+                }`}
+                id="tab-login"
+              >
+                Iniciar Sesión
+              </button>
+              <button
+                onClick={() => { setIsRegistering(true); setError(''); }}
+                className={`flex-1 pb-3 text-center font-bold text-xs uppercase tracking-wider transition-colors border-b-2 ${
+                  isRegistering
+                    ? 'border-indigo-700 text-indigo-600'
+                    : 'border-transparent text-slate-400 hover:text-slate-600'
+                }`}
+                id="tab-register"
+              >
+                Registrarse
+              </button>
+            </div>
+          ) : (
+            <div className="pb-4 mb-2 border-b border-slate-200" id="auth-tab">
+              <p className="text-center font-bold text-xs uppercase tracking-wider text-indigo-600 border-b-2 border-indigo-700 pb-3">
+                Iniciar Sesión
+              </p>
+            </div>
+          )}
 
           <form className="space-y-4 text-slate-700" onSubmit={isRegistering ? handleRegister : handleLogin}>
             {isRegistering && (

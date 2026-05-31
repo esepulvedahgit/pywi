@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { ExecutionResult } from '../types';
 
 interface ParsedPythonError {
@@ -80,16 +80,20 @@ interface ConsoleSheetProps {
   result: ExecutionResult | null;
   isOpen: boolean;
   onClose: () => void;
+  onClear: () => void;
   isExpanded: boolean;
   onToggleExpand: () => void;
+  isRunning?: boolean;
 }
 
 export default function ConsoleSheet({
   result,
   isOpen,
   onClose,
+  onClear,
   isExpanded,
-  onToggleExpand
+  onToggleExpand,
+  isRunning = false,
 }: ConsoleSheetProps) {
   const [showRawTrace, setShowRawTrace] = useState(false);
   const [customHeight, setCustomHeight] = useState<number | null>(null);
@@ -170,6 +174,17 @@ export default function ConsoleSheet({
                 <span className="text-slate-600">|</span>
                 <span className="text-slate-500">{result.timestamp.substring(11, 19)} UTC</span>
               </div>
+            )}
+
+            {result && (
+              <button
+                onClick={onClear}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                title="Limpiar consola"
+                id="btn-clear-console"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             )}
 
             <button
@@ -284,7 +299,11 @@ export default function ConsoleSheet({
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 italic gap-2 py-8">
               <Terminal className="h-8 w-8 text-slate-700 animate-pulse" />
-              <span>Esperando ejecución... escribe código y presiona "Ejecutar"</span>
+              {isRunning ? (
+                <span>En ejecución, esperando resultados...</span>
+              ) : (
+                <span>Esperando ejecución... escribe código y presiona "Ejecutar"</span>
+              )}
             </div>
           )}
         </div>

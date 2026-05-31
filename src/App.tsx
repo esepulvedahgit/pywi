@@ -39,6 +39,14 @@ function AppContent() {
     const saved = localStorage.getItem('py_ide_user');
     return saved ? JSON.parse(saved) : null;
   });
+  const [adminExists, setAdminExists] = useState<boolean>(true);
+
+  useEffect(() => {
+    fetch('/api/auth/admin-exists')
+      .then(r => r.json())
+      .then(d => setAdminExists(d.adminExists))
+      .catch(() => setAdminExists(true));
+  }, []);
 
   // User settings & language state
   const [userSettings, setUserSettings] = useState<UserSettings>({ indentation: 4, language: 'es' });
@@ -74,6 +82,7 @@ function AppContent() {
   
   // File state
   const [files, setFiles] = useState<FileItem[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
   const [currentFile, setCurrentFile] = useState<FileItem | null>(null);
   const [code, setCode] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
@@ -173,6 +182,7 @@ function AppContent() {
       setProjects([]);
       setCurrentProject(null);
       setFiles([]);
+      setFolders([]);
       setCurrentFile(null);
       setCode('');
     }
@@ -219,6 +229,9 @@ function AppContent() {
       const data = await res.json();
       if (Array.isArray(data)) {
         setFiles(data);
+        // Derive folders from existing file records (reset first to avoid stale folders from prior project)
+        const fileFolders = [...new Set(data.filter((f: any) => f.folder).map((f: any) => f.folder as string))];
+        setFolders(fileFolders);
         if (data.length > 0) {
           // Prefer main.py script
           const mainFile = data.find(f => f.filename === 'main.py');
@@ -360,6 +373,9 @@ function AppContent() {
     }
   };
 
+  // Upload notice: shown after dataset upload to remind user of correct path
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+
   // API Call: Upload files via dataset multer engine
   const handleUploadDataset = async (file: File) => {
     if (!user || !currentProject) return;
@@ -373,13 +389,166 @@ function AppContent() {
       });
       const data = await res.json();
       if (res.ok) {
-        // Refresh project files details
         fetchFiles(currentProject.id);
+        setUploadNotice(data.filename);
       } else {
         alert(data.error || 'Error al subir dataset');
       }
     } catch (err) {
       console.error('Error uploading dataset:', err);
+    }
+  };
+
+  // Upload a .py script file (optionally into a folder)
+  const handleUploadScript = async (file: File, folder?: string) => {
+    if (!user || !currentProject) return;
+    const formData = new FormData();
+    formData.append('dataset', file);
+    const query = folder ? `?folder=${encodeURIComponent(folder)}` : '';
+
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/upload/${user.id}${query}`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchFiles(currentProject.id);
+        if (folder) setFolders(prev => prev.includes(folder) ? prev : [...prev, folder]);
+        setCurrentFile(data);
+      } else {
+        alert(data.error || 'Error al subir script');
+      }
+    } catch (err) {
+      console.error('Error uploading script:', err);
+    }
+  };
+
+  // Create a folder inside the current project
+  const handleCreateFolder = async (folderName: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, folderName })
+      });
+      if (res.ok) {
+        // Add to folders state immediately so it appears in the sidebar
+        setFolders(prev => prev.includes(folderName) ? prev : [...prev, folderName]);
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al crear carpeta');
+      }
+    } catch (err) {
+      console.error('Error creating folder:', err);
+    }
+  };
+
+  // Create a file inside a specific folder
+  const handleCreateFileInFolder = async (filename: string, folder: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          filename,
+          content: `# ${filename}\n`,
+          type: 'script',
+          folder
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFiles(prev => [...prev, data]);
+        setCurrentFile(data);
+      } else {
+        alert(data.error || 'Error al crear archivo');
+      }
+    } catch (err) {
+      console.error('Error creating file in folder:', err);
+    }
+  };
+
+  // Rename a script file
+  const handleRenameFile = async (fileId: string, newFilename: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/files/${fileId}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, newFilename })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFiles(prev => prev.map(f => f.id === fileId ? { ...f, filename: data.filename, filepath: data.filepath } : f));
+        if (currentFile?.id === fileId) setCurrentFile(prev => prev ? { ...prev, filename: data.filename } : prev);
+      } else {
+        alert(data.error || 'Error al renombrar');
+      }
+    } catch (err) {
+      console.error('Error renaming file:', err);
+    }
+  };
+
+  // Rename a folder (updates all child file records)
+  const handleRenameFolder = async (oldPath: string, newPath: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/folders/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, oldPath, newPath })
+      });
+      if (res.ok) {
+        setFolders(prev => prev.map(f => {
+          if (f === oldPath) return newPath;
+          if (f.startsWith(oldPath + '/')) return newPath + f.slice(oldPath.length);
+          return f;
+        }));
+        setFiles(prev => prev.map(f => {
+          if (f.folder === oldPath) return { ...f, folder: newPath };
+          if (f.folder?.startsWith(oldPath + '/')) return { ...f, folder: newPath + f.folder!.slice(oldPath.length) };
+          return f;
+        }));
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al renombrar carpeta');
+      }
+    } catch (err) {
+      console.error('Error renaming folder:', err);
+    }
+  };
+
+  // Delete a folder and all its contents (cascade)
+  const handleDeleteFolder = async (folderPath: string) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/folders`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, folderPath })
+      });
+      if (res.ok) {
+        setFolders(prev => prev.filter(f => f !== folderPath && !f.startsWith(folderPath + '/')));
+        setFiles(prev => {
+          const removed = prev.filter(f => f.folder === folderPath || f.folder?.startsWith(folderPath + '/'));
+          if (currentFile && removed.some(f => f.id === currentFile.id)) {
+            const remaining = prev.filter(f => f.folder !== folderPath && !f.folder?.startsWith(folderPath + '/'));
+            const nextScript = remaining.find(f => f.type === 'script');
+            setCurrentFile(nextScript ?? null);
+            if (!nextScript) setCode('');
+          }
+          return prev.filter(f => f.folder !== folderPath && !f.folder?.startsWith(folderPath + '/'));
+        });
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Error al eliminar carpeta');
+      }
+    } catch (err) {
+      console.error('Error deleting folder:', err);
     }
   };
 
@@ -526,7 +695,7 @@ function AppContent() {
   };
 
   if (!user) {
-    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
+    return <AuthScreen onLoginSuccess={handleLoginSuccess} adminExists={adminExists} />;
   }
 
   const t = getThemeClasses(activeTheme);
@@ -561,6 +730,13 @@ function AppContent() {
         onCreateFile={handleCreateFile}
         onDeleteFile={handleDeleteFile}
         onUploadDataset={handleUploadDataset}
+        onUploadScript={handleUploadScript}
+        folders={folders}
+        onCreateFolder={handleCreateFolder}
+        onCreateFileInFolder={handleCreateFileInFolder}
+        onRenameFile={handleRenameFile}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
         onLogout={handleLogout}
         isOpenOnMobile={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
@@ -1100,8 +1276,10 @@ function AppContent() {
           result={executionResult}
           isOpen={isConsoleOpen}
           onClose={() => setIsConsoleOpen(false)}
+          onClear={() => setExecutionResult(null)}
           isExpanded={isConsoleExpanded}
           onToggleExpand={() => setIsConsoleExpanded(!isConsoleExpanded)}
+          isRunning={isRunning}
         />
 
         {/* Settings Modal */}
@@ -1109,12 +1287,42 @@ function AppContent() {
           isOpen={showSettingsModal}
           onClose={() => setShowSettingsModal(false)}
           userId={user.id}
+          userRole={user.role}
           userSettings={userSettings}
           onSettingsSaved={(settings) => {
             setUserSettings(settings);
             setLang(settings.language);
           }}
         />
+
+        {/* Upload path notice — shown immediately after a dataset is uploaded */}
+        {uploadNotice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setUploadNotice(null)}>
+            <div className="bg-slate-900 border border-amber-500/60 rounded-xl shadow-2xl p-5 max-w-sm w-full mx-4" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+              <div className="flex items-start gap-3 mb-4">
+                <span className="text-amber-400 text-xl shrink-0">⚠️</span>
+                <div>
+                  <p className="text-slate-100 text-sm font-semibold mb-1">Archivo subido correctamente</p>
+                  <p className="text-slate-300 text-xs leading-relaxed">
+                    Para usarlo en tu script, reemplaza el valor de tu variable de ruta por:
+                  </p>
+                  <div className="mt-2 px-3 py-2 bg-slate-800 rounded-lg border border-slate-700">
+                    <code className="text-amber-300 text-sm font-mono">'{uploadNotice}'</code>
+                  </div>
+                  <p className="text-slate-400 text-[11px] mt-2">
+                    Si usas otra ruta obtendrás un error al ejecutar.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setUploadNotice(null)}
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                Aceptar
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

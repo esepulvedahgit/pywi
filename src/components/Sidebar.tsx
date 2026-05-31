@@ -1,19 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Plus, 
-  Folder, 
-  FileCode, 
-  Database, 
-  Trash2, 
-  Upload, 
-  X, 
-  FolderPlus, 
-  ChevronRight, 
+import {
+  Plus,
+  Folder,
+  FileCode,
+  Database,
+  Trash2,
+  Upload,
+  X,
+  FolderPlus,
+  ChevronRight,
   FileText,
   User,
   LogOut,
   Sparkles,
-  Package
+  Package,
+  Pencil
 } from 'lucide-react';
 import { Project, FileItem } from '../types';
 
@@ -29,7 +30,14 @@ interface SidebarProps {
   onSelectFile: (fileId: string) => void;
   onCreateFile: (filename: string) => void;
   onDeleteFile: (fileId: string) => void;
+  folders: string[];
   onUploadDataset: (file: File) => void;
+  onUploadScript: (file: File) => void;
+  onCreateFolder: (folderName: string) => void;
+  onCreateFileInFolder: (filename: string, folder: string) => void;
+  onRenameFile: (fileId: string, newFilename: string) => void;
+  onRenameFolder: (oldPath: string, newPath: string) => void;
+  onDeleteFolder: (folderPath: string) => void;
   onLogout: () => void;
   isOpenOnMobile: boolean;
   onCloseMobile: () => void;
@@ -122,7 +130,14 @@ export default function Sidebar({
   onSelectFile,
   onCreateFile,
   onDeleteFile,
+  folders,
   onUploadDataset,
+  onUploadScript,
+  onCreateFolder,
+  onCreateFileInFolder,
+  onRenameFile,
+  onRenameFolder,
+  onDeleteFolder,
   onLogout,
   isOpenOnMobile,
   onCloseMobile,
@@ -134,8 +149,20 @@ export default function Sidebar({
   const [showNewProjInput, setShowNewProjInput] = useState(false);
   const [newFileName, setNewFileName] = useState('');
   const [showNewFileInput, setShowNewFileInput] = useState(false);
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFileInFolder, setNewFileInFolder] = useState<{ folder: string; name: string } | null>(null);
+  const [newSubFolderFor, setNewSubFolderFor] = useState<{ parent: string; name: string } | null>(null);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
+  const [copiedDataset, setCopiedDataset] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(false);
+  const [scriptUploadProgress, setScriptUploadProgress] = useState(false);
   const [metrics, setMetrics] = useState({
     memUsed: 0,
     memTotal: 1,
@@ -180,15 +207,89 @@ export default function Sidebar({
     e.preventDefault();
     let name = newFileName.trim();
     if (!name) return;
-    
-    // Auto-append .py if no extension given
-    if (!name.includes('.')) {
-      name += '.py';
+    if (!name.includes('.')) name += '.py';
+    if (activeFolder) {
+      onCreateFileInFolder(name, activeFolder);
+    } else {
+      onCreateFile(name);
     }
-
-    onCreateFile(name);
     setNewFileName('');
     setShowNewFileInput(false);
+  };
+
+  const handleCreateFolderSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newFolderName.trim();
+    if (!name) return;
+    const fullName = activeFolder ? `${activeFolder}/${name}` : name;
+    onCreateFolder(fullName);
+    setNewFolderName('');
+    setShowNewFolderInput(false);
+  };
+
+  const handleRenameSubmit = (e: React.FormEvent, type: 'file' | 'folder', id: string, originalName: string) => {
+    e.preventDefault();
+    const val = renameValue.trim();
+    if (!val || val === originalName) { setRenamingId(null); return; }
+    if (type === 'file') {
+      const name = val.includes('.') ? val : val + '.py';
+      onRenameFile(id, name);
+    } else {
+      const parentPrefix = id.includes('/') ? id.substring(0, id.lastIndexOf('/') + 1) : '';
+      onRenameFolder(id, parentPrefix + val);
+    }
+    setRenamingId(null);
+    setRenameValue('');
+  };
+
+  const handleCreateFileInFolderSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFileInFolder) return;
+    let name = newFileInFolder.name.trim();
+    if (!name) return;
+    if (!name.includes('.')) name += '.py';
+    onCreateFileInFolder(name, newFileInFolder.folder);
+    setNewFileInFolder(null);
+  };
+
+  const handleCreateSubFolderSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSubFolderFor) return;
+    const name = newSubFolderFor.name.trim();
+    if (!name) return;
+    const fullPath = `${newSubFolderFor.parent}/${name}`;
+    onCreateFolder(fullPath);
+    setNewSubFolderFor(null);
+  };
+
+  const handleScriptUploadToFolder = async (e: React.ChangeEvent<HTMLInputElement>, folder: string) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    setScriptUploadProgress(true);
+    await onUploadScript(file, folder);
+    setScriptUploadProgress(false);
+    e.target.value = '';
+  };
+
+  const handleScriptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    setScriptUploadProgress(true);
+    await onUploadScript(file, activeFolder ?? undefined);
+    setScriptUploadProgress(false);
+    e.target.value = '';
+  };
+
+  const toggleFolder = (folder: string) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      next.has(folder) ? next.delete(folder) : next.add(folder);
+      return next;
+    });
+  };
+
+  const handleDatasetClick = (filename: string) => {
+    setCopiedDataset(prev => prev === filename ? null : filename);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -345,118 +446,392 @@ export default function Sidebar({
         <div className="flex-1 overflow-y-auto p-4 space-y-4 select-none">
           {/* Main python scripts section */}
           <div>
-            <div className="flex items-center justify-between mb-2">
+            {/* Header: buttons + active context indicator */}
+            <div className="flex items-center justify-between mb-1">
               <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1`}>
                 <FileCode className="h-3.5 w-3.5 text-indigo-500" /> Scripts (.py)
               </span>
-              <button
-                onClick={() => setShowNewFileInput(!showNewFileInput)}
-                className="p-0.5 text-indigo-500 hover:bg-slate-200/80 rounded transition-colors"
-                title="Nuevo script Python"
-                id="btn-add-script-icon"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <label className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors cursor-pointer relative" title={activeFolder ? `Subir .py en ${activeFolder}/` : 'Subir .py'}>
+                  <Upload className="h-3.5 w-3.5" />
+                  <input type="file" accept=".py" onChange={handleScriptUpload} className="absolute inset-0 opacity-0 w-full cursor-pointer" />
+                </label>
+                <button onClick={() => { setShowNewFolderInput(!showNewFolderInput); setShowNewFileInput(false); }}
+                  className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors"
+                  title={activeFolder ? `Nueva carpeta en ${activeFolder}/` : 'Nueva carpeta'}>
+                  <FolderPlus className="h-3.5 w-3.5" />
+                </button>
+                <button onClick={() => { setShowNewFileInput(!showNewFileInput); setShowNewFolderInput(false); }}
+                  className="p-0.5 text-indigo-500 hover:bg-slate-200/80 rounded transition-colors"
+                  title={activeFolder ? `Nuevo script en ${activeFolder}/` : 'Nuevo script'}>
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
+
+            {/* Active folder context badge */}
+            {activeFolder && (
+              <div className="flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20">
+                <Folder className="h-3 w-3 text-indigo-400 shrink-0" />
+                <span className="text-[10px] text-indigo-400 font-mono truncate flex-1">{activeFolder}/</span>
+                <button onClick={() => setActiveFolder(null)} className="text-indigo-300 hover:text-indigo-100 shrink-0">
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+
+            {scriptUploadProgress && (
+              <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded bg-indigo-50 text-indigo-600 text-[10px]">
+                <div className="h-3 w-3 border border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                Subiendo script...
+              </div>
+            )}
 
             {showNewFileInput && (
               <form onSubmit={handleCreateFileSubmit} className={`mb-2 p-1.5 ${s.scriptForm} rounded-lg border`}>
-                <input
-                  type="text"
-                  required
-                  placeholder="ej. modelo.py"
-                  value={newFileName}
-                  onChange={(e) => setNewFileName(e.target.value)}
-                  className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 text-mono`}
-                  id="input-new-script-name"
-                />
+                <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? `En: ${activeFolder}/` : 'En: raíz'}</p>
+                <input type="text" required placeholder="ej. modelo.py" autoFocus
+                  value={newFileName} onChange={(e) => setNewFileName(e.target.value)}
+                  className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
                 <div className="flex justify-end gap-1 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => { setShowNewFileInput(false); setNewFileName(''); }}
-                    className={`px-1 py-0.5 text-[9px] ${s.subText} hover:text-slate-600`}
-                  >
-                    Salir
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium"
-                  >
-                    Guardar
-                  </button>
+                  <button type="button" onClick={() => { setShowNewFileInput(false); setNewFileName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
+                  <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
                 </div>
               </form>
             )}
 
-            <div className="space-y-1" id="scripts-list">
-              {files.filter(f => f.type === 'script').map((f) => (
-                <div
-                  key={f.id}
-                  className={`group flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer select-none transition-all ${
-                    currentFileId === f.id
-                      ? s.scriptActive
-                      : s.scriptInactive
-                  }`}
-                  onClick={() => onSelectFile(f.id)}
-                  id={`file-item-${f.id}`}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
-                    <span className="font-mono truncate">{f.filename}</span>
-                  </div>
-                  {/* Delete script button */}
-                  {f.filename !== 'main.py' && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`¿Eliminar script "${f.filename}"?`)) {
-                          onDeleteFile(f.id);
-                        }
-                      }}
-                      className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 rounded hover:bg-slate-100 transition-all shrink-0"
-                      title="Eliminar archivo"
+            {showNewFolderInput && (
+              <form onSubmit={handleCreateFolderSubmit} className={`mb-2 p-1.5 ${s.scriptForm} rounded-lg border`}>
+                <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? `En: ${activeFolder}/` : 'En: raíz'}</p>
+                <input type="text" required placeholder="ej. modelos" autoFocus
+                  value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
+                  className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
+                <div className="flex justify-end gap-1 mt-1">
+                  <button type="button" onClick={() => { setShowNewFolderInput(false); setNewFolderName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
+                  <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                </div>
+              </form>
+            )}
+
+            <div className="space-y-0.5" id="scripts-list">
+              {/* Root-level scripts (no folder) */}
+              {files.filter(f => f.type === 'script' && !f.folder).map((f) => (
+                <div key={f.id} id={`file-item-${f.id}`}>
+                  {renamingId === f.id ? (
+                    <form onSubmit={(e) => handleRenameSubmit(e, 'file', f.id, f.filename)}
+                      className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                      <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                        onBlur={(e) => handleRenameSubmit(e as any, 'file', f.id, f.filename)}
+                        className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                      <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                    </form>
+                  ) : (
+                    <div
+                      className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer select-none transition-all ${currentFileId === f.id ? s.scriptActive : s.scriptInactive}`}
+                      onClick={() => { onSelectFile(f.id); setActiveFolder(null); }}
                     >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
+                        <span className="font-mono truncate">{f.filename}</span>
+                      </div>
+                      {f.filename !== 'main.py' && (
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
+                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar">
+                            <Pencil className="h-2.5 w-2.5" />
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Eliminar "${f.filename}"?`)) onDeleteFile(f.id); }}
+                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar">
+                            <Trash2 className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}
-              {files.filter(f => f.type === 'script').length === 0 && (
+
+              {/* Folders — top-level only */}
+              {[...new Set([
+                ...folders.filter(f => !f.includes('/')),
+                ...files.filter(f => f.type === 'script' && f.folder && !f.folder.includes('/')).map(f => f.folder!)
+              ])].map(folder => {
+                const subfolders = [...new Set([
+                  ...folders.filter(p => p.startsWith(`${folder}/`)),
+                  ...files.filter(f => f.type === 'script' && f.folder?.startsWith(`${folder}/`)).map(f => f.folder!)
+                ])];
+                const isCollapsed = collapsedFolders.has(folder);
+                const isActive = activeFolder === folder;
+
+                return (
+                  <div key={folder}>
+                    {/* Folder header row */}
+                    {renamingId === folder ? (
+                      <form onSubmit={(e) => handleRenameSubmit(e, 'folder', folder, folder.split('/').pop()!)}
+                        className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                        <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                          onBlur={(e) => handleRenameSubmit(e as any, 'folder', folder, folder.split('/').pop()!)}
+                          className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                        <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                      </form>
+                    ) : (
+                      <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs select-none transition-all cursor-pointer ${isActive ? 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-400' : s.scriptInactive}`}
+                        onClick={() => { setActiveFolder(isActive ? null : folder); toggleFolder(folder); }}>
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'} ${isActive ? 'text-indigo-400' : 'text-slate-400'}`} />
+                          <Folder className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'text-indigo-400' : 'text-amber-500'}`} />
+                          <span className="font-mono truncate font-medium">{folder}/</span>
+                        </div>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button onClick={(e) => { e.stopPropagation(); setRenamingId(folder); setRenameValue(folder.split('/').pop()!); }}
+                            className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar carpeta">
+                            <Pencil className="h-2.5 w-2.5" />
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteFolder(folder); }}
+                            className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar carpeta">
+                            <Trash2 className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Folder delete confirmation */}
+                    {confirmDeleteFolder === folder && (
+                      <div className="ml-2 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-red-300">¿Eliminar <span className="font-mono font-bold">{folder}/</span> y todo su contenido?</span>
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => { onDeleteFolder(folder); setConfirmDeleteFolder(null); setActiveFolder(null); }}
+                            className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">Sí</button>
+                          <button onClick={() => setConfirmDeleteFolder(null)}
+                            className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">No</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* New file/subfolder forms */}
+                    {newFileInFolder?.folder === folder && (
+                      <form onSubmit={handleCreateFileInFolderSubmit} className={`ml-4 mb-1 p-1.5 ${s.scriptForm} rounded-lg border`}>
+                        <input type="text" required placeholder="ej. pipeline.py" autoFocus
+                          value={newFileInFolder.name} onChange={(e) => setNewFileInFolder({ folder, name: e.target.value })}
+                          className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
+                        <div className="flex justify-end gap-1 mt-1">
+                          <button type="button" onClick={() => setNewFileInFolder(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
+                          <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                        </div>
+                      </form>
+                    )}
+                    {newSubFolderFor?.parent === folder && (
+                      <form onSubmit={handleCreateSubFolderSubmit} className={`ml-4 mb-1 p-1.5 ${s.scriptForm} rounded-lg border`}>
+                        <input type="text" required placeholder="ej. utils" autoFocus
+                          value={newSubFolderFor.name} onChange={(e) => setNewSubFolderFor({ parent: folder, name: e.target.value })}
+                          className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
+                        <div className="flex justify-end gap-1 mt-1">
+                          <button type="button" onClick={() => setNewSubFolderFor(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
+                          <button type="submit" className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-[9px] font-medium">Crear</button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Folder contents */}
+                    {!isCollapsed && (
+                      <div className="ml-4 space-y-0.5">
+                        {files.filter(f => f.type === 'script' && f.folder === folder).map(f => (
+                          <div key={f.id}>
+                            {renamingId === f.id ? (
+                              <form onSubmit={(e) => handleRenameSubmit(e, 'file', f.id, f.filename)}
+                                className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                                <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                                  onBlur={(e) => handleRenameSubmit(e as any, 'file', f.id, f.filename)}
+                                  className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                                <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                              </form>
+                            ) : (
+                              <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer select-none transition-all ${currentFileId === f.id ? s.scriptActive : s.scriptInactive}`}
+                                onClick={() => { onSelectFile(f.id); setActiveFolder(folder); }}>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
+                                  <span className="font-mono truncate">{f.filename}</span>
+                                </div>
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
+                                    className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar">
+                                    <Pencil className="h-2.5 w-2.5" />
+                                  </button>
+                                  <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Eliminar "${f.filename}"?`)) onDeleteFile(f.id); }}
+                                    className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar">
+                                    <Trash2 className="h-2.5 w-2.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {/* Subfolders */}
+                        {subfolders.map(subPath => {
+                          const isSubActive = activeFolder === subPath;
+                          return (
+                            <div key={subPath}>
+                              {renamingId === subPath ? (
+                                <form onSubmit={(e) => handleRenameSubmit(e, 'folder', subPath, subPath.split('/').pop()!)}
+                                  className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                                  <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                                    onBlur={(e) => handleRenameSubmit(e as any, 'folder', subPath, subPath.split('/').pop()!)}
+                                    className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                                  <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                                </form>
+                              ) : (
+                                <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs select-none transition-all cursor-pointer ${isSubActive ? 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-400' : s.scriptInactive}`}
+                                  onClick={() => { setActiveFolder(isSubActive ? null : subPath); toggleFolder(subPath); }}>
+                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                    <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${collapsedFolders.has(subPath) ? '' : 'rotate-90'} ${isSubActive ? 'text-indigo-400' : 'text-slate-400'}`} />
+                                    <Folder className={`h-3 w-3 shrink-0 ${isSubActive ? 'text-indigo-400' : 'text-amber-400'}`} />
+                                    <span className="font-mono truncate text-[10px]">{subPath.split('/')[1]}/</span>
+                                  </div>
+                                  <div className="flex items-center gap-0.5 shrink-0">
+                                    <button onClick={(e) => { e.stopPropagation(); setRenamingId(subPath); setRenameValue(subPath.split('/').pop()!); }}
+                                      className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title="Renombrar">
+                                      <Pencil className="h-2.5 w-2.5" />
+                                    </button>
+                                    <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteFolder(subPath); }}
+                                      className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title="Eliminar subcarpeta">
+                                      <Trash2 className="h-2.5 w-2.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {confirmDeleteFolder === subPath && (
+                                <div className="ml-2 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                                  <span className="text-[10px] text-red-300">¿Eliminar <span className="font-mono font-bold">{subPath.split('/').pop()}/</span>?</span>
+                                  <div className="flex gap-1 shrink-0">
+                                    <button onClick={() => { onDeleteFolder(subPath); setConfirmDeleteFolder(null); if (activeFolder === subPath) setActiveFolder(null); }}
+                                      className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">Sí</button>
+                                    <button onClick={() => setConfirmDeleteFolder(null)}
+                                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">No</button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {newFileInFolder?.folder === subPath && (
+                                <form onSubmit={handleCreateFileInFolderSubmit} className={`ml-4 mb-1 p-1.5 ${s.scriptForm} rounded-lg border`}>
+                                  <input type="text" required placeholder="ej. helper.py" autoFocus
+                                    value={newFileInFolder.name} onChange={(e) => setNewFileInFolder({ folder: subPath, name: e.target.value })}
+                                    className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
+                                  <div className="flex justify-end gap-1 mt-1">
+                                    <button type="button" onClick={() => setNewFileInFolder(null)} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>Salir</button>
+                                    <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">Crear</button>
+                                  </div>
+                                </form>
+                              )}
+
+                              {!collapsedFolders.has(subPath) && (
+                                <div className="ml-4 space-y-0.5">
+                                  {files.filter(f => f.type === 'script' && f.folder === subPath).map(f => (
+                                    <div key={f.id}>
+                                      {renamingId === f.id ? (
+                                        <form onSubmit={(e) => handleRenameSubmit(e, 'file', f.id, f.filename)}
+                                          className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                                          <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                                            onBlur={(e) => handleRenameSubmit(e as any, 'file', f.id, f.filename)}
+                                            className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                                          <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                                        </form>
+                                      ) : (
+                                        <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer select-none transition-all ${currentFileId === f.id ? s.scriptActive : s.scriptInactive}`}
+                                          onClick={() => { onSelectFile(f.id); setActiveFolder(subPath); }}>
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
+                                            <span className="font-mono truncate">{f.filename}</span>
+                                          </div>
+                                          <div className="flex items-center gap-0.5 shrink-0">
+                                            <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
+                                              className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors"><Pencil className="h-2.5 w-2.5" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); if (confirm(`¿Eliminar "${f.filename}"?`)) onDeleteFile(f.id); }}
+                                              className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors"><Trash2 className="h-2.5 w-2.5" /></button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {files.filter(f => f.type === 'script').length === 0 && folders.length === 0 && (
                 <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>No hay scripts creados.</p>
               )}
             </div>
           </div>
 
-          {/* Datasets CSV, TXT, XLSX, XLS, JSON, Parquet, LOG files section */}
+          {/* Datasets section */}
           <div>
-            <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5 mb-2`}>
+            <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5 mb-1`}>
               <Database className="h-3.5 w-3.5 text-emerald-600" /> Datasets
             </span>
+            <p className={`text-[9px] ${s.subText} mb-2 pl-0.5`}>
+              Click en un dataset para insertar su ruta en el editor
+            </p>
 
             <div className="space-y-1 mb-3" id="datasets-list">
               {files.filter(f => f.type === 'dataset').map((f) => (
-                <div
-                  key={f.id}
-                  className={`group flex items-center justify-between p-1.5 rounded-lg text-xs ${s.datasetInactive}`}
-                  id={`dataset-item-${f.id}`}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <FileText className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                    <span className="font-mono truncate font-medium" title={f.filename}>{f.filename}</span>
-                    <span className={`text-[9px] ${s.subText} shrink-0 font-mono`}>({formatSize(f.size)})</span>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`¿Eliminar dataset "${f.filename}"?`)) {
-                        onDeleteFile(f.id);
-                      }
-                    }}
-                    className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 hover:bg-slate-150 rounded transition-all shrink-0"
-                    title="Eliminar dataset"
+                <div key={f.id} id={`dataset-item-${f.id}`}>
+                  <div
+                    className={`group flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-all ${s.datasetInactive} ${copiedDataset === f.filename ? 'ring-1 ring-emerald-500/60' : ''}`}
+                    onClick={() => { setConfirmDeleteId(null); handleDatasetClick(f.filename); }}
+                    title="Click para ver ruta del archivo"
                   >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <FileText className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      <span className="font-mono truncate font-medium">{f.filename}</span>
+                      <span className={`text-[9px] ${s.subText} shrink-0 font-mono`}>({formatSize(f.size)})</span>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); setCopiedDataset(null); }}
+                      className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 rounded transition-all shrink-0"
+                      title="Eliminar dataset"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+
+                  {/* Inline delete confirmation — avoids window.confirm() issues */}
+                  {confirmDeleteId === f.id && (
+                    <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-red-300">¿Eliminar <span className="font-mono font-bold">{f.filename}</span>?</span>
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
+                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors"
+                        >
+                          Sí
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors"
+                        >
+                          No
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Path snippet */}
+                  {copiedDataset === f.filename && confirmDeleteId !== f.id && (
+                    <div className="mx-1 mb-1 px-2 py-1.5 bg-slate-800 rounded-md border border-emerald-600/40">
+                      <p className="text-[9px] text-emerald-400 font-bold mb-1 uppercase tracking-wide">Ruta en tu script:</p>
+                      <code className="text-[10px] text-amber-300 font-mono block">
+                        DATASET_PATH = '{f.filename}'
+                      </code>
+                    </div>
+                  )}
                 </div>
               ))}
               {files.filter(f => f.type === 'dataset').length === 0 && (
@@ -464,16 +839,12 @@ export default function Sidebar({
               )}
             </div>
 
-            {/* Drag and Drop Box for uploads */}
+            {/* Drag and Drop Box for dataset uploads */}
             <div
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              className={`border border-dashed p-3 text-center rounded-xl transition-all cursor-pointer select-none relative ${
-                dragging
-                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                  : s.uploadBox
-              }`}
+              className={`border border-dashed p-3 text-center rounded-xl transition-all cursor-pointer select-none relative ${dragging ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : s.uploadBox}`}
               id="upload-drag-drop-zone"
             >
               <input
@@ -485,7 +856,7 @@ export default function Sidebar({
               />
               {uploadProgress ? (
                 <div className="flex flex-col items-center justify-center p-1.5 gap-1.5">
-                  <div className="h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                  <div className="h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
                   <span className={`text-[10px] font-semibold ${s.progressText}`}>Subiendo...</span>
                 </div>
               ) : (
@@ -494,7 +865,7 @@ export default function Sidebar({
                   <div>
                     <p className="text-[11px] font-bold">Sube Datasets</p>
                     <p className={`text-[9px] ${s.subText}`}>Arrastra o haz click aquí</p>
-                    <p className={`text-[8px] ${s.subText} mt-0.5`}>.csv, .txt, .xlsx, .xls, .json, .parquet, .log</p>
+                    <p className={`text-[8px] ${s.subText} mt-0.5`}>.csv .txt .xlsx .xls .json .parquet .log</p>
                   </div>
                 </div>
               )}
