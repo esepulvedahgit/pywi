@@ -1905,13 +1905,8 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
       // Run the script file directly — no shell interpolation possible
       const MAX_OUTPUT = 1024 * 1024 * 2; // 2 MB cap
 
-      // Snapshot of image files present BEFORE execution
-      const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.svg', '.gif']);
-      const beforeImages = new Set<string>(
-        fs.existsSync(projectDir)
-          ? fs.readdirSync(projectDir).filter(f => IMAGE_EXTS.has(path.extname(f).toLowerCase()))
-          : []
-      );
+      // Timestamp before execution — used to detect images created/modified during this run
+      const runStartTime = Date.now();
       let stdoutChunks = '';
       let stderrChunks = '';
       let outputSize = 0;
@@ -1950,11 +1945,18 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
         const exitCode = killed ? 1 : (code ?? 1);
         const success = exitCode === 0;
 
-        // Detect image files generated during execution
-        const afterImages = fs.existsSync(projectDir)
-          ? fs.readdirSync(projectDir).filter(f => IMAGE_EXTS.has(path.extname(f).toLowerCase()))
-          : [];
-        const generatedFiles = afterImages.filter(f => !beforeImages.has(f));
+        // Detect images created OR modified during this execution (mtime-based)
+        const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.svg', '.gif']);
+        const generatedFiles: string[] = [];
+        if (fs.existsSync(projectDir)) {
+          for (const f of fs.readdirSync(projectDir)) {
+            if (!IMAGE_EXTS.has(path.extname(f).toLowerCase())) continue;
+            try {
+              const stat = fs.statSync(path.join(projectDir, f));
+              if (stat.mtimeMs >= runStartTime - 1000) generatedFiles.push(f);
+            } catch { /* file disappeared between readdir and stat */ }
+          }
+        }
 
         res.json({
           success,

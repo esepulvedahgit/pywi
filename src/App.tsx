@@ -369,16 +369,19 @@ function AppContent() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id })
       });
-      if (res.ok) {
-        const remaining = files.filter(f => f.id !== fileId);
-        setFiles(remaining);
-        if (currentFile?.id === fileId) {
-          const scripts = remaining.filter(f => f.type === 'script');
-          setCurrentFile(scripts.length > 0 ? scripts[0] : remaining[0] || null);
-        }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Error al eliminar archivo (${res.status})`);
+        return;
       }
-    } catch (err) {
-      console.error('Error deleting file:', err);
+      const remaining = files.filter(f => f.id !== fileId);
+      setFiles(remaining);
+      if (currentFile?.id === fileId) {
+        const scripts = remaining.filter(f => f.type === 'script');
+        setCurrentFile(scripts.length > 0 ? scripts[0] : remaining[0] || null);
+      }
+    } catch (err: any) {
+      alert(`Error de conexión al eliminar: ${err.message}`);
     }
   };
 
