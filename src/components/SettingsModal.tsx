@@ -186,10 +186,7 @@ export default function SettingsModal({
         onSettingsSaved(localSettings);
         setLang(localSettings.language);
         setSavedOk(true);
-        setTimeout(() => {
-          setSavedOk(false);
-          onClose();
-        }, 700);
+        setTimeout(() => setSavedOk(false), 2000);
       }
     } catch (err) {
       setSmtpMessage('Error guardando configuración');
