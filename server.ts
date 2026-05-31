@@ -1396,18 +1396,23 @@ app.post('/api/projects/:projectId/files', (req, res) => {
 });
 
 // API: Create folder inside project (scripts only)
-app.post('/api/projects/:projectId/folders', (req, res) => {
+app.post('/api/projects/:projectId/folders', requireAuth, (req, res) => {
   const { projectId } = req.params;
-  const { userId, folderName } = req.body;
+  const currentUserId = (req as any).userId;
+  const { folderName } = req.body;
 
-  if (!userId || !folderName) {
-    return res.status(400).json({ error: 'userId y folderName son requeridos' });
+  if (!folderName) {
+    return res.status(400).json({ error: 'folderName es requerido' });
   }
   if (!/^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(folderName)) {
     return res.status(400).json({ error: 'Nombre de carpeta inválido. Permite letras, números, guiones y una subcarpeta (ej: modelos/utils).' });
   }
 
-  const folderPath = path.join(APP_DATA_DIR, userId, projectId, folderName);
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
+  if (!project) return res.status(403).json({ error: 'Acceso denegado' });
+
+  const folderPath = path.join(APP_DATA_DIR, currentUserId, projectId, folderName);
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
   }
@@ -1416,22 +1421,26 @@ app.post('/api/projects/:projectId/folders', (req, res) => {
 });
 
 // API: Rename file
-app.patch('/api/projects/:projectId/files/:fileId/rename', (req, res) => {
+app.patch('/api/projects/:projectId/files/:fileId/rename', requireAuth, (req, res) => {
   const { projectId, fileId } = req.params;
-  const { userId, newFilename } = req.body;
+  const currentUserId = (req as any).userId;
+  const { newFilename } = req.body;
 
-  if (!userId || !newFilename) {
-    return res.status(400).json({ error: 'userId y newFilename son requeridos' });
+  if (!newFilename) {
+    return res.status(400).json({ error: 'newFilename es requerido' });
   }
   if (!newFilename.endsWith('.py') || newFilename.includes('/') || newFilename.includes('..')) {
     return res.status(400).json({ error: 'Nombre de archivo inválido' });
   }
 
   const database = readDB();
+  const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
+  if (!project) return res.status(403).json({ error: 'Acceso denegado' });
+
   const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
   if (!fileRecord) return res.status(404).json({ error: 'Archivo no encontrado' });
 
-  const projectDir = path.join(APP_DATA_DIR, userId, projectId);
+  const projectDir = path.join(APP_DATA_DIR, currentUserId, projectId);
   const oldPath = path.join(projectDir, fileRecord.folder || '', fileRecord.filename);
   const newPath = path.join(projectDir, fileRecord.folder || '', newFilename);
 
@@ -1442,7 +1451,7 @@ app.patch('/api/projects/:projectId/files/:fileId/rename', (req, res) => {
   }
 
   fileRecord.filename = newFilename;
-  fileRecord.filepath = path.join(userId, projectId, fileRecord.folder || '', newFilename);
+  fileRecord.filepath = path.join(currentUserId, projectId, fileRecord.folder || '', newFilename);
   fileRecord.updatedAt = new Date().toISOString();
   writeDB(database);
 
@@ -1450,19 +1459,24 @@ app.patch('/api/projects/:projectId/files/:fileId/rename', (req, res) => {
 });
 
 // API: Rename folder (updates all file records referencing the old path)
-app.patch('/api/projects/:projectId/folders/rename', (req, res) => {
+app.patch('/api/projects/:projectId/folders/rename', requireAuth, (req, res) => {
   const { projectId } = req.params;
-  const { userId, oldPath: oldFolderPath, newPath: newFolderPath } = req.body;
+  const currentUserId = (req as any).userId;
+  const { oldPath: oldFolderPath, newPath: newFolderPath } = req.body;
 
-  if (!userId || !oldFolderPath || !newFolderPath) {
-    return res.status(400).json({ error: 'userId, oldPath y newPath son requeridos' });
+  if (!oldFolderPath || !newFolderPath) {
+    return res.status(400).json({ error: 'oldPath y newPath son requeridos' });
   }
   const folderRegex = /^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/;
   if (!folderRegex.test(oldFolderPath) || !folderRegex.test(newFolderPath)) {
     return res.status(400).json({ error: 'Nombre de carpeta inválido' });
   }
 
-  const projectDir = path.join(APP_DATA_DIR, userId, projectId);
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
+  if (!project) return res.status(403).json({ error: 'Acceso denegado' });
+
+  const projectDir = path.join(APP_DATA_DIR, currentUserId, projectId);
   const oldFsPath = path.join(projectDir, oldFolderPath);
   const newFsPath = path.join(projectDir, newFolderPath);
 
@@ -1475,15 +1489,14 @@ app.patch('/api/projects/:projectId/folders/rename', (req, res) => {
     return res.status(500).json({ error: 'Error al renombrar la carpeta en disco' });
   }
 
-  const database = readDB();
   database.files.forEach(f => {
     if (f.projectId !== projectId) return;
     if (f.folder === oldFolderPath) {
       f.folder = newFolderPath;
-      f.filepath = path.join(userId, projectId, newFolderPath, f.filename);
+      f.filepath = path.join(currentUserId, projectId, newFolderPath, f.filename);
     } else if (f.folder?.startsWith(oldFolderPath + '/')) {
       f.folder = newFolderPath + f.folder.slice(oldFolderPath.length);
-      f.filepath = path.join(userId, projectId, f.folder, f.filename);
+      f.filepath = path.join(currentUserId, projectId, f.folder, f.filename);
     }
   });
   writeDB(database);
@@ -1492,18 +1505,23 @@ app.patch('/api/projects/:projectId/folders/rename', (req, res) => {
 });
 
 // API: Delete folder and all its contents (cascade)
-app.delete('/api/projects/:projectId/folders', (req, res) => {
+app.delete('/api/projects/:projectId/folders', requireAuth, (req, res) => {
   const { projectId } = req.params;
-  const { userId, folderPath } = req.body;
+  const currentUserId = (req as any).userId;
+  const { folderPath } = req.body;
 
-  if (!userId || !folderPath) {
-    return res.status(400).json({ error: 'userId y folderPath son requeridos' });
+  if (!folderPath) {
+    return res.status(400).json({ error: 'folderPath es requerido' });
   }
   if (!/^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(folderPath)) {
     return res.status(400).json({ error: 'Nombre de carpeta inválido' });
   }
 
-  const fsDirPath = path.join(APP_DATA_DIR, userId, projectId, folderPath);
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
+  if (!project) return res.status(403).json({ error: 'Acceso denegado' });
+
+  const fsDirPath = path.join(APP_DATA_DIR, currentUserId, projectId, folderPath);
   try {
     if (fs.existsSync(fsDirPath)) {
       fs.rmSync(fsDirPath, { recursive: true, force: true });
@@ -1512,7 +1530,6 @@ app.delete('/api/projects/:projectId/folders', (req, res) => {
     return res.status(500).json({ error: 'Error al eliminar la carpeta del disco' });
   }
 
-  const database = readDB();
   database.files = database.files.filter(f =>
     f.projectId !== projectId ||
     (f.folder !== folderPath && !f.folder?.startsWith(folderPath + '/'))
