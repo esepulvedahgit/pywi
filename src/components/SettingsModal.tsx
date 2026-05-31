@@ -45,6 +45,7 @@ export default function SettingsModal({
   const [smtpMessage, setSmtpMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedOk, setSavedOk] = useState(false);
+  const [smtpSavedOk, setSmtpSavedOk] = useState(false);
 
   // Security (password change) state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -261,8 +262,8 @@ export default function SettingsModal({
       });
 
       if (res.ok) {
-        setSmtpMessage(t('saved'));
-        setTimeout(() => setSmtpMessage(''), 3000);
+        setSmtpSavedOk(true);
+        setTimeout(() => setSmtpSavedOk(false), 2000);
       }
     } catch (err) {
       setSmtpMessage(t('smtpSavingError2'));
@@ -738,13 +739,15 @@ export default function SettingsModal({
               </motion.button>
             )}
             {activeTab === 'smtp' && (
-              <button
+              <motion.button
                 onClick={handleSaveSmtp}
-                disabled={saving}
+                disabled={saving || smtpSavedOk}
+                animate={smtpSavedOk ? { scale: [1, 1.08, 1], backgroundColor: ['#4f46e5', '#16a34a', '#16a34a'] } : {}}
+                transition={{ duration: 0.35 }}
                 className={c.button}
               >
-                {saving ? t('save') + '...' : t('save')}
-              </button>
+                {saving ? t('save') + '...' : smtpSavedOk ? '✓ ' + t('saved') : t('save')}
+              </motion.button>
             )}
             <button onClick={onClose} className={c.buttonSecondary}>
               {t('cancel')}
