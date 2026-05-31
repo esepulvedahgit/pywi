@@ -36,6 +36,7 @@ export interface ExecutionResult {
   exitCode: number | null;
   duration: number; // in milliseconds
   timestamp: string;
+  generatedFiles?: string[];
 }
 
 export interface EnvRestoreState {

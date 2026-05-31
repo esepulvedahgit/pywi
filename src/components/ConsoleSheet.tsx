@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2, BarChart2 } from 'lucide-react';
 import { ExecutionResult } from '../types';
 import { useT } from '../i18n';
+import PlotsPanel from './PlotsPanel';
 
 interface ParsedPythonError {
   errorType: string;
@@ -85,6 +86,8 @@ interface ConsoleSheetProps {
   isExpanded: boolean;
   onToggleExpand: () => void;
   isRunning?: boolean;
+  projectId: string;
+  token: string;
 }
 
 export default function ConsoleSheet({
@@ -95,14 +98,27 @@ export default function ConsoleSheet({
   isExpanded,
   onToggleExpand,
   isRunning = false,
+  projectId,
+  token,
 }: ConsoleSheetProps) {
   const t = useT();
   const [showRawTrace, setShowRawTrace] = useState(false);
   const [customHeight, setCustomHeight] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<'console' | 'plots'>('console');
   const panelRef = useRef<HTMLDivElement>(null);
   const parsedError = result && !result.success && result.stderr
     ? parsePythonError(result.stderr)
     : null;
+
+  // When result changes, auto-switch view based on generated files
+  useEffect(() => {
+    if (!result) { setViewMode('console'); return; }
+    if (result.generatedFiles && result.generatedFiles.length > 0) {
+      setViewMode('plots');
+    } else {
+      setViewMode('console');
+    }
+  }, [result]);
 
   const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -178,6 +194,22 @@ export default function ConsoleSheet({
               </div>
             )}
 
+            {/* Plots toggle button */}
+            {result?.generatedFiles && result.generatedFiles.length > 0 && (
+              <button
+                onClick={() => setViewMode(v => v === 'console' ? 'plots' : 'console')}
+                title={viewMode === 'plots' ? t('switchToConsole') : t('switchToPlots')}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  viewMode === 'plots'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-800 text-indigo-400 hover:bg-slate-700'
+                }`}
+              >
+                <BarChart2 className="h-3.5 w-3.5" />
+                <span>{result.generatedFiles.length} {t('plotsLabel')}</span>
+              </button>
+            )}
+
             {result && (
               <button
                 onClick={onClear}
@@ -214,99 +246,107 @@ export default function ConsoleSheet({
 
         {/* Content Pane */}
         <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-300 leading-relaxed bg-[#0b0f19] select-text">
-          {result ? (
-            <div className="space-y-4">
-              {/* Warnings or Error details */}
-              {parsedError && (
-                <div className="bg-red-950/30 border-l-4 border-red-500 rounded-r-md overflow-hidden">
-                  {/* Header: error type badge + location + message */}
-                  <div className="px-3 pt-3 pb-2 flex items-start gap-2">
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-mono select-text">
-                          {parsedError.errorType}
-                        </span>
-                        {parsedError.filename && parsedError.lineNumber && (
-                          <span className="text-[10px] text-slate-400 font-mono select-text">
-                            {parsedError.filename}:{parsedError.lineNumber}
+          {viewMode === 'plots' && result?.generatedFiles?.length ? (
+            <PlotsPanel
+              projectId={projectId}
+              files={result.generatedFiles}
+              token={token}
+            />
+          ) : (
+            result ? (
+              <div className="space-y-4">
+                {/* Warnings or Error details */}
+                {parsedError && (
+                  <div className="bg-red-950/30 border-l-4 border-red-500 rounded-r-md overflow-hidden">
+                    {/* Header: error type badge + location + message */}
+                    <div className="px-3 pt-3 pb-2 flex items-start gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30 font-mono select-text">
+                            {parsedError.errorType}
                           </span>
+                          {parsedError.filename && parsedError.lineNumber && (
+                            <span className="text-[10px] text-slate-400 font-mono select-text">
+                              {parsedError.filename}:{parsedError.lineNumber}
+                            </span>
+                          )}
+                        </div>
+                        {parsedError.errorMessage && (
+                          <p className="mt-1.5 text-red-200 text-[11px] leading-snug font-mono select-text">
+                            {parsedError.errorMessage}
+                          </p>
                         )}
                       </div>
-                      {parsedError.errorMessage && (
-                        <p className="mt-1.5 text-red-200 text-[11px] leading-snug font-mono select-text">
-                          {parsedError.errorMessage}
-                        </p>
-                      )}
                     </div>
-                  </div>
 
-                  {/* Offending code snippet */}
-                  {parsedError.codeSnippet && (
-                    <div className="mx-3 mb-2 bg-slate-900/60 border border-red-500/20 rounded px-3 py-2">
-                      <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1 select-none">
-                        {t('lineNumber', { n: parsedError.lineNumber })}
-                      </div>
-                      <pre className="text-[11px] font-mono text-amber-300 whitespace-pre-wrap select-text">
-                        {parsedError.codeSnippet}
-                      </pre>
-                    </div>
-                  )}
-
-                  {/* Collapsible raw traceback */}
-                  {parsedError.isTraceback && (
-                    <div className="border-t border-red-500/20 mt-1">
-                      <button
-                        onClick={() => setShowRawTrace(prev => !prev)}
-                        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 hover:bg-red-950/20 transition-colors select-none font-mono"
-                      >
-                        {showRawTrace
-                          ? <ChevronDown className="h-3 w-3 shrink-0" />
-                          : <ChevronRight className="h-3 w-3 shrink-0" />
-                        }
-                        <span>{showRawTrace ? t('hideFullTraceback') : t('viewFullTraceback')}</span>
-                      </button>
-                      {showRawTrace && (
-                        <pre className="px-3 pb-3 whitespace-pre-wrap text-[10px] font-mono text-slate-400 select-text opacity-80">
-                          {result!.stderr}
+                    {/* Offending code snippet */}
+                    {parsedError.codeSnippet && (
+                      <div className="mx-3 mb-2 bg-slate-900/60 border border-red-500/20 rounded px-3 py-2">
+                        <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1 select-none">
+                          {t('lineNumber', { n: parsedError.lineNumber })}
+                        </div>
+                        <pre className="text-[11px] font-mono text-amber-300 whitespace-pre-wrap select-text">
+                          {parsedError.codeSnippet}
                         </pre>
-                      )}
-                    </div>
-                  )}
+                      </div>
+                    )}
 
-                  {/* Non-traceback fallback */}
-                  {!parsedError.isTraceback && (
-                    <pre className="px-3 pb-3 whitespace-pre-wrap text-[11px] font-mono text-red-200 select-text opacity-90">
-                      {result!.stderr}
-                    </pre>
-                  )}
+                    {/* Collapsible raw traceback */}
+                    {parsedError.isTraceback && (
+                      <div className="border-t border-red-500/20 mt-1">
+                        <button
+                          onClick={() => setShowRawTrace(prev => !prev)}
+                          className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[10px] text-slate-500 hover:text-slate-300 hover:bg-red-950/20 transition-colors select-none font-mono"
+                        >
+                          {showRawTrace
+                            ? <ChevronDown className="h-3 w-3 shrink-0" />
+                            : <ChevronRight className="h-3 w-3 shrink-0" />
+                          }
+                          <span>{showRawTrace ? t('hideFullTraceback') : t('viewFullTraceback')}</span>
+                        </button>
+                        {showRawTrace && (
+                          <pre className="px-3 pb-3 whitespace-pre-wrap text-[10px] font-mono text-slate-400 select-text opacity-80">
+                            {result!.stderr}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Non-traceback fallback */}
+                    {!parsedError.isTraceback && (
+                      <pre className="px-3 pb-3 whitespace-pre-wrap text-[11px] font-mono text-red-200 select-text opacity-90">
+                        {result!.stderr}
+                      </pre>
+                    )}
+                  </div>
+                )}
+
+                {/* Success summary if applicable */}
+                {result.success && (
+                  <div className="bg-emerald-950/15 border-l-4 border-emerald-500/70 p-2.5 text-emerald-300 text-[11px] rounded-r-md flex items-center gap-2 select-text">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <span>{t('compiledSuccessfully')}</span>
+                  </div>
+                )}
+
+                {/* General Output */}
+                <div className="ml-1" id="stdout-console-pre-wrapper">
+                  <pre className="whitespace-pre-wrap font-mono text-xs text-slate-300 select-text">
+                    {result.stdout || <span className="text-slate-500 italic">{t('noOutput')}</span>}
+                  </pre>
                 </div>
-              )}
-
-              {/* Success summary if applicable */}
-              {result.success && (
-                <div className="bg-emerald-950/15 border-l-4 border-emerald-500/70 p-2.5 text-emerald-300 text-[11px] rounded-r-md flex items-center gap-2 select-text">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                  <span>{t('compiledSuccessfully')}</span>
-                </div>
-              )}
-
-              {/* General Output */}
-              <div className="ml-1" id="stdout-console-pre-wrapper">
-                <pre className="whitespace-pre-wrap font-mono text-xs text-slate-300 select-text">
-                  {result.stdout || <span className="text-slate-500 italic">{t('noOutput')}</span>}
-                </pre>
               </div>
-            </div>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500 italic gap-2 py-8">
-              <Terminal className="h-8 w-8 text-slate-700 animate-pulse" />
-              {isRunning ? (
-                <span>{t('runningWaiting')}</span>
-              ) : (
-                <span>{t('waiting')}</span>
-              )}
-            </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 italic gap-2 py-8">
+                <Terminal className="h-8 w-8 text-slate-700 animate-pulse" />
+                {isRunning ? (
+                  <span>{t('runningWaiting')}</span>
+                ) : (
+                  <span>{t('waiting')}</span>
+                )}
+              </div>
+            )
           )}
         </div>
       </motion.div>

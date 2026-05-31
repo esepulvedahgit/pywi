@@ -1289,6 +1289,8 @@ function AppContent() {
           isExpanded={isConsoleExpanded}
           onToggleExpand={() => setIsConsoleExpanded(!isConsoleExpanded)}
           isRunning={isRunning}
+          projectId={currentProject?.id ?? ''}
+          token={localStorage.getItem('py_ide_token') ?? ''}
         />
 
         {/* Settings Modal */}

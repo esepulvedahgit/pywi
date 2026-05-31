@@ -301,4 +301,10 @@ export const es = {
   warning: 'Advertencia',
   success: 'Éxito',
   confirm: 'Confirmar',
+
+  // Plots / Graphics display
+  switchToPlots: 'Ver gráficos',
+  switchToConsole: 'Ver consola',
+  plotsLabel: 'gráfico(s)',
+  noPlots: 'No se generaron gráficos en esta ejecución',
 };
