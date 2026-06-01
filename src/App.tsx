@@ -33,6 +33,7 @@ import PackageManagerModal from './components/PackageManagerModal';
 import SettingsModal from './components/SettingsModal';
 import EnvRestoreOverlay from './components/EnvRestoreOverlay';
 import ResetPasswordScreen from './components/ResetPasswordScreen';
+import AIAssistant from './components/AIAssistant';
 
 // Helper: construye headers con el JWT del usuario actual
 const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
@@ -63,6 +64,10 @@ function AppContent() {
 
   // Package Manager visibility state
   const [showPackageManager, setShowPackageManager] = useState(false);
+
+  // AI Assistant state
+  const [showAIAssistant, setShowAIAssistant] = useState(false);
+  const [isAIExpanded, setIsAIExpanded] = useState(false);
 
   // Theme & customization visual state
   const [activeTheme, setActiveTheme] = useState<'light' | 'vibrant-dark' | 'midnight-obsidian'>(() => {
@@ -1137,6 +1142,24 @@ function AppContent() {
               )}
             </div>
 
+            {/* AI Assistant button (desktop) */}
+            <button
+              onClick={() => setShowAIAssistant(v => !v)}
+              className={`p-1.5 rounded-md border text-xs font-bold transition-all flex items-center justify-center shadow-2xs shrink-0 ${
+                showAIAssistant
+                  ? 'bg-indigo-600 border-indigo-500 text-white'
+                  : activeTheme === 'light'
+                  ? 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  : activeTheme === 'vibrant-dark'
+                  ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                  : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
+              }`}
+              title={tl('aiOpenBtn')}
+              id="btn-ai-assistant"
+            >
+              <Sparkles className="h-4 w-4 shrink-0" />
+            </button>
+
             {/* Settings button */}
             <button
               onClick={() => setShowSettingsModal(true)}
@@ -1266,6 +1289,18 @@ function AppContent() {
           )}
         </main>
 
+        {/* FAB: AI assistant (mobile) — offset right to avoid overlapping console FAB */}
+        {!showAIAssistant && (
+          <button
+            onClick={() => setShowAIAssistant(true)}
+            className="absolute bottom-4 right-16 z-20 h-10 w-10 bg-indigo-700 hover:bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border border-indigo-500/40 md:hidden"
+            title={tl('aiOpenBtn')}
+            id="floating-btn-open-ai"
+          >
+            <Sparkles className="h-5 w-5" />
+          </button>
+        )}
+
         {/* Floating Toggle button if console output completed and closed */}
         {!isConsoleOpen && executionResult && (
           <button
@@ -1277,6 +1312,19 @@ function AppContent() {
             <Terminal className="h-5 w-5" />
           </button>
         )}
+
+        {/* AI Assistant bottom-sheet */}
+        <AIAssistant
+          isOpen={showAIAssistant}
+          onClose={() => setShowAIAssistant(false)}
+          isExpanded={isAIExpanded}
+          onToggleExpand={() => setIsAIExpanded(v => !v)}
+          activeTheme={activeTheme}
+          code={code}
+          executionResult={executionResult}
+          language={userSettings.language}
+          userId={user.id}
+        />
 
         {/* 3. Sliding lower Console Sheet panel */}
         <ConsoleSheet

@@ -471,6 +471,19 @@ interface SmtpConfig {
   secure: boolean;
 }
 
+interface AIConfig {
+  provider: 'openai' | 'deepseek' | 'gemini' | 'custom';
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+  enabled: boolean;
+}
+
+interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
 interface SimpleDB {
   users: Array<{
     id: string;
@@ -485,6 +498,7 @@ interface SimpleDB {
       lastChecked: string | null;
     };
     passwordChangedAt?: number; // unix timestamp; tokens issued before this are invalid
+    aiConfig?: AIConfig;
   }>;
   projects: Array<{ id: string; userId: string; name: string; createdAt: string }>;
   files: Array<{
@@ -538,6 +552,76 @@ function writeSmtpConfig(cfg: SmtpConfig) {
   fs.writeFileSync(SMTP_CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
+// AI provider adapter — supports OpenAI-compatible (openai/deepseek/custom) and Gemini REST
+async function callAIProvider(config: AIConfig, messages: ChatMessage[]): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    if (config.provider === 'gemini') {
+      const model = config.model || 'gemini-1.5-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
+
+      const systemMsg = messages.find(m => m.role === 'system');
+      const chatMsgs = messages.filter(m => m.role !== 'system');
+
+      const contents = chatMsgs.map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content }]
+      }));
+
+      const body: Record<string, unknown> = { contents };
+      if (systemMsg) {
+        body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal as any
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as any;
+        throw new Error(err.error?.message || `Gemini error ${res.status}`);
+      }
+
+      const data = await res.json() as any;
+      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+
+    } else {
+      // OpenAI-compatible: openai, deepseek, custom
+      const defaultBaseUrls: Record<string, string> = {
+        openai: 'https://api.openai.com/v1',
+        deepseek: 'https://api.deepseek.com/v1',
+      };
+      const base = (config.baseUrl || defaultBaseUrls[config.provider] || 'https://api.openai.com/v1').replace(/\/$/, '');
+      const url = `${base}/chat/completions`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify({ model: config.model, messages, max_tokens: 2048 }),
+        signal: controller.signal as any
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as any;
+        throw new Error(err.error?.message || `API error ${res.status}`);
+      }
+
+      const data = await res.json() as any;
+      return data.choices?.[0]?.message?.content ?? '';
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Read database and migrate roles if missing
 const db = readDB();
 {
@@ -569,6 +653,14 @@ const runLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Límite de ejecuciones alcanzado. Inténtalo de nuevo en un minuto.' }
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Límite de consultas IA alcanzado. Inténtalo de nuevo en un minuto.' }
 });
 
 // API: Venv status & stats
@@ -1073,6 +1165,128 @@ app.put('/api/users/:userId/settings', requireAuth, (req, res) => {
 
   res.json({ success: true, settings: user.settings });
 });
+
+// ── AI Configuration ──────────────────────────────────────────────────────────
+
+// GET /api/ai/config — read current user's AI config (key masked)
+app.get('/api/ai/config', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const cfg = user.aiConfig;
+  if (!cfg) {
+    return res.json({ provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false });
+  }
+  res.json({
+    provider: cfg.provider,
+    model: cfg.model,
+    baseUrl: cfg.baseUrl || '',
+    enabled: cfg.enabled,
+    hasKey: !!cfg.apiKey
+  });
+});
+
+// PUT /api/ai/config — save AI config; key preserved if sent as masked placeholder
+app.put('/api/ai/config', requireAuth, (req, res) => {
+  const userId = (req as any).userId;
+  const { provider, model, apiKey, baseUrl, enabled } = req.body;
+
+  const validProviders = ['openai', 'deepseek', 'gemini', 'custom'];
+  if (!validProviders.includes(provider)) {
+    return res.status(400).json({ error: 'Proveedor IA inválido' });
+  }
+  if (!model || typeof model !== 'string' || model.length > 100) {
+    return res.status(400).json({ error: 'Nombre de modelo inválido' });
+  }
+
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const existing = user.aiConfig;
+  user.aiConfig = {
+    provider,
+    model: model.trim(),
+    apiKey: (apiKey && apiKey !== '••••••') ? apiKey : (existing?.apiKey || ''),
+    baseUrl: baseUrl?.trim() || undefined,
+    enabled: !!enabled
+  };
+  writeDB(database);
+  res.json({ success: true });
+});
+
+// POST /api/ai/test — quick probe to validate API key
+app.post('/api/ai/test', requireAuth, async (req, res) => {
+  const userId = (req as any).userId;
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const cfg = user.aiConfig;
+  if (!cfg || !cfg.apiKey) {
+    return res.status(400).json({ error: 'Configuración IA no guardada. Guarda antes de probar.' });
+  }
+
+  try {
+    await callAIProvider(cfg, [{ role: 'user', content: 'Reply with: OK' }]);
+    res.json({ success: true, message: `Conexión exitosa con ${cfg.provider}` });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Error al conectar con el proveedor IA' });
+  }
+});
+
+// POST /api/ai/chat — tutor chat, rate-limited
+const AI_MAX_MESSAGES = 12;
+const AI_MAX_CONTENT_LEN = 8000;
+
+app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
+  const userId = (req as any).userId;
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const cfg = user.aiConfig;
+  if (!cfg || !cfg.apiKey || !cfg.enabled) {
+    return res.status(400).json({ error: 'Asistente IA no configurado o deshabilitado. Configúralo en Ajustes → IA.' });
+  }
+
+  const { messages } = req.body;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'Mensajes inválidos' });
+  }
+
+  // Trim history and content to control cost/abuse
+  const trimmed: ChatMessage[] = (messages as any[])
+    .slice(-AI_MAX_MESSAGES)
+    .map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: String(m.content).slice(0, AI_MAX_CONTENT_LEN)
+    }));
+
+  const lang = user.settings?.language || 'es';
+  const systemPrompt = lang === 'en'
+    ? 'You are PyWI Tutor, an expert Python educational assistant. Help students learn Python, data science, machine learning and deep learning. When analyzing tracebacks or errors explain them clearly and suggest fixes with code examples. Use markdown for code blocks. Be concise and educational.'
+    : 'Eres PyWI Tutor, un asistente educativo experto en Python. Ayuda a los estudiantes a aprender Python, ciencia de datos, machine learning y deep learning. Al analizar errores o tracebacks, explícalos con claridad y sugiere correcciones con ejemplos de código. Usa markdown para bloques de código. Sé conciso y educativo.';
+
+  const fullMessages: ChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    ...trimmed
+  ];
+
+  try {
+    const reply = await callAIProvider(cfg, fullMessages);
+    res.json({ reply });
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      return res.status(408).json({ error: 'Tiempo de espera agotado (30s). Intenta con un mensaje más corto.' });
+    }
+    res.status(500).json({ error: err.message || 'Error al consultar el proveedor IA' });
+  }
+});
+
+// ── End AI Configuration ───────────────────────────────────────────────────────
 
 // API: Change own password (any authenticated user)
 app.put('/api/users/:userId/password', requireAuth, async (req, res) => {

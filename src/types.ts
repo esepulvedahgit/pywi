@@ -47,6 +47,20 @@ export interface EnvRestoreState {
   total: number;
 }
 
+// AI assistant types
+export interface AIConfig {
+  provider: 'openai' | 'deepseek' | 'gemini' | 'custom';
+  model: string;
+  baseUrl?: string;
+  enabled: boolean;
+  hasKey: boolean; // server never sends the real key
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface OutdatedPackage {
   name: string;
   version: string;

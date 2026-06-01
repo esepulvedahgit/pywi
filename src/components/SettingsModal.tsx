@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Settings, Mail, Code, Lock, Users, UserPlus, Trash2 } from 'lucide-react';
+import { X, Settings, Mail, Code, Lock, Users, UserPlus, Trash2, Sparkles } from 'lucide-react';
 import { useT, useLang } from '../i18n';
-import { UserSettings } from '../types';
+import { UserSettings, AIConfig } from '../types';
 import { isValidPassword } from '../utils/passwordPolicy';
 import PasswordStrengthMeter from './PasswordStrengthMeter';
 
@@ -35,7 +35,7 @@ export default function SettingsModal({
   const t = useT();
   const { setLang } = useLang();
 
-  const [activeTab, setActiveTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>('editor');
   const [localSettings, setLocalSettings] = useState<UserSettings>(userSettings);
   const [smtpConfig, setSmtpConfig] = useState({
     host: '',
@@ -70,6 +70,23 @@ export default function SettingsModal({
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
 
+  // AI config state
+  const [aiConfig, setAiConfig] = useState<AIConfig>({
+    provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false
+  });
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiSavedOk, setAiSavedOk] = useState(false);
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiMessage, setAiMessage] = useState('');
+
+  const modelPlaceholders: Record<string, string> = {
+    openai: 'gpt-4o-mini',
+    deepseek: 'deepseek-chat',
+    gemini: 'gemini-1.5-flash',
+    custom: 'model-name',
+  };
+
   // Load SMTP config and admin users on mount
   useEffect(() => {
     if (!isOpen) return;
@@ -87,6 +104,11 @@ export default function SettingsModal({
         .then(users => setAdminUsers(users))
         .catch(() => {});
     }
+
+    fetch('/api/ai/config', { headers })
+      .then(r => r.json())
+      .then((cfg: AIConfig) => { setAiConfig(cfg); setAiApiKey(''); })
+      .catch(() => {});
   }, [isOpen, userRole]);
 
   const handleChangePassword = async () => {
@@ -308,6 +330,66 @@ export default function SettingsModal({
     }
   };
 
+  const handleSaveAIConfig = async () => {
+    setAiSaving(true);
+    setAiMessage('');
+    try {
+      const token = localStorage.getItem('py_ide_token');
+      const res = await fetch('/api/ai/config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          provider: aiConfig.provider,
+          model: aiConfig.model,
+          apiKey: aiApiKey || '••••••',
+          baseUrl: aiConfig.baseUrl,
+          enabled: aiConfig.enabled,
+        })
+      });
+      if (res.ok) {
+        setAiSavedOk(true);
+        setAiApiKey('');
+        // refresh to get hasKey status
+        const token2 = localStorage.getItem('py_ide_token');
+        const r2 = await fetch('/api/ai/config', { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} });
+        if (r2.ok) setAiConfig(await r2.json());
+        setTimeout(() => setAiSavedOk(false), 2000);
+      } else {
+        const d = await res.json().catch(() => ({})) as any;
+        setAiMessage(d.error || t('error'));
+        setTimeout(() => setAiMessage(''), 4000);
+      }
+    } catch {
+      setAiMessage(t('connectionError'));
+      setTimeout(() => setAiMessage(''), 3000);
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
+  const handleTestAI = async () => {
+    setAiTesting(true);
+    setAiMessage('');
+    try {
+      const token = localStorage.getItem('py_ide_token');
+      const res = await fetch('/api/ai/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+      });
+      const data = await res.json() as any;
+      setAiMessage(res.ok ? `✓ ${data.message || t('aiTestOk')}` : `✗ ${data.error || t('aiTestFail')}`);
+      setTimeout(() => setAiMessage(''), 5000);
+    } catch {
+      setAiMessage(`✗ ${t('connectionError')}`);
+      setTimeout(() => setAiMessage(''), 3000);
+    } finally {
+      setAiTesting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const getThemeClasses = (theme: string) => {
@@ -448,6 +530,13 @@ export default function SettingsModal({
                 {t('usersTab')}
               </button>
             )}
+            <button
+              onClick={() => setActiveTab('ai')}
+              className={`${c.tab} ${activeTab === 'ai' ? c.tabActive : c.tabInactive}`}
+            >
+              <Sparkles className="h-4 w-4" />
+              {t('aiTabLabel')}
+            </button>
           </div>
 
           {/* Content */}
@@ -762,6 +851,100 @@ export default function SettingsModal({
                 </div>
               </div>
             )}
+
+            {/* AI Assistant Tab */}
+            {activeTab === 'ai' && (
+              <div className="space-y-4">
+                {/* Enabled toggle */}
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="ai-enabled"
+                    checked={aiConfig.enabled}
+                    onChange={e => setAiConfig({ ...aiConfig, enabled: e.target.checked })}
+                    className={c.checkbox}
+                  />
+                  <label htmlFor="ai-enabled" className={`${c.label} mb-0 cursor-pointer normal-case text-sm`}>
+                    {t('aiEnabled')}
+                  </label>
+                </div>
+
+                {/* Provider */}
+                <div>
+                  <label className={c.label}>{t('aiProvider')}</label>
+                  <select
+                    value={aiConfig.provider}
+                    onChange={e => setAiConfig({ ...aiConfig, provider: e.target.value as AIConfig['provider'] })}
+                    className={c.input}
+                  >
+                    <option value="openai">OpenAI</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="custom">Custom (OpenAI-compatible)</option>
+                  </select>
+                </div>
+
+                {/* Model */}
+                <div>
+                  <label className={c.label}>{t('aiModel')}</label>
+                  <input
+                    type="text"
+                    value={aiConfig.model}
+                    onChange={e => setAiConfig({ ...aiConfig, model: e.target.value })}
+                    placeholder={modelPlaceholders[aiConfig.provider]}
+                    className={c.input}
+                  />
+                </div>
+
+                {/* API Key */}
+                <div>
+                  <label className={c.label}>
+                    {t('aiApiKey')}
+                    {aiConfig.hasKey && (
+                      <span className="ml-2 text-emerald-500 normal-case font-normal">● {t('aiHasKey')}</span>
+                    )}
+                  </label>
+                  <input
+                    type="password"
+                    value={aiApiKey}
+                    onChange={e => setAiApiKey(e.target.value)}
+                    placeholder={aiConfig.hasKey ? '••••••••••••' : 'sk-...'}
+                    className={c.input}
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                {/* Base URL (custom only) */}
+                {aiConfig.provider === 'custom' && (
+                  <div>
+                    <label className={c.label}>{t('aiBaseUrl')}</label>
+                    <input
+                      type="text"
+                      value={aiConfig.baseUrl || ''}
+                      onChange={e => setAiConfig({ ...aiConfig, baseUrl: e.target.value })}
+                      placeholder={t('aiBaseUrlPlaceholder')}
+                      className={c.input}
+                    />
+                  </div>
+                )}
+
+                {/* Test + message */}
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    onClick={handleTestAI}
+                    disabled={aiTesting || !aiConfig.hasKey}
+                    className={c.buttonSecondary + ' disabled:opacity-40'}
+                  >
+                    {aiTesting ? '...' : t('aiTest')}
+                  </button>
+                  {aiMessage && (
+                    <span className={`text-xs ${aiMessage.startsWith('✓') ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {aiMessage}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer */}
@@ -801,6 +984,17 @@ export default function SettingsModal({
                 className={c.button}
               >
                 {saving ? t('save') + '...' : smtpSavedOk ? '✓ ' + t('saved') : t('save')}
+              </motion.button>
+            )}
+            {activeTab === 'ai' && (
+              <motion.button
+                onClick={handleSaveAIConfig}
+                disabled={aiSaving || aiSavedOk}
+                animate={aiSavedOk ? { scale: [1, 1.08, 1], backgroundColor: ['#4f46e5', '#16a34a', '#16a34a'] } : {}}
+                transition={{ duration: 0.35 }}
+                className={c.button}
+              >
+                {aiSaving ? t('aiSave') + '...' : aiSavedOk ? '✓ ' + t('saved') : t('aiSave')}
               </motion.button>
             )}
             <button onClick={onClose} className={c.buttonSecondary}>
