@@ -14,6 +14,15 @@ services:
   web-ide:
     platform: linux/arm64
 
+    # Anular la reserva GPU NVIDIA que viene del docker-compose.yml base.
+    # Sin esto, Docker intentaría inicializar el runtime nvidia en arm64 y fallaría.
+    # Requiere docker compose >= 2.24 (soporte de !reset). Si tu versión es anterior,
+    # comenta manualmente el bloque 'reservations' en docker-compose.yml antes de usar este override.
+    deploy:
+      resources:
+        reservations:
+          devices: !reset []
+
     # Montar los render nodes de la NPU (RK3588S usa /dev/dri/renderD128-130)
     devices:
       - /dev/dri:/dev/dri

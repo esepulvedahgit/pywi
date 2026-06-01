@@ -33,6 +33,12 @@ services:
         limits:
           memory: 4G
           cpus: '2.0'
-    # Architecture-specific accelerator config lives in override files:
-    #   amd64 (NVIDIA GPU): docker compose -f docker-compose.yml -f docker-compose.amd64.yml up -d --build
-    #   arm64 (Rockchip NPU): docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d --build
+        # GPU NVIDIA activa por defecto — funciona en amd64 con Docker Desktop (Windows/Mac)
+        # y en Linux con nvidia-container-toolkit.
+        # En arm64 (Rockchip RK3588S) usa el override que anula esta reserva:
+        #   docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d --build
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
