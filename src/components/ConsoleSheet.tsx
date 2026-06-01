@@ -139,6 +139,7 @@ export default function ConsoleSheet({
 
   const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const startY = e.clientY;
     const startHeight = panelRef.current?.offsetHeight ?? 300;
 
@@ -148,13 +149,15 @@ export default function ConsoleSheet({
       setCustomHeight(newH);
     };
 
-    const onUp = () => {
+    const cleanup = () => {
       document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointerup', cleanup);
+      document.removeEventListener('pointercancel', cleanup);
     };
 
     document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointerup', cleanup);
+    document.addEventListener('pointercancel', cleanup);
   };
 
   if (!isOpen) return null;
@@ -173,12 +176,12 @@ export default function ConsoleSheet({
         }`}
         id="console-bottom-sheet"
       >
-        {/* Resize/Drag upper notch / handle */}
+        {/* Resize/Drag upper notch / handle — touch-none evita que el browser interprete el gesto como scroll */}
         <div
           onPointerDown={handleResizeStart}
-          className="w-full h-1 bg-slate-800 flex items-center justify-center cursor-row-resize hover:bg-slate-700 select-none active:bg-slate-600"
+          className="w-full h-5 bg-slate-800 flex items-center justify-center cursor-row-resize hover:bg-slate-700 select-none active:bg-slate-600 touch-none"
         >
-          <div className="w-12 h-1 bg-slate-600 rounded-full"></div>
+          <div className="w-12 h-1.5 bg-slate-600 rounded-full pointer-events-none"></div>
         </div>
 
         {/* Title Bar / Header */}

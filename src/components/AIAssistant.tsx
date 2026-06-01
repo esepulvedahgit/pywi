@@ -145,18 +145,21 @@ export default function AIAssistant({
   // Drag-to-resize
   const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const startY = e.clientY;
     const startH = panelRef.current?.offsetHeight ?? 400;
     const onMove = (ev: PointerEvent) => {
       const newH = Math.max(120, Math.min(window.innerHeight * 0.95, startH + (startY - ev.clientY)));
       setCustomHeight(newH);
     };
-    const onUp = () => {
+    const cleanup = () => {
       document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointerup', cleanup);
+      document.removeEventListener('pointercancel', cleanup);
     };
     document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointerup', cleanup);
+    document.addEventListener('pointercancel', cleanup);
   };
 
   // Theme-aware colors (mirrors ConsoleSheet dark style; light gets a soft variant)
@@ -192,12 +195,12 @@ export default function AIAssistant({
         }`}
         id="ai-assistant-panel"
       >
-        {/* Drag handle */}
+        {/* Drag handle — touch-none evita que el browser interprete el gesto como scroll */}
         <div
           onPointerDown={handleResizeStart}
-          className={`w-full h-1 flex items-center justify-center cursor-row-resize select-none ${isLight ? 'bg-slate-200 hover:bg-slate-300' : 'bg-slate-800 hover:bg-slate-700'}`}
+          className={`w-full h-5 flex items-center justify-center cursor-row-resize select-none touch-none ${isLight ? 'bg-slate-200 hover:bg-slate-300 active:bg-slate-400' : 'bg-slate-800 hover:bg-slate-700 active:bg-slate-600'}`}
         >
-          <div className={`w-12 h-1 rounded-full ${isLight ? 'bg-slate-300' : 'bg-slate-600'}`} />
+          <div className={`w-12 h-1.5 rounded-full pointer-events-none ${isLight ? 'bg-slate-300' : 'bg-slate-600'}`} />
         </div>
 
         {/* Header */}
