@@ -788,8 +788,8 @@ function AppContent() {
                 <Code2 className="w-5 h-5" />
               </div>
               <div className="flex flex-col hidden sm:flex">
-                <h1 className={`text-sm font-bold ${activeTheme === 'light' ? 'text-slate-800' : 'text-slate-100'} leading-tight`}>PyCloud IDE</h1>
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">v2.4.0 • Enterprise Edition</p>
+                <h1 className={`text-sm font-bold ${activeTheme === 'light' ? 'text-slate-800' : 'text-slate-100'} leading-tight`}>PyWI</h1>
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Python Web IDE • v2.4.0</p>
               </div>
             </div>
             
@@ -1153,10 +1153,6 @@ function AppContent() {
               <Settings className="h-4 w-4 shrink-0" />
             </button>
 
-            {/* Desktop Only user avatar */}
-            <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 text-xs font-bold shrink-0 shadow-xs hidden md:flex">
-              {user.username.substring(0, 2).toUpperCase()}
-            </div>
           </div>
         </header>
 
@@ -1229,7 +1225,7 @@ function AppContent() {
                 <CodeMirror
                   value={code}
                   height="100%"
-                  theme={activeTheme === 'light' ? 'light' : 'dark'}
+                  theme="dark"
                   extensions={[
                     python(),
                     EditorView.lineWrapping,
@@ -1244,9 +1240,7 @@ function AppContent() {
                   onCreateEditor={(view) => {
                     editorRef.current = view;
                   }}
-                  className={`h-full rounded-xl overflow-hidden shadow-lg font-mono text-[13px] sm:text-[14px] ${
-                    activeTheme === 'light' ? 'border border-slate-300' : 'border border-slate-800/80'
-                  }`}
+                  className="h-full rounded-xl overflow-hidden shadow-lg font-mono text-[13px] sm:text-[14px] border border-slate-800/80"
                   id="react-codemirror-editor"
                 />
               </div>
@@ -1304,6 +1298,7 @@ function AppContent() {
           userId={user.id}
           userRole={user.role}
           userSettings={userSettings}
+          activeTheme={activeTheme}
           onSettingsSaved={(settings) => {
             setUserSettings(settings);
             setLang(settings.language);

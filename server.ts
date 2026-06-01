@@ -1318,7 +1318,7 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
           await transporter.sendMail({
             from: config.from,
             to: email,
-            subject: 'Restablecer contraseña - Python Web IDE',
+            subject: 'Restablecer contraseña - PyWI',
             html: `<p>Haz clic en el enlace para restablecer tu contraseña:</p><a href="${resetUrl}">${resetUrl}</a><p>Este enlace expira en 15 minutos.</p>`
           });
         } catch (err) {

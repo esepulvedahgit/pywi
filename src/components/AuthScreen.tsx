@@ -107,15 +107,18 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center" id="logo-icon">
           <img
-            src="/images/logo_ico.png"
-            alt="PyCloud IDE Logo"
-            className="h-14 w-14 rounded-xl shadow-md shadow-indigo-600/25"
+            src="/images/logo_ico_transparent.png"
+            alt="PyWI Logo"
+            className="h-24 w-24 drop-shadow-lg"
           />
         </div>
-        <h2 className="mt-5 text-center text-2xl font-bold tracking-tight text-slate-800">
-          PyCloud Web IDE
+        <h2 className="mt-4 text-center text-2xl font-bold tracking-tight text-slate-800">
+          PyWI
         </h2>
-        <p className="mt-1 text-center text-xs text-slate-400 font-semibold uppercase tracking-wider">
+        <p className="mt-1 text-center text-sm text-slate-500 font-medium">
+          Python Web IDE
+        </p>
+        <p className="mt-0.5 text-center text-xs text-slate-400 font-semibold uppercase tracking-wider">
           Enterprise Environment • v2.4.0
         </p>
       </div>

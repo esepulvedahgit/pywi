@@ -19,6 +19,7 @@ interface SettingsModalProps {
   userId: string;
   userRole: 'admin' | 'user';
   userSettings: UserSettings;
+  activeTheme?: string;
   onSettingsSaved: (settings: UserSettings) => void;
 }
 
@@ -28,6 +29,7 @@ export default function SettingsModal({
   userId,
   userRole,
   userSettings,
+  activeTheme = 'vibrant-dark',
   onSettingsSaved,
 }: SettingsModalProps) {
   const t = useT();
@@ -308,7 +310,29 @@ export default function SettingsModal({
 
   if (!isOpen) return null;
 
-  const getThemeClasses = () => {
+  const getThemeClasses = (theme: string) => {
+    if (theme === 'light') {
+      return {
+        overlay: 'fixed inset-0 bg-black/40 z-50 flex items-center justify-center',
+        modal: 'bg-white border border-slate-200 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col',
+        header: 'bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-200',
+        title: 'text-slate-800 font-semibold flex items-center gap-2',
+        closeBtn: 'p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded transition-colors',
+        tabBar: 'flex border-b border-slate-200 bg-slate-50',
+        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2',
+        tabActive: 'text-indigo-600 border-indigo-500',
+        tabInactive: 'text-slate-400 border-transparent hover:text-slate-600',
+        content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-white',
+        input: 'w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded text-slate-800 text-sm focus:outline-none focus:border-indigo-400',
+        label: 'block text-xs font-bold uppercase text-slate-500 mb-1.5',
+        checkbox: 'w-4 h-4 cursor-pointer',
+        button: 'px-4 py-2 rounded text-sm font-medium transition-colors bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50',
+        buttonSecondary: 'px-4 py-2 rounded text-sm font-medium transition-colors bg-slate-100 hover:bg-slate-200 text-slate-700',
+        footer: 'border-t border-slate-200 px-6 py-4 flex justify-between items-center gap-2 bg-slate-50',
+        message: 'text-xs text-emerald-600',
+      };
+    }
+    // vibrant-dark y midnight-obsidian: mantener estilo oscuro original
     return {
       overlay: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
       modal: 'bg-slate-950 border border-slate-800 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col',
@@ -330,7 +354,7 @@ export default function SettingsModal({
     };
   };
 
-  const c = getThemeClasses();
+  const c = getThemeClasses(activeTheme);
 
   return (
     <AnimatePresence>

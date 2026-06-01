@@ -219,7 +219,7 @@ export const es = {
   usernamePlaceholder: 'Ej. python_dev',
 
   // Header & UI
-  pythonWebIde: 'Python Web IDE',
+  pythonWebIde: 'PyWI',
   workspace: 'Espacio de trabajo',
   recentProjects: 'Proyectos recientes',
   selectProject: 'Selecciona un proyecto',
