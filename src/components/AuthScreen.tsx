@@ -112,7 +112,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
             className="h-24 w-24 drop-shadow-lg"
           />
         </div>
-        <h2 className="mt-4 text-center text-2xl font-bold tracking-tight text-slate-800">
+        <h2 className="mt-2 text-center text-2xl font-bold tracking-tight text-slate-800">
           PyWI
         </h2>
         <p className="mt-1 text-center text-sm text-slate-500 font-medium">
