@@ -644,7 +644,7 @@ function AppContent() {
     switch (theme) {
       case 'vibrant-dark':
         return {
-          wrapper: 'theme-vibrant-dark h-screen w-screen bg-slate-950 flex font-sans overflow-hidden text-slate-100',
+          wrapper: 'theme-vibrant-dark h-screen w-full bg-slate-950 flex font-sans overflow-hidden text-slate-100',
           workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-slate-900 overflow-hidden',
           header: 'h-14 bg-slate-950 border-b border-slate-800/80 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-10 text-slate-100',
           headerTitle: 'text-slate-100',
@@ -662,7 +662,7 @@ function AppContent() {
         };
       case 'midnight-obsidian':
         return {
-          wrapper: 'theme-obsidian h-screen w-screen bg-black flex font-sans overflow-hidden text-neutral-100',
+          wrapper: 'theme-obsidian h-screen w-full bg-black flex font-sans overflow-hidden text-neutral-100',
           workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-[#080808] overflow-hidden',
           header: 'h-14 bg-black border-b border-neutral-900 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-10 text-neutral-100',
           headerTitle: 'text-neutral-100',
@@ -681,7 +681,7 @@ function AppContent() {
       case 'light':
       default:
         return {
-          wrapper: 'theme-light h-screen w-screen bg-slate-100 flex font-sans overflow-hidden text-slate-900',
+          wrapper: 'theme-light h-screen w-full bg-slate-100 flex font-sans overflow-hidden text-slate-900',
           workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-white overflow-hidden',
           header: 'h-14 bg-white border-b border-slate-300 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-sm z-10 text-slate-900',
           headerTitle: 'text-slate-900',
