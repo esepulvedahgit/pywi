@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Maximize2, Minimize2, Sparkles, Send, Trash2, Zap, Code2, Lightbulb } from 'lucide-react';
+import { X, Maximize2, Minimize2, Sparkles, Send, Trash2, Zap, Code2, Lightbulb, Copy, Check } from 'lucide-react';
 import { ExecutionResult, ChatMessage } from '../types';
 import { useT } from '../i18n';
 
@@ -16,20 +16,57 @@ interface AIAssistantProps {
   userId: string;
 }
 
+// Bloque de código con botón de copiar al portapapeles
+function CodeBlock({ code, lang, isLight }: { code: string; lang: string; isLight: boolean }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = () => {
+    try {
+      navigator.clipboard.writeText(code).then(() => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setCopied(true);
+        timerRef.current = setTimeout(() => setCopied(false), 1500);
+      }).catch(() => {/* ignore */});
+    } catch {/* ignore en contextos sin clipboard */}
+  };
+
+  return (
+    <div className="relative group my-2">
+      <pre className="rounded-md bg-slate-900/80 border border-slate-700/60 p-3 pr-16 overflow-x-auto text-[11px] font-mono text-emerald-300 leading-relaxed whitespace-pre-wrap select-text">
+        {lang && <span className="block text-[9px] text-slate-500 uppercase tracking-widest mb-1 select-none">{lang}</span>}
+        {code}
+      </pre>
+      <button
+        onClick={handleCopy}
+        title={copied ? t('aiCopiedCode') : t('aiCopyCode')}
+        className={`absolute top-1.5 right-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-all select-none
+          ${copied
+            ? 'bg-emerald-600/80 text-emerald-100'
+            : isLight
+              ? 'bg-slate-700/70 hover:bg-slate-600/90 text-slate-300 hover:text-white'
+              : 'bg-slate-700/60 hover:bg-slate-600/80 text-slate-400 hover:text-slate-100'
+          }`}
+      >
+        {copied
+          ? <><Check className="h-3 w-3" />{t('aiCopiedCode')}</>
+          : <><Copy className="h-3 w-3" />{t('aiCopyCode')}</>
+        }
+      </button>
+    </div>
+  );
+}
+
 // Minimal markdown renderer: bold, inline code, fenced code blocks, line breaks
-function renderMarkdown(text: string): React.ReactNode[] {
+function renderMarkdown(text: string, isLight: boolean): React.ReactNode[] {
   const blocks = text.split(/(```[\s\S]*?```)/g);
   return blocks.map((block, bi) => {
     if (block.startsWith('```')) {
       const lines = block.slice(3).split('\n');
       const lang = lines[0].trim();
       const code = lines.slice(1).join('\n').replace(/```$/, '').trimEnd();
-      return (
-        <pre key={bi} className="my-2 rounded-md bg-slate-900/80 border border-slate-700/60 p-3 overflow-x-auto text-[11px] font-mono text-emerald-300 leading-relaxed whitespace-pre-wrap select-text">
-          {lang && <span className="block text-[9px] text-slate-500 uppercase tracking-widest mb-1 select-none">{lang}</span>}
-          {code}
-        </pre>
-      );
+      return <React.Fragment key={bi}><CodeBlock code={code} lang={lang} isLight={isLight} /></React.Fragment>;
     }
     // Inline: bold **x**, inline code `x`, line breaks
     const parts = block.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
@@ -281,7 +318,7 @@ export default function AIAssistant({
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${msg.role === 'user' ? userBubble + ' rounded-br-sm' : aiBubble + ' rounded-bl-sm'}`}>
                 {msg.role === 'assistant'
-                  ? <div className="space-y-1">{renderMarkdown(msg.content)}</div>
+                  ? <div className="space-y-1">{renderMarkdown(msg.content, isLight)}</div>
                   : <span className="whitespace-pre-wrap">{msg.content}</span>
                 }
               </div>

@@ -365,6 +365,8 @@ export const es = {
   aiChipExplainError: 'Explicar error',
   aiChipExplainCode: 'Explicar código',
   aiChipImprove: 'Sugerir mejora',
+  aiCopyCode: 'Copiar',
+  aiCopiedCode: 'Copiado',
   aiThinking: 'Pensando…',
   aiModelPlaceholderOpenai: 'p.ej. gpt-4o-mini',
   aiModelPlaceholderDeepseek: 'p.ej. deepseek-chat',
