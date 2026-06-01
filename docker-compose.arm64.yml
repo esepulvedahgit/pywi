@@ -1,0 +1,36 @@
+# Override para arquitectura arm64 con NPU Rockchip RK3588S (Radxa 5A, Orange Pi 5, etc.)
+# Uso: docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d --build
+#
+# Requisitos en el host:
+#   - Kernel BSP de Rockchip (6.1.x con sufijo rk* o 5.10.x)
+#   - Driver RKNPU v0.9.8 cargado (verificar: sudo cat /sys/kernel/debug/rknpu/version)
+#   - debugfs montado (mount -t debugfs debugfs /sys/kernel/debug) si se usa la ruta de fallback
+#
+# ANTES DE USAR: verificar el GID del grupo 'render' en el host y actualizarlo aquí:
+#   getent group render
+# Reemplaza <RENDER_GID> con el número resultante (ej: 103).
+
+services:
+  web-ide:
+    platform: linux/arm64
+
+    # Montar los render nodes de la NPU (RK3588S usa /dev/dri/renderD128-130)
+    devices:
+      - /dev/dri:/dev/dri
+
+    # Añadir el GID del grupo 'render' al usuario del contenedor para acceder a /dev/dri
+    # Obtener GID: getent group render   → reemplaza <RENDER_GID> con el número
+    group_add:
+      - "<RENDER_GID>"
+
+    volumes:
+      # Montar debugfs read-only para que el backend pueda leer /sys/kernel/debug/rknpu/load
+      # (solo necesario si /sys/class/devfreq no expone la carga de la NPU sin root)
+      - /sys/kernel/debug:/sys/kernel/debug:ro
+
+    # cap_add DAC_READ_SEARCH permite al proceso no-root (appuser) atravesar
+    # el directorio /sys/kernel/debug (permisos 700 root) para leer rknpu/load.
+    # Si el backend usa /sys/class/devfreq/*/load como fuente primaria (sin root),
+    # esta capability puede eliminarse.
+    cap_add:
+      - DAC_READ_SEARCH

@@ -172,7 +172,10 @@ export default function Sidebar({
     gpuAvailable: false,
     gpuPercent: 0,
     gpuMemUsed: 0,
-    gpuMemTotal: 1
+    gpuMemTotal: 1,
+    npuAvailable: false,
+    npuPercent: 0,
+    npuCoreLoads: [] as number[],
   });
 
   const s = getThemeSidebarClasses(activeTheme);
@@ -1007,6 +1010,27 @@ export default function Sidebar({
                   <div
                     className="bg-purple-500 h-full rounded-full transition-all duration-300"
                     style={{ width: `${metrics.gpuPercent.toFixed(0)}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
+            {metrics.npuAvailable && (
+              <div className="space-y-1">
+                <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
+                  <span>NPU</span>
+                  <span>
+                    {metrics.npuPercent.toFixed(1)}%
+                    {metrics.npuCoreLoads.length > 0 && (
+                      <span className="ml-1 opacity-50">
+                        {metrics.npuCoreLoads.map((c, i) => `C${i} ${c}%`).join(' · ')}
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
+                  <div
+                    className="bg-cyan-500 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${Math.min(100, metrics.npuPercent).toFixed(0)}%` }}
                   ></div>
                 </div>
               </div>

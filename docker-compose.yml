@@ -22,15 +22,17 @@ services:
       - PORT=3000
       # Pass environment variables (or fallbacks)
       - APP_URL=${APP_URL:-http://localhost:3000}
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - JWT_SECRET=${JWT_SECRET}
+      # ENCRYPTION_KEY: 64-char hex string (32 bytes) used to AES-256-GCM encrypt AI API keys at rest.
+      # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      # MUST be set in .env.local or as a host environment variable before starting the container.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     restart: always
     deploy:
       resources:
         limits:
           memory: 4G
           cpus: '2.0'
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # Architecture-specific accelerator config lives in override files:
+    #   amd64 (NVIDIA GPU): docker compose -f docker-compose.yml -f docker-compose.amd64.yml up -d --build
+    #   arm64 (Rockchip NPU): docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d --build

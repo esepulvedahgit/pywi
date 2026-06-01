@@ -1,0 +1,16 @@
+# Override para arquitectura amd64 con GPU NVIDIA
+# Uso: docker compose -f docker-compose.yml -f docker-compose.amd64.yml up -d --build
+#
+# Requisitos en el host:
+#   - nvidia-container-toolkit instalado
+#   - driver NVIDIA cargado (nvidia-smi disponible)
+
+services:
+  web-ide:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

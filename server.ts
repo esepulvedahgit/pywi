@@ -19,6 +19,72 @@ if (!process.env.JWT_SECRET) {
 }
 const JWT_SECRET = process.env.JWT_SECRET as string;
 
+// ── Encryption helpers for AI API keys ────────────────────────────────────────
+// Keys are stored as AES-256-GCM ciphertext in db.json.
+// Format on disk: "enc:v1:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
+// If ENCRYPTION_KEY is absent the server refuses to start — storing plaintext
+// is never a safe fallback for credentials.
+
+if (!process.env.ENCRYPTION_KEY) {
+  console.error('FATAL: ENCRYPTION_KEY environment variable is not set. Set a 64-char hex string (32 bytes) before starting the server.');
+  process.exit(1);
+}
+
+// Derive a fixed 32-byte key from the env var (accept raw hex or arbitrary string)
+const _rawEncKey = process.env.ENCRYPTION_KEY as string;
+const ENCRYPTION_KEY: Buffer = _rawEncKey.length === 64 && /^[0-9a-fA-F]+$/.test(_rawEncKey)
+  ? Buffer.from(_rawEncKey, 'hex')
+  : crypto.createHash('sha256').update(_rawEncKey).digest();
+
+const ENC_PREFIX = 'enc:v1:';
+
+function encryptApiKey(plaintext: string): string {
+  if (!plaintext) return '';
+  const iv = crypto.randomBytes(12); // 96-bit IV for GCM
+  const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `${ENC_PREFIX}${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+function decryptApiKey(stored: string): string {
+  if (!stored) return '';
+  // Transparently pass through plaintext keys that pre-date encryption
+  // (migration: they will be re-encrypted on next PUT /api/ai/config save)
+  if (!stored.startsWith(ENC_PREFIX)) return stored;
+  try {
+    const parts = stored.slice(ENC_PREFIX.length).split(':');
+    if (parts.length !== 3) return '';
+    const [ivHex, authTagHex, ciphertextHex] = parts;
+    const iv = Buffer.from(ivHex, 'hex');
+    const authTag = Buffer.from(authTagHex, 'hex');
+    const ciphertext = Buffer.from(ciphertextHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return decrypted.toString('utf8');
+  } catch {
+    console.error('[SEC] Failed to decrypt API key — key may be corrupted or ENCRYPTION_KEY changed.');
+    return '';
+  }
+}
+
+// Migrate a user record: if aiConfig.apiKey is plaintext (no enc: prefix), re-encrypt it in-place.
+// Called once at startup and after every PUT /api/ai/config write.
+function migrateEncryptUserApiKey(database: SimpleDB): boolean {
+  let changed = false;
+  for (const user of database.users) {
+    const key = user.aiConfig?.apiKey;
+    if (key && !key.startsWith(ENC_PREFIX)) {
+      user.aiConfig!.apiKey = encryptApiKey(key);
+      changed = true;
+      console.log(`[SEC] Encrypted plaintext API key for user ${user.id}`);
+    }
+  }
+  return changed;
+}
+// ── End encryption helpers ─────────────────────────────────────────────────────
+
 // Authentication utilities
 function generateToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
@@ -310,11 +376,19 @@ interface ContainerMetrics {
   memUsed: number;
   memTotal: number;
   cpuPercent: number;
+  // NVIDIA GPU (amd64)
   gpuAvailable: boolean;
   gpuPercent: number;
   gpuMemUsed: number;
   gpuMemTotal: number;
+  // Rockchip NPU (arm64 — RK3588S)
+  npuAvailable: boolean;
+  npuPercent: number;      // promedio de los 3 núcleos
+  npuCoreLoads: number[];  // carga individual por núcleo [Core0, Core1, Core2]
 }
+
+// Detected once at startup — determines which accelerator to probe
+const HOST_ARCH = os.arch(); // 'x64' on amd64, 'arm64' on arm64/aarch64
 
 let lastCpuStat = { user: 0, nice: 0, system: 0, idle: 0, iowait: 0 };
 let lastCpuTime = Date.now();
@@ -416,10 +490,52 @@ function readGpuMetrics(): { available: boolean; percent: number; memUsed: numbe
   }
 }
 
+// Read Rockchip RK3588S NPU load — arm64 only.
+// Tries devfreq sysfs first (no root required), falls back to debugfs.
+// Format of debugfs source: "NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,"
+function readNpuMetrics(): { available: boolean; percent: number; coreLoads: number[] } {
+  try {
+    let loadStr = '';
+
+    // Primary: /sys/class/devfreq/<npu-node>/load — readable without root
+    try {
+      const devfreqBase = '/sys/class/devfreq';
+      const entries = fs.readdirSync(devfreqBase);
+      const npuEntry = entries.find(e => e.toLowerCase().includes('npu'));
+      if (npuEntry) {
+        loadStr = fs.readFileSync(`${devfreqBase}/${npuEntry}/load`, 'utf-8').trim();
+      }
+    } catch { /* not available — try debugfs */ }
+
+    // Fallback: /sys/kernel/debug/rknpu/load (requires cap_add DAC_READ_SEARCH or root)
+    if (!loadStr) {
+      loadStr = fs.readFileSync('/sys/kernel/debug/rknpu/load', 'utf-8').trim();
+    }
+
+    // Parse all "Core\d+: <n>%" occurrences
+    const matches = [...loadStr.matchAll(/Core\d+:\s*(\d+)%/g)];
+    if (matches.length === 0) return { available: false, percent: 0, coreLoads: [] };
+
+    const coreLoads = matches.map(m => parseInt(m[1], 10));
+    const percent = coreLoads.reduce((a, b) => a + b, 0) / coreLoads.length;
+
+    return { available: true, percent, coreLoads };
+  } catch {
+    return { available: false, percent: 0, coreLoads: [] };
+  }
+}
+
 async function getMetrics(): Promise<ContainerMetrics> {
   const { used: memUsed, total: memTotal } = readCgroupMemory();
   const cpuPercent = readCgroupCpu();
-  const gpu = readGpuMetrics();
+
+  // Only probe the accelerator that matches the host architecture
+  const gpu = HOST_ARCH === 'arm64'
+    ? { available: false, percent: 0, memUsed: 0, memTotal: 0 }
+    : readGpuMetrics();
+  const npu = HOST_ARCH === 'arm64'
+    ? readNpuMetrics()
+    : { available: false, percent: 0, coreLoads: [] };
 
   return {
     memUsed,
@@ -428,7 +544,10 @@ async function getMetrics(): Promise<ContainerMetrics> {
     gpuAvailable: gpu.available,
     gpuPercent: gpu.percent,
     gpuMemUsed: gpu.memUsed,
-    gpuMemTotal: gpu.memTotal
+    gpuMemTotal: gpu.memTotal,
+    npuAvailable: npu.available,
+    npuPercent: npu.percent,
+    npuCoreLoads: npu.coreLoads,
   };
 }
 
@@ -622,7 +741,7 @@ async function callAIProvider(config: AIConfig, messages: ChatMessage[]): Promis
   }
 }
 
-// Read database and migrate roles if missing
+// Read database and migrate roles if missing, then encrypt any plaintext API keys
 const db = readDB();
 {
   let migrated = false;
@@ -632,6 +751,8 @@ const db = readDB();
       migrated = true;
     }
   });
+  // Encrypt any plaintext AI API keys left from before this security patch
+  if (migrateEncryptUserApiKey(db)) migrated = true;
   if (migrated) writeDB(db);
 }
 
@@ -1206,10 +1327,18 @@ app.put('/api/ai/config', requireAuth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
   const existing = user.aiConfig;
+  // Determine the key to store: use new key if provided, otherwise keep existing encrypted key.
+  // Never trust the masked placeholder '••••••' as a real key value.
+  const incomingKey = (apiKey && apiKey !== '••••••') ? apiKey.trim() : '';
+  const existingEncryptedKey = existing?.apiKey || '';
+  const keyToStore = incomingKey
+    ? encryptApiKey(incomingKey)   // new key supplied — encrypt it
+    : existingEncryptedKey;        // keep existing (already encrypted or empty)
+
   user.aiConfig = {
     provider,
     model: model.trim(),
-    apiKey: (apiKey && apiKey !== '••••••') ? apiKey : (existing?.apiKey || ''),
+    apiKey: keyToStore,
     baseUrl: baseUrl?.trim() || undefined,
     enabled: !!enabled
   };
@@ -1229,8 +1358,15 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Configuración IA no guardada. Guarda antes de probar.' });
   }
 
+  // Decrypt the stored key before passing it to the outbound HTTP call
+  const decryptedKey = decryptApiKey(cfg.apiKey);
+  if (!decryptedKey) {
+    return res.status(400).json({ error: 'No se pudo descifrar la API key. Vuelve a guardar la configuración IA.' });
+  }
+  const cfgForCall = { ...cfg, apiKey: decryptedKey };
+
   try {
-    await callAIProvider(cfg, [{ role: 'user', content: 'Reply with: OK' }]);
+    await callAIProvider(cfgForCall, [{ role: 'user', content: 'Reply with: OK' }]);
     res.json({ success: true, message: `Conexión exitosa con ${cfg.provider}` });
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Error al conectar con el proveedor IA' });
@@ -1251,6 +1387,13 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   if (!cfg || !cfg.apiKey || !cfg.enabled) {
     return res.status(400).json({ error: 'Asistente IA no configurado o deshabilitado. Configúralo en Ajustes → IA.' });
   }
+
+  // Decrypt the stored key — never expose the raw encrypted blob to external calls
+  const decryptedChatKey = decryptApiKey(cfg.apiKey);
+  if (!decryptedChatKey) {
+    return res.status(400).json({ error: 'No se pudo descifrar la API key. Vuelve a guardar la configuración IA.' });
+  }
+  const cfgForChat = { ...cfg, apiKey: decryptedChatKey };
 
   const { messages } = req.body;
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -1276,7 +1419,7 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   ];
 
   try {
-    const reply = await callAIProvider(cfg, fullMessages);
+    const reply = await callAIProvider(cfgForChat, fullMessages);
     res.json({ reply });
   } catch (err: any) {
     if (err.name === 'AbortError') {
@@ -1325,10 +1468,17 @@ app.put('/api/users/:userId/password', requireAuth, async (req, res) => {
   }
 });
 
-// API: List all users (admin only — passwordHash excluded)
+// API: List all users (admin only — passwordHash and aiConfig.apiKey excluded)
 app.get('/api/admin/users', requireAdmin, (req, res) => {
   const database = readDB();
-  const users = database.users.map(({ passwordHash, ...u }) => u);
+  const users = database.users.map(({ passwordHash, ...u }) => {
+    // Strip the stored API key (encrypted ciphertext) — frontend only needs hasKey boolean
+    if (u.aiConfig) {
+      const { apiKey, ...safeAiConfig } = u.aiConfig;
+      return { ...u, aiConfig: { ...safeAiConfig, hasKey: !!apiKey } };
+    }
+    return u;
+  });
   res.json(users);
 });
 
@@ -2264,10 +2414,21 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
       let outputSize = 0;
       let limitReached = false;
 
+      // Build a minimal allowlist environment for the Python subprocess.
+      // Never spread process.env — that would leak JWT_SECRET, ENCRYPTION_KEY,
+      // GEMINI_API_KEY and any other server secrets to untrusted user code.
+      const safeSubprocessEnv: Record<string, string> = {
+        PATH: process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        HOME: projectDir,
+        PYTHONUNBUFFERED: '1',
+        MPLBACKEND: 'Agg',
+        LANG: process.env.LANG ?? 'C.UTF-8',
+        LC_ALL: process.env.LC_ALL ?? 'C.UTF-8',
+      };
       const child = spawn(pythonPath, [scriptRelPath], {
         cwd: projectDir,
         shell: false,
-        env: { ...process.env, PYTHONUNBUFFERED: '1', MPLBACKEND: 'Agg' }
+        env: safeSubprocessEnv
       });
 
       // 30 second hard timeout
