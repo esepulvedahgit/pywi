@@ -32,6 +32,8 @@ function verifyToken(token: string): { userId: string; iat: number } | null {
   }
 }
 
+const BCRYPT_ROUNDS = 12;
+
 // Password policy validator — must stay in sync with src/utils/passwordPolicy.ts
 // Rules: min 10 chars, lowercase letter, uppercase letter, digit, special character
 function validatePassword(pw: string): string | null {
@@ -916,7 +918,7 @@ app.post('/api/auth/register', async (req, res) => {
 
   try {
     const userId = 'user_' + Math.random().toString(36).substr(2, 9);
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const newUser = { id: userId, username, email, passwordHash, role: 'admin' as const };
     database.users.push(newUser);
@@ -982,6 +984,12 @@ app.post('/api/auth/login', authStrictLimiter, async (req, res) => {
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
       return res.status(400).json({ error: 'Credenciales inválidas' });
+    }
+
+    // Upgrade hash silently if rounds < BCRYPT_ROUNDS (doesn't invalidate existing sessions)
+    if (bcrypt.getRounds(user.passwordHash) < BCRYPT_ROUNDS) {
+      user.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+      writeDB(database);
     }
 
     const token = generateToken(user.id);
@@ -1094,7 +1102,7 @@ app.put('/api/users/:userId/password', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
     }
 
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     user.passwordChangedAt = Math.floor(Date.now() / 1000);
     writeDB(database);
     res.json({ success: true });
@@ -1128,7 +1136,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 
   try {
     const userId = 'user_' + Math.random().toString(36).substr(2, 9);
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const newUser = { id: userId, username, email, passwordHash, role: 'user' as const };
     database.users.push(newUser);
 
@@ -1345,7 +1353,7 @@ app.post('/api/auth/reset-password', authStrictLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Usuario no encontrado' });
   }
 
-  user.passwordHash = await bcrypt.hash(newPassword, 10);
+  user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
   user.passwordChangedAt = Math.floor(Date.now() / 1000);
 
   // Invalidar TODOS los tokens de reset del usuario, no solo el usado
