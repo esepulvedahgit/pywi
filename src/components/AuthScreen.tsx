@@ -103,7 +103,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
   };
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] flex flex-col justify-center py-12 px-6 lg:px-8 font-sans" id="auth-screen-container">
+    <div className="relative min-h-screen bg-[#f8fafc] flex flex-col justify-center py-12 px-6 lg:px-8 font-sans" id="auth-screen-container">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center" id="logo-icon">
           <img
@@ -118,12 +118,9 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
         <p className="mt-1 text-center text-sm text-slate-500 font-medium">
           Python Web IDE
         </p>
-        <p className="mt-0.5 text-center text-xs text-slate-400 font-semibold uppercase tracking-wider">
-          Enterprise Environment • v2.4.0
-        </p>
       </div>
 
-      <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md" id="auth-form-card">
+      <div className="mt-4 sm:mx-auto sm:w-full sm:max-w-md" id="auth-form-card">
         <div className="bg-white py-8 px-6 shadow-md rounded-2xl border border-slate-200/80">
           {error && (
             <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-xs p-3 rounded-lg flex items-start gap-2" id="auth-error">
@@ -303,6 +300,11 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
           )}
         </div>
       </div>
+
+      {/* Footer anclado al fondo del viewport */}
+      <p className="absolute bottom-6 inset-x-0 text-center text-xs text-slate-400 font-semibold uppercase tracking-wider select-none">
+        Enterprise Environment
+      </p>
     </div>
   );
 }
