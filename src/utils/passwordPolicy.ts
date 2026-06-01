@@ -26,8 +26,9 @@ export function checkPassword(pw: string): PwCheck {
   };
 }
 
-/** Returns true only when all 5 requirements are met. */
+/** Returns true only when all 5 requirements are met and length ≤ 128. */
 export function isValidPassword(pw: string): boolean {
+  if (pw.length > 128) return false;
   const c = checkPassword(pw);
   return c.minLen && c.lower && c.upper && c.digit && c.special;
 }

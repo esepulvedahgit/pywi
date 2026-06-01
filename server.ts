@@ -24,9 +24,9 @@ function generateToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
 }
 
-function verifyToken(token: string): { userId: string } | null {
+function verifyToken(token: string): { userId: string; iat: number } | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as { userId: string };
+    return jwt.verify(token, JWT_SECRET) as { userId: string; iat: number };
   } catch {
     return null;
   }
@@ -36,6 +36,7 @@ function verifyToken(token: string): { userId: string } | null {
 // Rules: min 10 chars, lowercase letter, uppercase letter, digit, special character
 function validatePassword(pw: string): string | null {
   if (!pw || pw.length < 10) return 'La contraseña debe tener al menos 10 caracteres';
+  if (pw.length > 128) return 'La contraseña no puede superar 128 caracteres';
   if (!/[a-z]/.test(pw)) return 'Debe incluir al menos una letra minúscula';
   if (!/[A-Z]/.test(pw)) return 'Debe incluir al menos una letra mayúscula';
   if (!/[0-9]/.test(pw)) return 'Debe incluir al menos un número';
@@ -55,6 +56,13 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
   const payload = verifyToken(token);
   if (!payload) {
     return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
+  // Invalidate tokens issued before the last password change
+  const database = readDB();
+  const user = database.users.find(u => u.id === payload.userId);
+  if (user?.passwordChangedAt && payload.iat < user.passwordChangedAt) {
+    return res.status(401).json({ error: 'Sesión invalidada. Inicia sesión de nuevo.' });
   }
 
   (req as any).userId = payload.userId;
@@ -474,6 +482,7 @@ interface SimpleDB {
       outdated: Array<{ name: string; version: string; latest_version: string }>;
       lastChecked: string | null;
     };
+    passwordChangedAt?: number; // unix timestamp; tokens issued before this are invalid
   }>;
   projects: Array<{ id: string; userId: string; name: string; createdAt: string }>;
   files: Array<{
@@ -1086,6 +1095,7 @@ app.put('/api/users/:userId/password', requireAuth, async (req, res) => {
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordChangedAt = Math.floor(Date.now() / 1000);
     writeDB(database);
     res.json({ success: true });
   } catch (err) {
@@ -1314,7 +1324,7 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
 });
 
 // API: Reset password
-app.post('/api/auth/reset-password', authStrictLimiter, (req, res) => {
+app.post('/api/auth/reset-password', authStrictLimiter, async (req, res) => {
   const { token, newPassword } = req.body;
 
   if (!token || !newPassword) {
@@ -1335,10 +1345,11 @@ app.post('/api/auth/reset-password', authStrictLimiter, (req, res) => {
     return res.status(400).json({ error: 'Usuario no encontrado' });
   }
 
-  const passwordHash = bcrypt.hashSync(newPassword, 10);
-  user.passwordHash = passwordHash;
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
+  user.passwordChangedAt = Math.floor(Date.now() / 1000);
 
-  database.resetTokens = database.resetTokens.filter(t => t.token !== token);
+  // Invalidar TODOS los tokens de reset del usuario, no solo el usado
+  database.resetTokens = database.resetTokens.filter(t => t.userId !== resetToken.userId);
   writeDB(database);
 
   res.json({ success: true, message: 'Contraseña restablecida' });
