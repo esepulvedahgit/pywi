@@ -34,6 +34,7 @@ import SettingsModal from './components/SettingsModal';
 import EnvRestoreOverlay from './components/EnvRestoreOverlay';
 import ResetPasswordScreen from './components/ResetPasswordScreen';
 import AIAssistant from './components/AIAssistant';
+import DataPreviewModal from './components/DataPreviewModal';
 
 // Helper: construye headers con el JWT del usuario actual
 const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
@@ -105,6 +106,12 @@ function AppContent() {
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+
+  // Dataset preview state
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [previewData, setPreviewData] = useState<any | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   // Environment restoration state
   const [envRestore, setEnvRestore] = useState<EnvRestoreState | null>(null);
@@ -575,11 +582,11 @@ function AppContent() {
   // API Call: RUN PYTHON CODE (Critical Compiler Pipeline)
   const handleRunCode = async () => {
     if (!user || !currentProject || !currentFile) return;
-    
+
     setIsRunning(true);
     setExecutionResult(null);
     setIsConsoleOpen(true); // Open "Bottom Sheet" on run trig
-    
+
     // Auto save physical file change before running
     await handleSaveFile(code);
 
@@ -589,8 +596,68 @@ function AppContent() {
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId: user.id, runCode: code })
       });
-      const data = await res.json();
-      setExecutionResult(data);
+
+      // Streaming NDJSON: show stdout/stderr as it arrives
+      if (res.body && res.headers.get('content-type')?.includes('ndjson')) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let liveStdout = '';
+        let liveStderr = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const msg = JSON.parse(line);
+              if (msg.type === 'stdout') {
+                liveStdout += msg.data;
+                setExecutionResult({
+                  success: true,
+                  stdout: liveStdout,
+                  stderr: liveStderr,
+                  exitCode: null,
+                  duration: 0,
+                  timestamp: new Date().toISOString(),
+                });
+              } else if (msg.type === 'stderr') {
+                liveStderr += msg.data;
+                setExecutionResult(prev => prev
+                  ? { ...prev, stderr: liveStderr }
+                  : {
+                      success: false,
+                      stdout: liveStdout,
+                      stderr: liveStderr,
+                      exitCode: null,
+                      duration: 0,
+                      timestamp: new Date().toISOString(),
+                    });
+              } else if (msg.type === 'end') {
+                // Final message with complete result + generatedFiles
+                setExecutionResult({
+                  success: msg.success,
+                  stdout: msg.stdout,
+                  stderr: msg.stderr,
+                  exitCode: msg.exitCode,
+                  duration: msg.duration,
+                  timestamp: msg.timestamp,
+                  generatedFiles: msg.generatedFiles,
+                });
+              }
+            } catch { /* ignore malformed NDJSON lines */ }
+          }
+        }
+      } else {
+        // Fallback: plain JSON (e.g. Python simulator path)
+        const data = await res.json();
+        setExecutionResult(data);
+      }
     } catch (err: any) {
       setExecutionResult({
         success: false,
@@ -602,6 +669,31 @@ function AppContent() {
       });
     } finally {
       setIsRunning(false);
+    }
+  };
+
+  // Open dataset preview modal and fetch preview data from the backend
+  const handlePreviewDataset = async (file: FileItem) => {
+    if (!currentProject) return;
+    setPreviewFile(file);
+    setPreviewData(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    try {
+      const res = await fetch(
+        `/api/projects/${currentProject.id}/files/${file.id}/preview`,
+        { headers: authHeaders() }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setPreviewError(data.error ?? tl('dataPreviewError'));
+      } else {
+        setPreviewData(data);
+      }
+    } catch (err: any) {
+      setPreviewError(err.message ?? tl('dataPreviewError'));
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -764,6 +856,17 @@ function AppContent() {
         activeTheme={activeTheme}
         onOpenPackageManager={() => setShowPackageManager(true)}
         packageUpdateCount={packageUpdates.dismissed ? 0 : packageUpdates.outdated.length}
+        onPreviewDataset={handlePreviewDataset}
+      />
+
+      {/* Dataset Preview Modal */}
+      <DataPreviewModal
+        filename={previewFile?.filename ?? null}
+        data={previewData}
+        loading={previewLoading}
+        error={previewError}
+        onClose={() => { setPreviewFile(null); setPreviewData(null); setPreviewError(null); }}
+        activeTheme={activeTheme}
       />
 
       {/* Python Pip Package Manager Modal */}
@@ -1248,7 +1351,7 @@ function AppContent() {
                 <CodeMirror
                   value={code}
                   height="100%"
-                  theme="dark"
+                  theme={activeTheme === 'light' ? 'light' : 'dark'}
                   extensions={[
                     python(),
                     EditorView.lineWrapping,

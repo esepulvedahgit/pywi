@@ -180,12 +180,12 @@ export default function PackageManagerModal({
   const isVibrant = activeTheme === 'vibrant-dark';
 
   const c = {
-    overlay: 'fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4',
+    overlay: 'fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4',
     card: isLight
-      ? 'bg-white text-slate-800 border class-slate-200 shadow-2xl w-full max-w-3xl h-[85vh] rounded-2xl flex flex-col overflow-hidden'
+      ? 'bg-white text-slate-800 border border-slate-200 shadow-2xl w-full sm:max-w-3xl h-[92vh] sm:h-[85vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden'
       : isVibrant
-      ? 'bg-slate-900 text-slate-200 border border-slate-800 shadow-2xl w-full max-w-3xl h-[85vh] rounded-2xl flex flex-col overflow-hidden'
-      : 'bg-neutral-950 text-neutral-200 border border-neutral-900 shadow-2xl w-full max-w-3xl h-[85vh] rounded-2xl flex flex-col overflow-hidden',
+      ? 'bg-slate-900 text-slate-200 border border-slate-800 shadow-2xl w-full sm:max-w-3xl h-[92vh] sm:h-[85vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden'
+      : 'bg-neutral-950 text-neutral-200 border border-neutral-900 shadow-2xl w-full sm:max-w-3xl h-[92vh] sm:h-[85vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden',
     header: isLight ? 'bg-slate-50 border-b border-slate-200 p-4 shrink-0' : 'bg-slate-950/60 border-b border-slate-850 p-4 shrink-0',
     title: isLight ? 'text-slate-800' : 'text-white',
     subText: isLight ? 'text-slate-500' : 'text-slate-400',

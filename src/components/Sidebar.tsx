@@ -14,7 +14,10 @@ import {
   LogOut,
   Sparkles,
   Package,
-  Pencil
+  Pencil,
+  Eye,
+  Clipboard,
+  Check
 } from 'lucide-react';
 import { Project, FileItem } from '../types';
 import { useT } from '../i18n';
@@ -45,6 +48,7 @@ interface SidebarProps {
   activeTheme?: 'light' | 'vibrant-dark' | 'midnight-obsidian';
   onOpenPackageManager?: () => void;
   packageUpdateCount?: number;
+  onPreviewDataset?: (file: FileItem) => void;
 }
 
 const getThemeSidebarClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') => {
@@ -144,7 +148,8 @@ export default function Sidebar({
   onCloseMobile,
   activeTheme = 'light',
   onOpenPackageManager,
-  packageUpdateCount = 0
+  packageUpdateCount = 0,
+  onPreviewDataset
 }: SidebarProps) {
   const t = useT();
   const [newProjName, setNewProjName] = useState('');
@@ -184,7 +189,10 @@ export default function Sidebar({
   useEffect(() => {
     const loadMetrics = async () => {
       try {
-        const response = await fetch('/api/metrics');
+        const token = localStorage.getItem('py_ide_token');
+        const response = await fetch('/api/metrics', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
         if (response.ok) {
           const data = await response.json();
           setMetrics(data);
@@ -843,21 +851,33 @@ export default function Sidebar({
                 <div key={f.id} id={`dataset-item-${f.id}`}>
                   <div
                     className={`group flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-all ${s.datasetInactive} ${copiedDataset === f.filename ? 'ring-1 ring-emerald-500/60' : ''}`}
-                    onClick={() => { setConfirmDeleteId(null); handleDatasetClick(f.filename); }}
-                    title={t('datasetClickHint')}
+                    onClick={() => { setConfirmDeleteId(null); onPreviewDataset?.(f); }}
+                    title={t('datasetPreviewHint')}
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
                       <FileText className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                       <span className="font-mono truncate font-medium">{f.filename}</span>
                       <span className={`text-[9px] ${s.subText} shrink-0 font-mono`}>({formatSize(f.size)})</span>
                     </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); setCopiedDataset(null); }}
-                      className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 rounded transition-all shrink-0"
-                      title={t('deleteDatasetTooltip')}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {/* Copy path button — shows path snippet below when toggled */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); handleDatasetClick(f.filename); }}
+                        className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-emerald-400 rounded transition-all"
+                        title={t('datasetCopyPath')}
+                      >
+                        {copiedDataset === f.filename
+                          ? <Check className="h-3 w-3 text-emerald-400" />
+                          : <Clipboard className="h-3 w-3" />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); setCopiedDataset(null); }}
+                        className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 rounded transition-all"
+                        title={t('deleteDatasetTooltip')}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Inline delete confirmation — avoids window.confirm() issues */}

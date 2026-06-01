@@ -395,8 +395,8 @@ export default function SettingsModal({
   const getThemeClasses = (theme: string) => {
     if (theme === 'light') {
       return {
-        overlay: 'fixed inset-0 bg-black/40 z-50 flex items-center justify-center',
-        modal: 'bg-white border border-slate-200 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col',
+        overlay: 'fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
+        modal: 'bg-white border border-slate-200 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col',
         header: 'bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-200',
         title: 'text-slate-800 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded transition-colors',
@@ -417,8 +417,8 @@ export default function SettingsModal({
     // midnight-obsidian: paleta negra/neutral
     if (theme === 'midnight-obsidian') {
       return {
-        overlay: 'fixed inset-0 bg-black/60 z-50 flex items-center justify-center',
-        modal: 'bg-black border border-neutral-900 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col',
+        overlay: 'fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
+        modal: 'bg-black border border-neutral-900 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col',
         header: 'bg-[#080808] px-6 py-4 flex items-center justify-between border-b border-neutral-900',
         title: 'text-neutral-100 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-neutral-900 text-neutral-400 hover:text-neutral-100 rounded transition-colors',
@@ -438,8 +438,8 @@ export default function SettingsModal({
     }
     // vibrant-dark: paleta slate
     return {
-      overlay: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center',
-      modal: 'bg-slate-950 border border-slate-800 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col',
+      overlay: 'fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
+      modal: 'bg-slate-950 border border-slate-800 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col',
       header: 'bg-slate-900 px-6 py-4 flex items-center justify-between border-b border-slate-800',
       title: 'text-slate-100 font-semibold flex items-center gap-2',
       closeBtn: 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors',
