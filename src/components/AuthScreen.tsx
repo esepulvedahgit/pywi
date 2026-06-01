@@ -107,7 +107,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center" id="logo-icon">
           <img
-            src="/images/logo_ico_transparent.png"
+            src="/images/logo_pywi.png"
             alt="PyWI Logo"
             className="h-24 w-24 drop-shadow-lg"
           />
