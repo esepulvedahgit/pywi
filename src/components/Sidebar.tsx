@@ -181,6 +181,7 @@ export default function Sidebar({
     npuAvailable: false,
     npuPercent: 0,
     npuCoreLoads: [] as number[],
+    arch: 'x64',  // default until first /api/metrics response
   });
 
   const s = getThemeSidebarClasses(activeTheme);
@@ -1020,37 +1021,47 @@ export default function Sidebar({
                 ></div>
               </div>
             </div>
-            {metrics.gpuAvailable && (
-              <div className="space-y-1">
+            {/* GPU slot — shown on amd64 (x64) whether available or not */}
+            {metrics.arch !== 'arm64' && (
+              <div className={`space-y-1 ${!metrics.gpuAvailable ? 'opacity-40' : ''}`}>
                 <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
                   <span>GPU</span>
-                  <span>{metrics.gpuPercent.toFixed(1)}% • {(metrics.gpuMemUsed / 1e9).toFixed(1)}GB / {(metrics.gpuMemTotal / 1e9).toFixed(1)}GB</span>
+                  <span>
+                    {metrics.gpuAvailable
+                      ? `${metrics.gpuPercent.toFixed(1)}% • ${(metrics.gpuMemUsed / 1e9).toFixed(1)}GB / ${(metrics.gpuMemTotal / 1e9).toFixed(1)}GB`
+                      : t('gpuUnavailable')}
+                  </span>
                 </div>
                 <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
                   <div
                     className="bg-purple-500 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${metrics.gpuPercent.toFixed(0)}%` }}
+                    style={{ width: metrics.gpuAvailable ? `${metrics.gpuPercent.toFixed(0)}%` : '0%' }}
                   ></div>
                 </div>
               </div>
             )}
-            {metrics.npuAvailable && (
-              <div className="space-y-1">
+            {/* NPU slot — shown on arm64 whether available or not */}
+            {metrics.arch === 'arm64' && (
+              <div className={`space-y-1 ${!metrics.npuAvailable ? 'opacity-40' : ''}`}>
                 <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
                   <span>NPU</span>
                   <span>
-                    {metrics.npuPercent.toFixed(1)}%
-                    {metrics.npuCoreLoads.length > 0 && (
-                      <span className="ml-1 opacity-50">
-                        {metrics.npuCoreLoads.map((c, i) => `C${i} ${c}%`).join(' · ')}
-                      </span>
-                    )}
+                    {metrics.npuAvailable
+                      ? <>
+                          {metrics.npuPercent.toFixed(1)}%
+                          {metrics.npuCoreLoads.length > 0 && (
+                            <span className="ml-1 opacity-50">
+                              {metrics.npuCoreLoads.map((c, i) => `C${i} ${c}%`).join(' · ')}
+                            </span>
+                          )}
+                        </>
+                      : t('npuUnavailable')}
                   </span>
                 </div>
                 <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
                   <div
                     className="bg-cyan-500 h-full rounded-full transition-all duration-300"
-                    style={{ width: `${Math.min(100, metrics.npuPercent).toFixed(0)}%` }}
+                    style={{ width: metrics.npuAvailable ? `${Math.min(100, metrics.npuPercent).toFixed(0)}%` : '0%' }}
                   ></div>
                 </div>
               </div>

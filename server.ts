@@ -389,6 +389,8 @@ interface ContainerMetrics {
   npuAvailable: boolean;
   npuPercent: number;      // promedio de los 3 núcleos
   npuCoreLoads: number[];  // carga individual por núcleo [Core0, Core1, Core2]
+  // Host architecture — lets the frontend know which accelerator to expect
+  arch: string;            // 'x64' | 'arm64'
 }
 
 // Detected once at startup — determines which accelerator to probe
@@ -552,6 +554,7 @@ async function getMetrics(): Promise<ContainerMetrics> {
     npuAvailable: npu.available,
     npuPercent: npu.percent,
     npuCoreLoads: npu.coreLoads,
+    arch: HOST_ARCH,
   };
 }
 

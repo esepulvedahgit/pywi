@@ -270,6 +270,9 @@ export const en = {
   dataPreviewError: 'Could not load preview',
   dataPreviewUnsupported: 'Format not supported for preview',
   dataPreviewClose: 'Close',
+  // Accelerator monitor
+  gpuUnavailable: 'GPU not accessible',
+  npuUnavailable: 'NPU not accessible',
   uploadingLabel: 'Uploading...',
   uploadDatasetsTitle: 'Upload Datasets',
   uploadDragOrClick: 'Drag or click here',
