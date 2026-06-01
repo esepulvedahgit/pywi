@@ -15,6 +15,7 @@ coverage/
 !.env.example
 .env.local
 .env.*.local
+.env
 
 # Python
 __pycache__/
