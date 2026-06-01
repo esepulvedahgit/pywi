@@ -7,7 +7,7 @@ services:
     ports:
       - "0.0.0.0:3000:3000"
     volumes:
-      # Bind mount the workspace directory for live-reloading (development)
+      # Bind mount source so cada docker compose up recompila con el código actual
       - .:/app
       # Shield container's node_modules and .venv from being overwritten by the host
       - /app/node_modules
@@ -16,8 +16,9 @@ services:
       - ./requirements.txt:/app/requirements.txt
       # Persist user data and databases in the host's data directory
       - ./data:/app/data
+    command: sh -c "npm run build && npm start"
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
       - PORT=3000
       # Pass environment variables (or fallbacks)
       - APP_URL=${APP_URL:-http://localhost:3000}
@@ -26,8 +27,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-          cpus: '1.0'
+          memory: 4G
+          cpus: '2.0'
         reservations:
           devices:
             - driver: nvidia

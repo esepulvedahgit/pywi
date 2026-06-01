@@ -32,5 +32,5 @@ USER appuser
 # Expose the application port
 EXPOSE 3000
 
-# Start the application in development mode
-CMD ["npm", "run", "dev"]
+# Build frontend + bundle server, then start production server
+CMD ["sh", "-c", "npm run build && npm start"]
