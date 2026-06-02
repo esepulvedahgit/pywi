@@ -120,12 +120,12 @@ Configuración completa → [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
 ## Documentación / Documentation
 
-| Documento | Descripción |
+| Documento / Document | Descripción / Description |
 |---|---|
-| [Funcionalidades / Features](docs/FEATURES.md) | Guía completa de todas las funcionalidades para el usuario final |
-| [Despliegue amd64](docs/DEPLOY-AMD64.md) | Guía detallada de despliegue en amd64 con GPU NVIDIA |
-| [Despliegue arm64 / NPU](docs/DEPLOY-ARM64.md) | Guía detallada para Radxa 5A, Orange Pi 5 y similares |
-| [Configuración avanzada](docs/CONFIGURATION.md) | Variables de entorno, tutor IA, gestión de usuarios |
+| [Funcionalidades / Features](docs/FEATURES.md) | Guía completa de funcionalidades para el usuario final / Complete feature guide for end users |
+| [Despliegue amd64](docs/DEPLOY-AMD64.md) | Despliegue detallado con GPU NVIDIA / Detailed deployment with NVIDIA GPU |
+| [Despliegue arm64 / NPU](docs/DEPLOY-ARM64.md) | Guía para Radxa 5A, Orange Pi 5 y similares / Guide for Radxa 5A, Orange Pi 5 and similar boards |
+| [Configuración avanzada / Advanced Config](docs/CONFIGURATION.md) | Variables de entorno, tutor IA, gestión de usuarios / Environment variables, AI tutor, user management |
 
 ---
 
