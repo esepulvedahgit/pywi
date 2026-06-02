@@ -381,6 +381,7 @@ export const es = {
   aiChipImprove: 'Sugerir mejora',
   aiCopyCode: 'Copiar',
   aiCopiedCode: 'Copiado',
+  aiResetUsage: 'Reiniciar contador de tokens',
   aiThinking: 'Pensando…',
   aiModelPlaceholderOpenai: 'p.ej. gpt-4o-mini',
   aiModelPlaceholderDeepseek: 'p.ej. deepseek-chat',

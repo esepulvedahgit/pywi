@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Maximize2, Minimize2, Sparkles, Send, Trash2, Zap, Code2, Lightbulb, Copy, Check } from 'lucide-react';
-import { ExecutionResult, ChatMessage } from '../types';
+import { X, Maximize2, Minimize2, Sparkles, Send, Trash2, Zap, Code2, Lightbulb, Copy, Check, RotateCcw } from 'lucide-react';
+import { ExecutionResult, ChatMessage, TokenUsage } from '../types';
 import { useT } from '../i18n';
 
 interface AIAssistantProps {
@@ -88,6 +88,41 @@ function renderMarkdown(text: string, isLight: boolean): React.ReactNode[] {
   });
 }
 
+// ── Token usage / cost tracking ──────────────────────────────────────────────
+
+const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // OpenAI (USD per 1M tokens)
+  'gpt-4o':            { input: 5.00,  output: 15.00 },
+  'gpt-4o-mini':       { input: 0.15,  output: 0.60  },
+  'gpt-4.1':           { input: 2.00,  output: 8.00  },
+  'gpt-4.1-mini':      { input: 0.40,  output: 1.60  },
+  'gpt-3.5-turbo':     { input: 0.50,  output: 1.50  },
+  // DeepSeek
+  'deepseek-chat':     { input: 0.27,  output: 1.10  },
+  'deepseek-coder':    { input: 0.27,  output: 1.10  },
+  // Gemini
+  'gemini-2.5-pro':    { input: 1.25,  output: 10.00 },
+  'gemini-2.5-flash':  { input: 0.15,  output: 0.60  },
+  'gemini-2.0-flash':  { input: 0.10,  output: 0.40  },
+  'gemini-1.5-pro':    { input: 3.50,  output: 10.50 },
+  'gemini-1.5-flash':  { input: 0.075, output: 0.30  },
+};
+
+function calcCost(model: string, usage: TokenUsage): number | null {
+  const p = MODEL_PRICING[model];
+  if (!p) return null;
+  return (usage.promptTokens / 1_000_000) * p.input
+       + (usage.completionTokens / 1_000_000) * p.output;
+}
+
+function formatTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+const ZERO_USAGE: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function AIAssistant({
   isOpen,
   onClose,
@@ -105,6 +140,8 @@ export default function AIAssistant({
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState('');
   const [customHeight, setCustomHeight] = useState<number | null>(null);
+  const [sessionUsage, setSessionUsage] = useState<TokenUsage>(ZERO_USAGE);
+  const [currentModel, setCurrentModel] = useState<string>('');
   const panelRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -147,6 +184,15 @@ export default function AIAssistant({
         setError(data.error || 'Error al consultar la IA');
       } else {
         setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+        // Accumulate token usage for the session counter
+        if (data.usage) {
+          setSessionUsage(prev => ({
+            promptTokens:     prev.promptTokens     + (data.usage.promptTokens     ?? 0),
+            completionTokens: prev.completionTokens + (data.usage.completionTokens ?? 0),
+            totalTokens:      prev.totalTokens      + (data.usage.totalTokens      ?? 0),
+          }));
+        }
+        if (data.model) setCurrentModel(data.model);
       }
     } catch {
       setError('Error de conexión');
@@ -249,9 +295,30 @@ export default function AIAssistant({
             </h3>
           </div>
           <div className="flex items-center gap-1">
+            {/* Token usage indicator — shows after first message */}
+            {sessionUsage.totalTokens > 0 && (() => {
+              const cost = calcCost(currentModel, sessionUsage);
+              return (
+                <div className="flex items-center gap-1 text-[10px] font-mono opacity-50 hover:opacity-100 transition-opacity mr-1">
+                  <span title={`Entrada: ${sessionUsage.promptTokens} | Salida: ${sessionUsage.completionTokens}`}>
+                    ↑{formatTokens(sessionUsage.promptTokens)} ↓{formatTokens(sessionUsage.completionTokens)}
+                  </span>
+                  {cost !== null && (
+                    <span title="Costo estimado de la sesión">~${cost.toFixed(4)}</span>
+                  )}
+                  <button
+                    onClick={() => { setSessionUsage(ZERO_USAGE); setCurrentModel(''); }}
+                    className={`p-0.5 rounded hover:bg-white/10 transition-colors`}
+                    title={t('aiResetUsage')}
+                  >
+                    <RotateCcw className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              );
+            })()}
             {messages.length > 0 && (
               <button
-                onClick={() => { setMessages([]); setError(''); }}
+                onClick={() => { setMessages([]); setError(''); setSessionUsage(ZERO_USAGE); setCurrentModel(''); }}
                 className={iconBtn}
                 title={t('aiClearChat')}
               >

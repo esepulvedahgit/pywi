@@ -678,8 +678,18 @@ function writeSmtpConfig(cfg: SmtpConfig) {
   fs.writeFileSync(SMTP_CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
+// Token usage shape returned by all AI providers (normalized)
+interface TokenUsageServer {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 // AI provider adapter — supports OpenAI-compatible (openai/deepseek/custom) and Gemini REST
-async function callAIProvider(config: AIConfig, messages: ChatMessage[]): Promise<string> {
+async function callAIProvider(
+  config: AIConfig,
+  messages: ChatMessage[]
+): Promise<{ reply: string; usage: TokenUsageServer }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
 
@@ -714,7 +724,12 @@ async function callAIProvider(config: AIConfig, messages: ChatMessage[]): Promis
       }
 
       const data = await res.json() as any;
-      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      const usage: TokenUsageServer = {
+        promptTokens:     data.usageMetadata?.promptTokenCount     ?? 0,
+        completionTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+        totalTokens:      data.usageMetadata?.totalTokenCount      ?? 0,
+      };
+      return { reply: data.candidates?.[0]?.content?.parts?.[0]?.text ?? '', usage };
 
     } else {
       // OpenAI-compatible: openai, deepseek, custom
@@ -741,7 +756,12 @@ async function callAIProvider(config: AIConfig, messages: ChatMessage[]): Promis
       }
 
       const data = await res.json() as any;
-      return data.choices?.[0]?.message?.content ?? '';
+      const usage: TokenUsageServer = {
+        promptTokens:     data.usage?.prompt_tokens     ?? 0,
+        completionTokens: data.usage?.completion_tokens ?? 0,
+        totalTokens:      data.usage?.total_tokens      ?? 0,
+      };
+      return { reply: data.choices?.[0]?.message?.content ?? '', usage };
     }
   } finally {
     clearTimeout(timeout);
@@ -1426,8 +1446,8 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   ];
 
   try {
-    const reply = await callAIProvider(cfgForChat, fullMessages);
-    res.json({ reply });
+    const { reply, usage } = await callAIProvider(cfgForChat, fullMessages);
+    res.json({ reply, usage, model: cfgForChat.model });
   } catch (err: any) {
     if (err.name === 'AbortError') {
       return res.status(408).json({ error: 'Tiempo de espera agotado (30s). Intenta con un mensaje más corto.' });

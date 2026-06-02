@@ -72,3 +72,9 @@ export interface PackageUpdateState {
   lastChecked: string | null;
   dismissed: boolean;
 }
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
