@@ -27,6 +27,24 @@
 
 ---
 
+## Capturas / Screenshots
+
+<div align="center">
+
+| Login | Editor |
+|:---:|:---:|
+| ![Login screen](docs/img/screenshot-login.png) | ![Code editor](docs/img/screenshot-editor.png) |
+| **Pantalla de inicio de sesión** | **Editor de código Python (dark theme)** |
+
+| Ejecución en vivo | Gráficos matplotlib |
+|:---:|:---:|
+| ![Code execution](docs/img/screenshot-execution.png) | ![Matplotlib charts](docs/img/screenshot-charts.png) |
+| **Consola de salida en tiempo real** | **Visualización de gráficos** |
+
+</div>
+
+---
+
 ## ¿Para quién es? / Who is it for?
 
 | Perfil / Profile | Descripción / Description |
