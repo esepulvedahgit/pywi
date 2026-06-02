@@ -149,6 +149,8 @@ export default function AIAssistant({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Tracks whether the intro greeting has been requested for this chat session
   const introRequestedRef = useRef(false);
+  // Caches the model's intro greeting so "Borrar" can restore it instantly without a new API call
+  const cachedIntroRef = useRef<ChatMessage | null>(null);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -169,7 +171,9 @@ export default function AIAssistant({
       .then(r => r.json())
       .then(data => {
         if (data.reply) {
-          setMessages([{ role: 'assistant', content: data.reply }]);
+          const introMsg: ChatMessage = { role: 'assistant', content: data.reply };
+          cachedIntroRef.current = introMsg; // cache for instant restore on clear
+          setMessages([introMsg]);
           if (data.usage) setSessionUsage(prev => ({
             promptTokens:     prev.promptTokens     + (data.usage.promptTokens     ?? 0),
             completionTokens: prev.completionTokens + (data.usage.completionTokens ?? 0),
@@ -354,7 +358,13 @@ export default function AIAssistant({
             })()}
             {messages.length > 0 && (
               <button
-                onClick={() => { setMessages([]); setError(''); setSessionUsage(ZERO_USAGE); setCurrentModel(''); introRequestedRef.current = false; }}
+                onClick={() => {
+                  // Restore cached greeting instantly — no new API call, no cost, no latency
+                  setMessages(cachedIntroRef.current ? [cachedIntroRef.current] : []);
+                  setError('');
+                  setSessionUsage(ZERO_USAGE);
+                  // introRequestedRef stays true → useEffect won't re-call /api/ai/intro
+                }}
                 className={iconBtn}
                 title={t('aiClearChat')}
               >
