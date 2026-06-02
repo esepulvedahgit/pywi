@@ -1,107 +1,135 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+  <img src="public/images/logo_pywi.png" alt="PyWI Logo" width="180" />
+
+  <h1>PyWI — Python Web IDE</h1>
+
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white" />
+    <img src="https://img.shields.io/badge/Node.js-20-green?logo=node.js&logoColor=white" />
+    <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" />
+    <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" />
+    <img src="https://img.shields.io/badge/platform-amd64%20%7C%20arm64-lightgrey" />
+  </p>
+
+  <p>
+    <strong>IDE web Python auto-alojable para estudio y experimentación</strong><br/>
+    <em>Self-hosted Python Web IDE for learning and experimentation</em>
+  </p>
 </div>
 
-# Run and deploy your AI Studio app
+---
 
-This contains everything you need to run your app locally.
+## ¿Qué es PyWI? / What is PyWI?
 
-View your app in AI Studio: https://ai.studio/apps/1abd6a0c-71c6-4c47-9e34-65c1b6389246
+**ES:** PyWI es un entorno de desarrollo Python accesible desde el navegador, diseñado para estudiar Python, librerías de datos y machine learning básico. Incluye editor de código, ejecución con salida en vivo, visualización de gráficos, gestor de paquetes, visor de datasets y un tutor IA integrado. Funciona completamente desde móvil y es 100% auto-alojable.
 
-## Run Locally (desarrollo)
-
-**Prerequisites:** Node.js 20+
-
-1. Install dependencies: `npm install`
-2. Copy `.env.example` to `.env` and configura `JWT_SECRET` y `ENCRYPTION_KEY`
-3. Start dev server: `npm run dev` → http://localhost:3000
+**EN:** PyWI is a browser-based Python development environment designed for studying Python, data libraries, and basic machine learning. It includes a code editor, live output streaming, chart visualization, package manager, dataset viewer, and an integrated AI tutor. Fully mobile-friendly and 100% self-hostable.
 
 ---
 
-## Docker (producción)
+## ¿Para quién es? / Who is it for?
 
-### Arranque rápido — sin acelerador
-
-```bash
-docker compose up -d --build
-```
-
-> El contenedor arranca **sin GPU ni NPU**. El panel de rendimiento muestra
-> "Sin acceso a GPU" en tenue — esto es correcto y esperado.
-
----
-
-### Arranque con GPU NVIDIA (amd64 — Docker Desktop / Linux)
-
-La GPU NVIDIA está **incluida por defecto** en `docker-compose.yml`. No se necesita
-ningún override ni flag extra:
-
-```bash
-docker compose up -d --build
-```
-
-**Requisitos:**
-- Driver NVIDIA instalado en el host (verifica: `nvidia-smi`)
-- **Docker Desktop (Windows/Mac):** soporte GPU integrado. Si no funciona, asegúrate
-  de tener Docker Desktop actualizado (≥ 4.x) y el driver NVIDIA instalado.
-- **Linux nativo:** instala `nvidia-container-toolkit`:
-  ```bash
-  distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
-  curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-  curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
-  sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-  sudo systemctl restart docker
-  ```
-
-**Verificar que la GPU está accesible dentro del contenedor:**
-
-```bash
-docker compose exec web-ide nvidia-smi
-```
-
-Deberías ver tu GPU listada (ej. RTX 3060). Si falla, el driver o Docker Desktop
-no tienen habilitado el soporte GPU.
-
----
-
-### Arranque con NPU Rockchip RK3588S (arm64 — Radxa 5A, Orange Pi 5)
-
-El override arm64 **anula** la reserva GPU NVIDIA del base y monta la NPU:
-
-```bash
-# Antes del primer arranque: obtén el GID del grupo render
-getent group render   # anota el número, reemplaza <RENDER_GID> en docker-compose.arm64.yml
-
-# Opción A — Script automático (detecta arm64 solo)
-./start.sh
-
-# Opción B — Comando directo
-docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d --build
-```
-
----
-
-### Comandos útiles
-
-| Acción | Comando (amd64) |
-|--------|---------|
-| Ver logs en vivo | `docker compose logs -f` |
-| Reiniciar | `docker compose restart web-ide` |
-| Parar y eliminar | `docker compose down` |
-| Rebuild completo | `docker compose up -d --build --force-recreate` |
-| Verificar GPU | `docker compose exec web-ide nvidia-smi` |
-
----
-
-### Panel de rendimiento (Sidebar)
-
-El panel muestra RAM, CPU y el acelerador según la arquitectura detectada:
-
-| Arquitectura | Acelerador mostrado |
+| Perfil / Profile | Descripción / Description |
 |---|---|
-| amd64 / x64 | GPU (barra morada) |
-| arm64 | NPU (barra cyan, núcleos C0/C1/C2) |
+| 🎓 Estudiantes / Students | Aprende Python y Data Science sin instalar nada localmente / Learn Python and Data Science without installing anything locally |
+| 👨‍🏫 Docentes / Teachers | Entorno listo para clases, configurable y auto-alojable / Ready-to-use classroom environment, configurable and self-hostable |
+| 🔬 Entusiastas de ML / ML enthusiasts | Experimenta con pandas, sklearn y matplotlib desde el navegador / Experiment with pandas, sklearn and matplotlib from the browser |
+| 🏠 Self-hosters | Control total sobre tu entorno de desarrollo Python / Full control over your Python development environment |
 
-> El panel **monitorea** el uso de GPU/NPU. Para **ejecutar cómputo** en GPU
-> necesitas instalar frameworks CUDA (p.ej. PyTorch con CUDA) vía el gestor
-> de paquetes integrado (icono 📦 en el Sidebar).
+---
+
+## Tecnologías / Tech Stack
+
+| Capa / Layer | Tecnologías / Technologies |
+|---|---|
+| **Frontend** | React 19, Vite, CodeMirror 6, Tailwind CSS, TypeScript |
+| **Backend** | Node.js 20, Express, TypeScript, esbuild |
+| **Runtime Python** | Python 3.11, venv, pandas, numpy, matplotlib, seaborn, scikit-learn |
+| **Tutor IA / AI Tutor** | OpenAI, DeepSeek, Google Gemini, custom (OpenAI-compatible) |
+| **Seguridad / Security** | JWT, bcryptjs, AES-256-GCM (API keys at rest) |
+| **Infraestructura** | Docker, Docker Compose |
+| **Hardware soportado** | NVIDIA GPU (amd64), Rockchip RK3588S NPU (arm64) |
+
+---
+
+## Despliegue rápido / Quick Deploy
+
+### amd64 — PC / Servidor con GPU NVIDIA
+
+```bash
+# 1. Descarga los archivos de despliegue / Download deployment files
+curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/.env.example
+
+# 2. Configura las variables de entorno / Configure environment variables
+cp .env.example .env
+# Edita .env con tus valores / Edit .env with your values
+
+# 3. Levanta la aplicación / Start the application
+docker compose up -d
+```
+
+> 💡 La GPU NVIDIA se activa automáticamente si Docker Desktop o nvidia-container-toolkit están configurados.
+> The NVIDIA GPU is automatically enabled if Docker Desktop or nvidia-container-toolkit are configured.
+
+Guía detallada → [docs/DEPLOY-AMD64.md](docs/DEPLOY-AMD64.md)
+
+---
+
+### arm64 — Radxa Rock 5A / Orange Pi 5 (NPU RK3588S)
+
+```bash
+# 1. Descarga los archivos / Download files
+curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.arm64.yml
+curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/.env.example
+
+# 2. Configura el GID del grupo render y las variables de entorno
+# Configure render group GID and environment variables
+getent group render  # anota el GID / note the GID
+cp .env.example .env  # edita con tus valores / edit with your values
+
+# 3. Levanta con el override arm64 / Start with arm64 override
+docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d
+```
+
+Guía detallada → [docs/DEPLOY-ARM64.md](docs/DEPLOY-ARM64.md)
+
+---
+
+## Variables de entorno / Environment Variables
+
+| Variable | Requerida / Required | Descripción / Description | Por defecto / Default |
+|---|---|---|---|
+| `JWT_SECRET` | ✅ | Secreto para firmar tokens JWT / JWT signing secret | — |
+| `ENCRYPTION_KEY` | ✅ | Clave AES-256-GCM para cifrar API keys (hex 64 chars) | — |
+| `APP_URL` | ✅ | URL pública de la app / Public app URL | `http://localhost:3000` |
+| `EXEC_TIMEOUT_MS` | ❌ | Timeout de ejecución Python en ms / Python execution timeout | `120000` |
+
+Generar los secretos / Generate secrets:
+```bash
+# JWT_SECRET
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+# ENCRYPTION_KEY
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Configuración completa → [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+
+---
+
+## Documentación / Documentation
+
+| Documento | Descripción |
+|---|---|
+| [Funcionalidades / Features](docs/FEATURES.md) | Guía completa de todas las funcionalidades para el usuario final |
+| [Despliegue amd64](docs/DEPLOY-AMD64.md) | Guía detallada de despliegue en amd64 con GPU NVIDIA |
+| [Despliegue arm64 / NPU](docs/DEPLOY-ARM64.md) | Guía detallada para Radxa 5A, Orange Pi 5 y similares |
+| [Configuración avanzada](docs/CONFIGURATION.md) | Variables de entorno, tutor IA, gestión de usuarios |
+
+---
+
+## Licencia / License
+
+MIT License — libre para uso personal y comercial.
+MIT License — free for personal and commercial use.
