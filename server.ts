@@ -321,12 +321,12 @@ function onVenvCreated() {
     return;
   }
   
-  console.log('Installing base packages (numpy, pandas, matplotlib, seaborn, scikit-learn) in background...');
+  console.log('Installing base packages in background...');
   const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-  
+
   // Upgrade pip first to ensure compatibility
   exec(`"${venvPython}" -m pip install --upgrade pip`, () => {
-    const installCmd = `"${pipPath}" install numpy pandas matplotlib seaborn scikit-learn`;
+    const installCmd = `"${pipPath}" install numpy pandas matplotlib seaborn scikit-learn openpyxl xlrd pyarrow`;
     exec(installCmd, (err) => {
       venvStatus.installingBase = false;
       if (err) {
