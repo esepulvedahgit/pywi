@@ -391,4 +391,13 @@ export const en = {
   aiOpenBtn: 'Open AI assistant',
   aiHasKey: 'API Key saved',
   aiNoKey: 'No API Key',
+
+  // Lock Screen
+  lockScreenTitle: 'Session locked',
+  lockScreenSubtitle: 'Your session was locked due to inactivity. Enter your password to continue.',
+  lockScreenUnlock: 'Unlock',
+  lockScreenUnlocking: 'Verifying...',
+  lockScreenLogout: 'Sign out',
+  lockScreenPasswordError: 'Incorrect password. Please try again.',
+  lockScreenPasswordPlaceholder: 'Enter your password',
 };

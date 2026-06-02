@@ -35,12 +35,16 @@ import EnvRestoreOverlay from './components/EnvRestoreOverlay';
 import ResetPasswordScreen from './components/ResetPasswordScreen';
 import AIAssistant from './components/AIAssistant';
 import DataPreviewModal from './components/DataPreviewModal';
+import LockScreen from './components/LockScreen';
 
 // Helper: construye headers con el JWT del usuario actual
 const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
   const token = localStorage.getItem('py_ide_token');
   return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
 };
+
+// Tiempo de inactividad antes de bloquear la sesión (10 minutos)
+const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
 
 function AppContent() {
   const tl = useT();
@@ -49,6 +53,7 @@ function AppContent() {
     const saved = localStorage.getItem('py_ide_user');
     return saved ? JSON.parse(saved) : null;
   });
+  const [isLocked, setIsLocked] = useState(false);
   const [adminExists, setAdminExists] = useState<boolean>(true);
 
   useEffect(() => {
@@ -129,6 +134,7 @@ function AppContent() {
   // Layout UI management
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const editorRef = useRef<EditorView | null>(null);
+  const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Poll for environment restoration status
   useEffect(() => {
@@ -226,6 +232,25 @@ function AppContent() {
       fetchFileContent(currentProject.id, currentFile.id);
     }
   }, [currentFile]);
+
+  // Bloqueo de sesión por inactividad (10 min)
+  useEffect(() => {
+    if (!user || isLocked) return;
+
+    const resetTimer = () => {
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+      inactivityTimer.current = setTimeout(() => setIsLocked(true), INACTIVITY_LIMIT_MS);
+    };
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'wheel'] as const;
+    events.forEach(e => window.addEventListener(e, resetTimer, { passive: true }));
+    resetTimer(); // arrancar el contador desde ya
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    };
+  }, [user, isLocked]);
 
   // API Call: Fetch projects for active log
   const fetchProjects = async () => {
@@ -1499,6 +1524,16 @@ function AppContent() {
             setLang(settings.language);
           }}
         />
+
+        {/* Lock Screen — se muestra sobre la IDE completa tras inactividad */}
+        {isLocked && (
+          <LockScreen
+            user={user}
+            activeTheme={activeTheme}
+            onUnlock={() => setIsLocked(false)}
+            onLogout={handleLogout}
+          />
+        )}
 
         {/* Upload path notice — shown immediately after a dataset is uploaded */}
         {uploadNotice && (

@@ -176,8 +176,8 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const APP_DATA_DIR = path.join(DATA_DIR, 'app_data');
 
 // Execution timeout in ms. Override via EXEC_TIMEOUT_MS env var (e.g. 300000 = 5 min).
-// Default 120s — enough for basic ML training without blocking the server forever.
-const EXEC_TIMEOUT_MS = Number(process.env.EXEC_TIMEOUT_MS) || 120000;
+// Default 180s — enough for basic ML training without blocking the server forever.
+const EXEC_TIMEOUT_MS = Number(process.env.EXEC_TIMEOUT_MS) || 180000;
 
 // Marker emitted by the Python input() wrapper to signal the client that stdin is needed.
 // Uses null bytes so it won't appear in normal program output.
@@ -2684,7 +2684,11 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
           type: 'end',
           success,
           stdout: stdoutChunks,
-          stderr: stderrChunks || (killed ? `ERROR: Tiempo de ejecución excedido (Timeout de ${EXEC_TIMEOUT_MS / 1000}s)` : ''),
+          stderr: stderrChunks || (killed
+            ? `⏱️ La ejecución se detuvo al superar el límite de ${EXEC_TIMEOUT_MS / 1000} segundos.\n` +
+              `Esto suele pasar cuando el programa quedó esperando un input() sin recibir datos, ` +
+              `o cuando hay un bucle que no termina. Revisa tu código y vuelve a ejecutar.`
+            : ''),
           exitCode,
           duration,
           timestamp: new Date().toISOString(),
