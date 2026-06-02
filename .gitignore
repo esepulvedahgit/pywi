@@ -44,6 +44,19 @@ coverage/
 data/
 db.json
 
+# Claude Code internal state (excluir todo excepto scripts/ que son parte del proyecto)
+.claude/agents/
+.claude/worktrees/
+
+# Superpowers brainstorming artifacts
+docs/superpowers/img/
+
+# Development / test artifacts
+TASK8_VERIFICATION_RESULTS.md
+playwright-test.mjs
+test-api.sh
+test-script.js
+
 # OS specific
 .DS_Store
 .AppleDouble
