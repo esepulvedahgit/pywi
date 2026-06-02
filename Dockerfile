@@ -44,9 +44,15 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # Copy the rest of the application source code
 COPY . .
 
-# Create a non-root user and transfer ownership of the app directory
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
-RUN chown -R appuser:appgroup /app
+# Create non-root user with fixed UID/GID 1000 — matches the default host user on
+# Debian/Ubuntu/Radxa so bind-mounted volumes (./data) have correct permissions.
+# Pre-create data directories so the server can write on first startup even if the
+# host directory doesn't exist yet or is owned by root.
+RUN groupadd --gid 1000 appgroup && \
+    useradd --uid 1000 --gid 1000 --no-create-home --shell /bin/sh appuser && \
+    mkdir -p /app/data/app_data && \
+    chown -R appuser:appgroup /app
+
 USER appuser
 
 # Expose the application port
