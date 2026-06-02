@@ -107,6 +107,11 @@ function AppContent() {
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
+  // Interactive input() state
+  const [runId, setRunId] = useState<string | null>(null);
+  const [waitingForInput, setWaitingForInput] = useState(false);
+  const [inputPrompt, setInputPrompt] = useState('');
+
   // Dataset preview state
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [previewData, setPreviewData] = useState<any | null>(null);
@@ -616,8 +621,22 @@ function AppContent() {
             if (!line.trim()) continue;
             try {
               const msg = JSON.parse(line);
-              if (msg.type === 'stdout') {
-                liveStdout += msg.data;
+              const INPUT_MARKER = '\x00__PYWI_INPUT__\x00';
+              if (msg.type === 'started') {
+                setRunId(msg.runId);
+              } else if (msg.type === 'stdout') {
+                const data: string = msg.data ?? '';
+                const markerIdx = data.indexOf(INPUT_MARKER);
+                if (markerIdx !== -1) {
+                  // Stdout before the marker goes to display; after is the input prompt
+                  const cleanPart = data.slice(0, markerIdx);
+                  const prompt = data.slice(markerIdx + INPUT_MARKER.length);
+                  if (cleanPart) liveStdout += cleanPart;
+                  setInputPrompt(prompt);
+                  setWaitingForInput(true);
+                } else {
+                  liveStdout += data;
+                }
                 setExecutionResult({
                   success: true,
                   stdout: liveStdout,
@@ -639,10 +658,14 @@ function AppContent() {
                       timestamp: new Date().toISOString(),
                     });
               } else if (msg.type === 'end') {
-                // Final message with complete result + generatedFiles
+                setRunId(null);
+                setWaitingForInput(false);
+                setInputPrompt('');
+                // Strip INPUT_MARKER from final stdout (may appear if process killed mid-input)
+                const cleanStdout = (msg.stdout as string).split(INPUT_MARKER)[0];
                 setExecutionResult({
                   success: msg.success,
-                  stdout: msg.stdout,
+                  stdout: cleanStdout,
                   stderr: msg.stderr,
                   exitCode: msg.exitCode,
                   duration: msg.duration,
@@ -670,6 +693,24 @@ function AppContent() {
     } finally {
       setIsRunning(false);
     }
+  };
+
+  // Send text to stdin of the running Python process (interactive input support)
+  const handleSendStdin = async (text: string) => {
+    if (!runId) return;
+    setWaitingForInput(false);
+    setInputPrompt('');
+    // Echo the typed text in the console (Python stdin pipe does not echo)
+    setExecutionResult(prev => prev
+      ? { ...prev, stdout: prev.stdout + text + '\n' }
+      : prev);
+    try {
+      await fetch(`/api/run/${runId}/stdin`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ text })
+      });
+    } catch { /* process may have already ended */ }
   };
 
   // Open dataset preview modal and fetch preview data from the backend
@@ -1440,6 +1481,9 @@ function AppContent() {
           isRunning={isRunning}
           projectId={currentProject?.id ?? ''}
           token={localStorage.getItem('py_ide_token') ?? ''}
+          waitingForInput={waitingForInput}
+          inputPrompt={inputPrompt}
+          onSendInput={handleSendStdin}
         />
 
         {/* Settings Modal */}

@@ -277,6 +277,11 @@ export default function AIAssistant({
           !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[50vh] sm:h-[55vh]') : ''
         }`}
         id="ai-assistant-panel"
+        onAnimationComplete={() => {
+          // Scroll to bottom after open animation — the container has its final
+          // height now, so scrollIntoView lands correctly
+          messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+        }}
       >
         {/* Drag handle — touch-none evita que el browser interprete el gesto como scroll */}
         <div

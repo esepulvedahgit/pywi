@@ -88,6 +88,9 @@ interface ConsoleSheetProps {
   isRunning?: boolean;
   projectId: string;
   token: string;
+  waitingForInput?: boolean;
+  inputPrompt?: string;
+  onSendInput?: (text: string) => void;
 }
 
 export default function ConsoleSheet({
@@ -100,11 +103,15 @@ export default function ConsoleSheet({
   isRunning = false,
   projectId,
   token,
+  waitingForInput = false,
+  inputPrompt = '',
+  onSendInput,
 }: ConsoleSheetProps) {
   const t = useT();
   const [showRawTrace, setShowRawTrace] = useState(false);
   const [customHeight, setCustomHeight] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'console' | 'plots'>('console');
+  const [stdinValue, setStdinValue] = useState('');
   const panelRef = useRef<HTMLDivElement>(null);
 
   const handleDownload = async (filename: string) => {
@@ -365,6 +372,30 @@ export default function ConsoleSheet({
                     {result.stdout || <span className="text-slate-500 italic">{t('noOutput')}</span>}
                   </pre>
                 </div>
+
+                {/* Interactive stdin input — shown when script calls input() */}
+                {waitingForInput && (
+                  <div className="flex items-center gap-2 mt-1 ml-1 pb-1">
+                    {inputPrompt && (
+                      <span className="font-mono text-xs text-amber-300 whitespace-pre">{inputPrompt}</span>
+                    )}
+                    <input
+                      type="text"
+                      value={stdinValue}
+                      onChange={e => setStdinValue(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          onSendInput?.(stdinValue);
+                          setStdinValue('');
+                        }
+                      }}
+                      autoFocus
+                      className="flex-1 min-w-0 bg-transparent border-b border-emerald-500 text-emerald-300
+                                 font-mono text-xs outline-none caret-emerald-400 pb-0.5"
+                      placeholder={t('consoleInputPlaceholder')}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 italic gap-2 py-8">

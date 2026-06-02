@@ -382,6 +382,7 @@ export const es = {
   aiCopyCode: 'Copiar',
   aiCopiedCode: 'Copiado',
   aiResetUsage: 'Reiniciar contador de tokens',
+  consoleInputPlaceholder: 'Escribe tu respuesta y pulsa Enter…',
   aiThinking: 'Pensando…',
   aiModelPlaceholderOpenai: 'p.ej. gpt-4o-mini',
   aiModelPlaceholderDeepseek: 'p.ej. deepseek-chat',

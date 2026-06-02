@@ -382,6 +382,7 @@ export const en = {
   aiCopyCode: 'Copy',
   aiCopiedCode: 'Copied',
   aiResetUsage: 'Reset token counter',
+  consoleInputPlaceholder: 'Type your answer and press Enter…',
   aiThinking: 'Thinking…',
   aiModelPlaceholderOpenai: 'e.g. gpt-4o-mini',
   aiModelPlaceholderDeepseek: 'e.g. deepseek-chat',
