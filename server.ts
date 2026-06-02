@@ -1411,7 +1411,10 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
   res.json({ success: true, validated, ...(validationError ? { error: validationError } : {}) });
 });
 
-// POST /api/ai/test — quick probe to validate API key
+// POST /api/ai/test — ephemeral probe using form values; does NOT persist anything.
+// Body: { provider?, model?, apiKey?, baseUrl? }
+// Falls back to the stored config for any field not supplied.
+// Only PUT /api/ai/config (save) sets validated = true and enables the tutor button.
 app.post('/api/ai/test', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
   const database = readDB();
@@ -1419,26 +1422,39 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
   const cfg = user.aiConfig;
-  if (!cfg || !cfg.apiKey) {
-    return res.status(400).json({ error: 'Configuración IA no guardada. Guarda antes de probar.' });
+  const body = req.body || {};
+
+  // Resolve effective values: body overrides stored config
+  const validProviders = ['openai', 'deepseek', 'gemini', 'custom'];
+  const provider: string = (body.provider && validProviders.includes(body.provider))
+    ? body.provider : (cfg?.provider || '');
+  const model: string = body.model?.trim() || cfg?.model || '';
+  const baseUrl: string | undefined = body.baseUrl?.trim() || cfg?.baseUrl;
+
+  if (!provider) {
+    return res.status(400).json({ error: 'Proveedor IA inválido o no configurado.' });
+  }
+  if (!model) {
+    return res.status(400).json({ error: 'Especifica un nombre de modelo antes de probar.' });
   }
 
-  // Decrypt the stored key before passing it to the outbound HTTP call
-  const decryptedKey = decryptApiKey(cfg.apiKey);
-  if (!decryptedKey) {
-    return res.status(400).json({ error: 'No se pudo descifrar la API key. Vuelve a guardar la configuración IA.' });
+  // Key resolution: real key from body → stored encrypted key → nothing
+  const bodyKey: string = (body.apiKey && body.apiKey !== '••••••') ? body.apiKey.trim() : '';
+  let plainKey = bodyKey; // body key arrives in plain text
+  if (!plainKey && cfg?.apiKey) {
+    plainKey = decryptApiKey(cfg.apiKey) || '';
   }
-  const cfgForCall = { ...cfg, apiKey: decryptedKey };
+  if (!plainKey) {
+    return res.status(400).json({ error: 'Ingresa una API key para probar la conexión.' });
+  }
+
+  const cfgForCall = { provider, model, apiKey: plainKey, baseUrl, enabled: true };
 
   try {
-    await callAIProvider(cfgForCall, [{ role: 'user', content: 'Reply with: OK' }]);
-    // Persist validated = true so the button enables without reloading
-    cfg.validated = true;
-    writeDB(database);
-    res.json({ success: true, message: `Conexión exitosa con ${cfg.provider}` });
+    await callAIProvider(cfgForCall as any, [{ role: 'user', content: 'Reply with: OK' }]);
+    // Intentionally NOT writing to DB — only Guardar (PUT /api/ai/config) persists validated.
+    res.json({ success: true, message: `Conexión exitosa con ${provider}` });
   } catch (err: any) {
-    cfg.validated = false;
-    writeDB(database);
     res.status(400).json({ error: err.message || 'Error al conectar con el proveedor IA' });
   }
 });

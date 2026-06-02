@@ -392,22 +392,21 @@ export default function SettingsModal({
     setAiMessage('');
     try {
       const token = localStorage.getItem('py_ide_token');
+      // Send current form values so the test works even before saving.
+      // The server uses the body key in plain text (or falls back to the stored encrypted key).
+      // Nothing is persisted — only Guardar enables the tutor button.
       const res = await fetch('/api/ai/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          provider: aiConfig.provider,
+          model: aiConfig.model,
+          apiKey: aiApiKey,          // plain text from the form field (empty string if not changed)
+          baseUrl: aiConfig.baseUrl,
+        })
       });
       const data = await res.json() as any;
       setAiMessage(res.ok ? `✓ ${data.message || t('aiTestOk')}` : `✗ ${data.error || t('aiTestFail')}`);
-      // Propagate fresh config (validated flag may have changed)
-      if (res.ok) {
-        const token2 = localStorage.getItem('py_ide_token');
-        const r2 = await fetch('/api/ai/config', { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} });
-        if (r2.ok) {
-          const freshCfg = await r2.json();
-          setAiConfig(freshCfg);
-          onAiConfigSaved?.(freshCfg);
-        }
-      }
       setTimeout(() => setAiMessage(''), 5000);
     } catch {
       setAiMessage(`✗ ${t('connectionError')}`);
@@ -959,7 +958,7 @@ export default function SettingsModal({
                 <div className="flex items-center gap-3 pt-1">
                   <button
                     onClick={handleTestAI}
-                    disabled={aiTesting || !aiConfig.hasKey}
+                    disabled={aiTesting || (!aiApiKey && !aiConfig.hasKey) || !aiConfig.model.trim()}
                     className={c.buttonSecondary + ' disabled:opacity-40'}
                   >
                     {aiTesting ? '...' : t('aiTest')}
