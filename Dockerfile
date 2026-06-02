@@ -44,16 +44,13 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 # Copy the rest of the application source code
 COPY . .
 
-# Create non-root user with fixed UID/GID 1000 — matches the default host user on
-# Debian/Ubuntu/Radxa so bind-mounted volumes (./data) have correct permissions.
+# node:20-bookworm already ships a 'node' user with UID/GID 1000 — reuse it.
 # Pre-create data directories so the server can write on first startup even if the
 # host directory doesn't exist yet or is owned by root.
-RUN groupadd --gid 1000 appgroup && \
-    useradd --uid 1000 --gid 1000 --no-create-home --shell /bin/sh appuser && \
-    mkdir -p /app/data/app_data && \
-    chown -R appuser:appgroup /app
+RUN mkdir -p /app/data/app_data && \
+    chown -R node:node /app
 
-USER appuser
+USER node
 
 # Expose the application port
 EXPOSE 3000
