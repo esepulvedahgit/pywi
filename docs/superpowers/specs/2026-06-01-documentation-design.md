@@ -45,12 +45,18 @@ docs/
 
 Bilingüe. Cada sección en español primero, inglés segundo (o tabla con dos columnas donde aplique).
 
-1. **Header**: logo PyWI, badges (Docker, Python 3.11, License, plataformas)
+1. **Header**: logo centrado usando `public/images/logo_pywi.png` (versión amplia, más legible
+   en GitHub) + badges (Docker, Python 3.11, License, plataformas amd64/arm64)
 2. **¿Qué es? / What is it?**: 3-4 líneas describiendo PyWI — IDE web Python auto-alojable,
    estudio de Python + ML básico, tutor IA integrado, funcional desde móvil
 3. **¿Para quién? / Who is it for?**: lista de 3-4 perfiles (estudiantes, docentes, self-hosters)
-4. **Tecnologías / Tech Stack**: tabla — Python 3.11, Node.js 20, React 19, CodeMirror 6,
-   Docker, Tailwind CSS, Express
+4. **Tecnologías / Tech Stack**: tabla con tecnologías de desarrollo y producción:
+   - **Frontend**: React 19, Vite, CodeMirror 6, Tailwind CSS, TypeScript
+   - **Backend**: Node.js 20, Express, TypeScript, esbuild
+   - **Runtime Python**: Python 3.11, venv, pandas, numpy, matplotlib, seaborn, scikit-learn
+   - **IA**: OpenAI API, DeepSeek, Google Gemini, custom (OpenAI-compatible)
+   - **Infraestructura**: Docker, Docker Compose, bcryptjs, JWT, AES-256-GCM
+   - **Hardware soportado**: NVIDIA GPU (amd64), Rockchip RK3588S NPU (arm64)
 5. **Despliegue rápido / Quick Deploy**:
    - amd64 (PC / servidor con GPU NVIDIA): 3 comandos exactos
    - arm64 (Radxa 5A / Orange Pi 5): 3 comandos + link a DEPLOY-ARM64.md
