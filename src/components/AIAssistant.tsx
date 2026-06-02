@@ -273,7 +273,7 @@ export default function AIAssistant({
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
         style={customHeight ? { height: `${customHeight}px` } : undefined}
-        className={`fixed bottom-0 left-0 right-0 z-39 shadow-2xl flex flex-col font-sans select-none ${panelBg} ${
+        className={`fixed bottom-0 left-0 right-0 z-41 shadow-2xl flex flex-col font-sans select-none ${panelBg} ${
           !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[50vh] sm:h-[55vh]') : ''
         }`}
         id="ai-assistant-panel"
