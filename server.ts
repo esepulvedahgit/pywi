@@ -2312,7 +2312,7 @@ app.get('/api/projects/:projectId/files/:fileId/preview', requireAuth, (req, res
     return res.status(415).json({ error: 'Solo se pueden previsualizar datasets' });
   }
 
-  const TABULAR_EXTS = new Set(['.csv', '.tsv', '.xlsx', '.xls', '.parquet', '.json']);
+  const TABULAR_EXTS = new Set(['.csv', '.tsv', '.xlsx', '.xls', '.parquet', '.json', '.txt', '.log']);
   const ext = path.extname(fileRecord.filename).toLowerCase();
   if (!TABULAR_EXTS.has(ext)) {
     return res.status(415).json({ error: `Formato no tabular: ${ext}` });
@@ -2348,6 +2348,18 @@ try:
     elif ext == '.json':
         df = pd.read_json(fp)
         df = df.head(51)
+    elif ext in ('.txt', '.log'):
+        # Try auto-detecting delimiter (csv, tsv, pipe, semicolon, space)
+        try:
+            df = pd.read_csv(fp, sep=None, engine='python', nrows=51, on_bad_lines='skip')
+            # If only 1 column it's likely plain text — show as lines instead
+            if len(df.columns) <= 1:
+                raise ValueError('plain text')
+        except Exception:
+            # Fall back: show raw lines as a single-column table
+            with open(fp, 'r', encoding='utf-8', errors='replace') as f:
+                lines = [l.rstrip('\\n') for l in f.readlines()[:51]]
+            df = pd.DataFrame({'line': lines})
     else:
         raise ValueError('unsupported')
     df = df.head(50)
