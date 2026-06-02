@@ -24,7 +24,7 @@ const getThemeClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') 
     case 'light':
       return {
         overlay: 'fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
-        modal: 'bg-white border border-slate-200 rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-5xl h-[90vh] sm:h-auto sm:max-h-[88vh] flex flex-col',
+        modal: 'bg-white border border-slate-200 rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-[92vw] h-[90vh] sm:h-[90vh] flex flex-col',
         header: 'border-b border-slate-200 bg-slate-50',
         title: 'text-slate-900',
         subtitle: 'text-slate-500',
@@ -43,7 +43,7 @@ const getThemeClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') 
     case 'vibrant-dark':
       return {
         overlay: 'fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
-        modal: 'bg-neutral-900 border border-neutral-700 rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-5xl h-[90vh] sm:h-auto sm:max-h-[88vh] flex flex-col',
+        modal: 'bg-neutral-900 border border-neutral-700 rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-[92vw] h-[90vh] sm:h-[90vh] flex flex-col',
         header: 'border-b border-neutral-700 bg-neutral-950',
         title: 'text-neutral-100',
         subtitle: 'text-neutral-400',
@@ -62,7 +62,7 @@ const getThemeClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') 
     default: // midnight-obsidian
       return {
         overlay: 'fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
-        modal: 'bg-slate-950 border border-slate-800 rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-5xl h-[90vh] sm:h-auto sm:max-h-[88vh] flex flex-col',
+        modal: 'bg-slate-950 border border-slate-800 rounded-t-2xl sm:rounded-xl shadow-2xl w-full sm:max-w-[92vw] h-[90vh] sm:h-[90vh] flex flex-col',
         header: 'border-b border-slate-800 bg-black/40',
         title: 'text-slate-100',
         subtitle: 'text-slate-500',
