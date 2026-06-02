@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     build-essential \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package configuration files and install Node dependencies
@@ -45,15 +46,15 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 COPY . .
 
 # node:20-bookworm already ships a 'node' user with UID/GID 1000 — reuse it.
-# Pre-create data directories so the server can write on first startup even if the
-# host directory doesn't exist yet or is owned by root.
-RUN mkdir -p /app/data/app_data && \
-    chown -R node:node /app
+RUN chown -R node:node /app
 
-USER node
+# Entrypoint runs as root, fixes bind-mount ownership, then drops to node user.
+# This solves EACCES when ./data is created on the host by root.
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose the application port
 EXPOSE 3000
 
-# Build frontend + bundle server, then start production server
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["sh", "-c", "npm run build && npm start"]
