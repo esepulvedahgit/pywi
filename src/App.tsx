@@ -23,7 +23,7 @@ import { indentUnit } from '@codemirror/language';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 
-import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState } from './types';
+import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig } from './types';
 import { LanguageProvider, useLang, useT } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
@@ -74,6 +74,11 @@ function AppContent() {
   // AI Assistant state
   const [showAIAssistant, setShowAIAssistant] = useState(false);
   const [isAIExpanded, setIsAIExpanded] = useState(false);
+  const [aiConfig, setAiConfig] = useState<AIConfig>({
+    provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false, validated: false,
+  });
+  const [showAiNotice, setShowAiNotice] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>('editor');
 
   // Theme & customization visual state
   const [activeTheme, setActiveTheme] = useState<'light' | 'vibrant-dark' | 'midnight-obsidian'>(() => {
@@ -156,19 +161,22 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [envRestore?.inProgress, user]);
 
-  // Load user settings on login
+  // Load user settings and AI config on login
   useEffect(() => {
     if (user) {
       const token = localStorage.getItem('py_ide_token');
-      fetch(`/api/users/${user.id}/settings`, {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-      })
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
+      fetch(`/api/users/${user.id}/settings`, { headers })
         .then(res => res.json())
         .then(settings => {
           setUserSettings(settings);
           setLang(settings.language);
         })
         .catch(err => console.error('Error loading settings:', err));
+      fetch('/api/ai/config', { headers })
+        .then(res => res.json())
+        .then((cfg: AIConfig) => setAiConfig(cfg))
+        .catch(() => {});
     }
   }, [user?.id]);
 
@@ -798,6 +806,17 @@ function AppContent() {
     localStorage.removeItem('py_ide_token');
   };
 
+  // AI ready: config must be enabled, have a key, a model, and a validated connection
+  const aiReady = aiConfig.enabled && aiConfig.hasKey && !!aiConfig.model && aiConfig.validated;
+
+  const handleAiButtonClick = () => {
+    if (aiReady) {
+      setShowAIAssistant(v => !v);
+    } else {
+      setShowAiNotice(true);
+    }
+  };
+
   const getThemeClasses = (theme: string) => {
     switch (theme) {
       case 'vibrant-dark':
@@ -1313,9 +1332,13 @@ function AppContent() {
 
             {/* AI Assistant button (desktop) */}
             <button
-              onClick={() => setShowAIAssistant(v => !v)}
+              onClick={handleAiButtonClick}
               className={`p-1.5 rounded-md border text-xs font-bold transition-all flex items-center justify-center shadow-2xs shrink-0 ${
-                showAIAssistant
+                !aiReady
+                  ? activeTheme === 'light'
+                    ? 'bg-slate-50 border-slate-200 text-slate-400 opacity-50 cursor-not-allowed'
+                    : 'bg-slate-900 border-slate-800 text-slate-600 opacity-50 cursor-not-allowed'
+                  : showAIAssistant
                   ? 'bg-indigo-600 border-indigo-500 text-white'
                   : activeTheme === 'light'
                   ? 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
@@ -1323,7 +1346,7 @@ function AppContent() {
                   ? 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                   : 'bg-neutral-950 border-neutral-900 text-neutral-300 hover:bg-neutral-900'
               }`}
-              title={tl('aiOpenBtn')}
+              title={aiReady ? tl('aiOpenBtn') : tl('aiNeedsConfigTitle')}
               id="btn-ai-assistant"
             >
               <Sparkles className="h-4 w-4 shrink-0" />
@@ -1461,9 +1484,13 @@ function AppContent() {
         {/* FAB: AI assistant (mobile) — offset right to avoid overlapping console FAB */}
         {!showAIAssistant && (
           <button
-            onClick={() => setShowAIAssistant(true)}
-            className="absolute bottom-4 right-16 z-20 h-10 w-10 bg-indigo-700 hover:bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border border-indigo-500/40 md:hidden"
-            title={tl('aiOpenBtn')}
+            onClick={handleAiButtonClick}
+            className={`absolute bottom-4 right-16 z-20 h-10 w-10 rounded-full flex items-center justify-center shadow-lg transition-all border md:hidden ${
+              aiReady
+                ? 'bg-indigo-700 hover:bg-indigo-600 text-white hover:scale-105 active:scale-95 border-indigo-500/40'
+                : 'bg-slate-700/50 text-slate-500 border-slate-600/30 opacity-50 cursor-not-allowed'
+            }`}
+            title={aiReady ? tl('aiOpenBtn') : tl('aiNeedsConfigTitle')}
             id="floating-btn-open-ai"
           >
             <Sparkles className="h-5 w-5" />
@@ -1493,6 +1520,7 @@ function AppContent() {
           executionResult={executionResult}
           language={userSettings.language}
           userId={user.id}
+          aiReady={aiReady}
         />
 
         {/* 3. Sliding lower Console Sheet panel */}
@@ -1514,7 +1542,7 @@ function AppContent() {
         {/* Settings Modal */}
         <SettingsModal
           isOpen={showSettingsModal}
-          onClose={() => setShowSettingsModal(false)}
+          onClose={() => { setShowSettingsModal(false); setSettingsInitialTab('editor'); }}
           userId={user.id}
           userRole={user.role}
           userSettings={userSettings}
@@ -1523,6 +1551,8 @@ function AppContent() {
             setUserSettings(settings);
             setLang(settings.language);
           }}
+          initialTab={settingsInitialTab}
+          onAiConfigSaved={(cfg) => setAiConfig(cfg)}
         />
 
         {/* Lock Screen — se muestra sobre la IDE completa tras inactividad */}
@@ -1533,6 +1563,52 @@ function AppContent() {
             onUnlock={() => setIsLocked(false)}
             onLogout={handleLogout}
           />
+        )}
+
+        {/* AI not-configured notice */}
+        {showAiNotice && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowAiNotice(false)}>
+            <div
+              className={`rounded-xl shadow-2xl p-5 max-w-sm w-full mx-4 border ${
+                activeTheme === 'light'
+                  ? 'bg-white border-slate-200'
+                  : activeTheme === 'midnight-obsidian'
+                  ? 'bg-[#0a0a0a] border-neutral-800'
+                  : 'bg-slate-950 border-slate-800'
+              }`}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3 mb-4">
+                <span className="text-2xl shrink-0">🤖</span>
+                <div>
+                  <p className={`text-sm font-semibold mb-1 ${activeTheme === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                    {tl('aiNeedsConfigTitle')}
+                  </p>
+                  <p className={`text-xs leading-relaxed ${activeTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>
+                    {tl('aiNeedsConfigDesc')}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setShowAiNotice(false); setSettingsInitialTab('ai'); setShowSettingsModal(true); }}
+                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                >
+                  {tl('aiGoToConfig')}
+                </button>
+                <button
+                  onClick={() => setShowAiNotice(false)}
+                  className={`px-4 py-2 text-sm rounded-lg border transition-colors ${
+                    activeTheme === 'light'
+                      ? 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                      : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                  }`}
+                >
+                  {tl('cancel')}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Upload path notice — shown immediately after a dataset is uploaded */}

@@ -391,6 +391,11 @@ export const en = {
   aiOpenBtn: 'Open AI assistant',
   aiHasKey: 'API Key saved',
   aiNoKey: 'No API Key',
+  aiNeedsConfigTitle: 'AI assistant not configured',
+  aiNeedsConfigDesc: 'Configure and validate your AI provider in Settings to enable the assistant.',
+  aiGoToConfig: 'Go to settings',
+  aiValidatedOk: 'Connection verified — assistant enabled',
+  aiValidationFailed: 'Could not validate the model. Check the API key and model name.',
 
   // Lock Screen
   lockScreenTitle: 'Session locked',

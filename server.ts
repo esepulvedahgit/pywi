@@ -618,6 +618,7 @@ interface AIConfig {
   apiKey: string;
   baseUrl?: string;
   enabled: boolean;
+  validated?: boolean; // connection tested successfully at last save/test
 }
 
 interface ChatMessage {
@@ -1340,19 +1341,20 @@ app.get('/api/ai/config', requireAuth, (req, res) => {
 
   const cfg = user.aiConfig;
   if (!cfg) {
-    return res.json({ provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false });
+    return res.json({ provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false, validated: false });
   }
   res.json({
     provider: cfg.provider,
     model: cfg.model,
     baseUrl: cfg.baseUrl || '',
     enabled: cfg.enabled,
-    hasKey: !!cfg.apiKey
+    hasKey: !!cfg.apiKey,
+    validated: !!cfg.validated,
   });
 });
 
-// PUT /api/ai/config — save AI config; key preserved if sent as masked placeholder
-app.put('/api/ai/config', requireAuth, (req, res) => {
+// PUT /api/ai/config — save AI config; auto-validates connection if config is complete
+app.put('/api/ai/config', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
   const { provider, model, apiKey, baseUrl, enabled } = req.body;
 
@@ -1377,15 +1379,36 @@ app.put('/api/ai/config', requireAuth, (req, res) => {
     ? encryptApiKey(incomingKey)   // new key supplied — encrypt it
     : existingEncryptedKey;        // keep existing (already encrypted or empty)
 
+  // Auto-validate: probe the provider if config is complete
+  let validated = false;
+  let validationError = '';
+  if (!!enabled && keyToStore && model.trim()) {
+    const decryptedKey = decryptApiKey(keyToStore);
+    if (decryptedKey) {
+      try {
+        await callAIProvider(
+          { provider, model: model.trim(), apiKey: decryptedKey, baseUrl: baseUrl?.trim() || undefined, enabled: true },
+          [{ role: 'user', content: 'Reply with: OK' }]
+        );
+        validated = true;
+      } catch (err: any) {
+        validationError = err.message || 'Error al validar la conexión';
+      }
+    } else {
+      validationError = 'No se pudo descifrar la API key. Vuelve a introducirla.';
+    }
+  }
+
   user.aiConfig = {
     provider,
     model: model.trim(),
     apiKey: keyToStore,
     baseUrl: baseUrl?.trim() || undefined,
-    enabled: !!enabled
+    enabled: !!enabled,
+    validated,
   };
   writeDB(database);
-  res.json({ success: true });
+  res.json({ success: true, validated, ...(validationError ? { error: validationError } : {}) });
 });
 
 // POST /api/ai/test — quick probe to validate API key
@@ -1409,8 +1432,13 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
 
   try {
     await callAIProvider(cfgForCall, [{ role: 'user', content: 'Reply with: OK' }]);
+    // Persist validated = true so the button enables without reloading
+    cfg.validated = true;
+    writeDB(database);
     res.json({ success: true, message: `Conexión exitosa con ${cfg.provider}` });
   } catch (err: any) {
+    cfg.validated = false;
+    writeDB(database);
     res.status(400).json({ error: err.message || 'Error al conectar con el proveedor IA' });
   }
 });
@@ -1466,6 +1494,48 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   } catch (err: any) {
     if (err.name === 'AbortError') {
       return res.status(408).json({ error: 'Tiempo de espera agotado (30s). Intenta con un mensaje más corto.' });
+    }
+    res.status(500).json({ error: err.message || 'Error al consultar el proveedor IA' });
+  }
+});
+
+// POST /api/ai/intro — generate a one-off greeting from the model (no history stored)
+app.post('/api/ai/intro', requireAuth, aiLimiter, async (req, res) => {
+  const userId = (req as any).userId;
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  const cfg = user.aiConfig;
+  if (!cfg || !cfg.apiKey || !cfg.enabled) {
+    return res.status(400).json({ error: 'Asistente IA no configurado o deshabilitado.' });
+  }
+  const decryptedKey = decryptApiKey(cfg.apiKey);
+  if (!decryptedKey) {
+    return res.status(400).json({ error: 'No se pudo descifrar la API key. Vuelve a guardar la configuración IA.' });
+  }
+  const cfgForIntro = { ...cfg, apiKey: decryptedKey };
+
+  const lang = user.settings?.language || 'es';
+  const systemPrompt = lang === 'en'
+    ? 'You are PyWI Tutor, an expert Python educational assistant. Help students learn Python, data science, machine learning and deep learning. When analyzing tracebacks or errors explain them clearly and suggest fixes with code examples. Use markdown for code blocks. Be concise and educational.'
+    : 'Eres PyWI Tutor, un asistente educativo experto en Python. Ayuda a los estudiantes a aprender Python, ciencia de datos, machine learning y deep learning. Al analizar errores o tracebacks, explícalos con claridad y sugiere correcciones con ejemplos de código. Usa markdown para bloques de código. Sé conciso y educativo.';
+
+  const introInstruction = lang === 'en'
+    ? 'Introduce yourself briefly (2-3 sentences) as PyWI Tutor, a Python assistant, and invite the user to ask their first question. Be warm and concise. Do not include code blocks.'
+    : 'Preséntate brevemente (2-3 frases) como PyWI Tutor, asistente de Python, e invita al usuario a hacer su primera pregunta. Sé cercano y conciso. No incluyas bloques de código.';
+
+  const introMessages: ChatMessage[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: introInstruction },
+  ];
+
+  try {
+    const { reply, usage } = await callAIProvider(cfgForIntro, introMessages);
+    res.json({ reply, usage, model: cfgForIntro.model });
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      return res.status(408).json({ error: 'Tiempo de espera agotado.' });
     }
     res.status(500).json({ error: err.message || 'Error al consultar el proveedor IA' });
   }

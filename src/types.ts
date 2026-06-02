@@ -53,7 +53,8 @@ export interface AIConfig {
   model: string;
   baseUrl?: string;
   enabled: boolean;
-  hasKey: boolean; // server never sends the real key
+  hasKey: boolean;    // server never sends the real key
+  validated: boolean; // connection was tested successfully at last save
 }
 
 export interface ChatMessage {

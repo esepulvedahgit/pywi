@@ -21,6 +21,8 @@ interface SettingsModalProps {
   userSettings: UserSettings;
   activeTheme?: string;
   onSettingsSaved: (settings: UserSettings) => void;
+  initialTab?: 'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai';
+  onAiConfigSaved?: (cfg: AIConfig) => void;
 }
 
 export default function SettingsModal({
@@ -31,11 +33,13 @@ export default function SettingsModal({
   userSettings,
   activeTheme = 'vibrant-dark',
   onSettingsSaved,
+  initialTab,
+  onAiConfigSaved,
 }: SettingsModalProps) {
   const t = useT();
   const { setLang } = useLang();
 
-  const [activeTab, setActiveTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>(initialTab || 'editor');
   const [localSettings, setLocalSettings] = useState<UserSettings>(userSettings);
   const [smtpConfig, setSmtpConfig] = useState({
     host: '',
@@ -90,6 +94,8 @@ export default function SettingsModal({
   // Load SMTP config and admin users on mount
   useEffect(() => {
     if (!isOpen) return;
+    // Jump to the requested tab when opening
+    if (initialTab) setActiveTab(initialTab);
     const token = localStorage.getItem('py_ide_token');
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
 
@@ -350,16 +356,27 @@ export default function SettingsModal({
         })
       });
       if (res.ok) {
+        const saved = await res.json().catch(() => ({})) as any;
         setAiSavedOk(true);
         setAiApiKey('');
-        // refresh to get hasKey status
+        // refresh to get hasKey + validated status
         const token2 = localStorage.getItem('py_ide_token');
         const r2 = await fetch('/api/ai/config', { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} });
-        if (r2.ok) setAiConfig(await r2.json());
-        setTimeout(() => setAiSavedOk(false), 2000);
+        if (r2.ok) {
+          const freshCfg = await r2.json();
+          setAiConfig(freshCfg);
+          onAiConfigSaved?.(freshCfg);
+        }
+        // Show validation result in the modal
+        if (saved.validated) {
+          setAiMessage('✓ ' + t('aiValidatedOk'));
+        } else if (saved.error) {
+          setAiMessage('✗ ' + saved.error);
+        }
+        setTimeout(() => { setAiSavedOk(false); setAiMessage(''); }, 5000);
       } else {
         const d = await res.json().catch(() => ({})) as any;
-        setAiMessage(d.error || t('error'));
+        setAiMessage('✗ ' + (d.error || t('error')));
         setTimeout(() => setAiMessage(''), 4000);
       }
     } catch {
@@ -381,6 +398,16 @@ export default function SettingsModal({
       });
       const data = await res.json() as any;
       setAiMessage(res.ok ? `✓ ${data.message || t('aiTestOk')}` : `✗ ${data.error || t('aiTestFail')}`);
+      // Propagate fresh config (validated flag may have changed)
+      if (res.ok) {
+        const token2 = localStorage.getItem('py_ide_token');
+        const r2 = await fetch('/api/ai/config', { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} });
+        if (r2.ok) {
+          const freshCfg = await r2.json();
+          setAiConfig(freshCfg);
+          onAiConfigSaved?.(freshCfg);
+        }
+      }
       setTimeout(() => setAiMessage(''), 5000);
     } catch {
       setAiMessage(`✗ ${t('connectionError')}`);

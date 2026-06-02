@@ -14,6 +14,7 @@ interface AIAssistantProps {
   executionResult: ExecutionResult | null;
   language: string;
   userId: string;
+  aiReady: boolean; // true when config is validated and assistant can be used
 }
 
 // Bloque de código con botón de copiar al portapapeles
@@ -133,6 +134,7 @@ export default function AIAssistant({
   executionResult,
   language,
   userId,
+  aiReady,
 }: AIAssistantProps) {
   const t = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -145,11 +147,40 @@ export default function AIAssistant({
   const panelRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Tracks whether the intro greeting has been requested for this chat session
+  const introRequestedRef = useRef(false);
 
   // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking]);
+
+  // Auto-presentation: when the panel opens with an empty chat and a valid config,
+  // ask the model to introduce itself before the user types anything.
+  useEffect(() => {
+    if (!isOpen || !aiReady || messages.length > 0 || isThinking || introRequestedRef.current) return;
+    introRequestedRef.current = true;
+    setIsThinking(true);
+    const token = localStorage.getItem('py_ide_token');
+    fetch('/api/ai/intro', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.reply) {
+          setMessages([{ role: 'assistant', content: data.reply }]);
+          if (data.usage) setSessionUsage(prev => ({
+            promptTokens:     prev.promptTokens     + (data.usage.promptTokens     ?? 0),
+            completionTokens: prev.completionTokens + (data.usage.completionTokens ?? 0),
+            totalTokens:      prev.totalTokens      + (data.usage.totalTokens      ?? 0),
+          }));
+          if (data.model) setCurrentModel(data.model);
+        }
+      })
+      .catch(() => {/* intro is best-effort; silence errors */})
+      .finally(() => setIsThinking(false));
+  }, [isOpen, aiReady, messages.length]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -323,7 +354,7 @@ export default function AIAssistant({
             })()}
             {messages.length > 0 && (
               <button
-                onClick={() => { setMessages([]); setError(''); setSessionUsage(ZERO_USAGE); setCurrentModel(''); }}
+                onClick={() => { setMessages([]); setError(''); setSessionUsage(ZERO_USAGE); setCurrentModel(''); introRequestedRef.current = false; }}
                 className={iconBtn}
                 title={t('aiClearChat')}
               >
@@ -382,7 +413,9 @@ export default function AIAssistant({
           {messages.length === 0 && !isThinking && (
             <div className={`h-full flex flex-col items-center justify-center gap-3 py-8 ${isLight ? 'text-slate-400' : 'text-slate-600'}`}>
               <Sparkles className="h-10 w-10 opacity-40" />
-              <p className="text-xs text-center px-4 opacity-70">{t('aiNoConfig').includes('Configura') ? t('aiInputPlaceholder') : t('aiInputPlaceholder')}</p>
+              <p className="text-xs text-center px-4 opacity-70">
+                {aiReady ? t('aiInputPlaceholder') : t('aiNoConfig')}
+              </p>
             </div>
           )}
 

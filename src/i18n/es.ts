@@ -391,6 +391,11 @@ export const es = {
   aiOpenBtn: 'Abrir asistente IA',
   aiHasKey: 'API Key guardada',
   aiNoKey: 'Sin API Key',
+  aiNeedsConfigTitle: 'Asistente IA no configurado',
+  aiNeedsConfigDesc: 'Configura y valida tu proveedor de IA en Ajustes para activar el asistente.',
+  aiGoToConfig: 'Ir a configuración',
+  aiValidatedOk: 'Conexión verificada — asistente activado',
+  aiValidationFailed: 'No se pudo validar el modelo. Revisa la API key y el nombre del modelo.',
 
   // Lock Screen
   lockScreenTitle: 'Sesión bloqueada',
