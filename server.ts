@@ -518,7 +518,14 @@ function readNpuMetrics(): { available: boolean; percent: number; coreLoads: num
       loadStr = fs.readFileSync('/sys/kernel/debug/rknpu/load', 'utf-8').trim();
     }
 
-    // Parse all "Core\d+: <n>%" occurrences
+    // Format A — devfreq sysfs: "100@1000000000Hz" (aggregate load @ frequency)
+    const devfreqMatch = loadStr.match(/^(\d+)@/);
+    if (devfreqMatch) {
+      const percent = Math.min(100, parseInt(devfreqMatch[1], 10));
+      return { available: true, percent, coreLoads: [] };
+    }
+
+    // Format B — debugfs: "NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,"
     const matches = [...loadStr.matchAll(/Core\d+:\s*(\d+)%/g)];
     if (matches.length === 0) return { available: false, percent: 0, coreLoads: [] };
 
