@@ -9,9 +9,11 @@ services:
     volumes:
       # Bind mount source so cada docker compose up recompila con el código actual
       - .:/app
-      # Shield container's node_modules and .venv from being overwritten by the host
+      # Shield container's node_modules, .venv and dist from being overwritten by the host.
+      # dist/ must live inside the container — Vite can't clean files on Windows bind-mounts.
       - /app/node_modules
       - /app/.venv
+      - /app/dist
       # Explicit bind mount for requirements.txt
       - ./requirements.txt:/app/requirements.txt
       # Persist user data and databases in the host's data directory
