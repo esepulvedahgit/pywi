@@ -806,8 +806,9 @@ function AppContent() {
     localStorage.removeItem('py_ide_token');
   };
 
-  // AI ready: config must be enabled, have a key, a model, and a validated connection
-  const aiReady = aiConfig.enabled && aiConfig.hasKey && !!aiConfig.model && aiConfig.validated;
+  // AI ready: config must have a key, a model, and a validated connection.
+  // 'enabled' is now derived from validated on the server side — no manual toggle.
+  const aiReady = aiConfig.hasKey && !!aiConfig.model && aiConfig.validated;
 
   const handleAiButtonClick = () => {
     if (aiReady) {

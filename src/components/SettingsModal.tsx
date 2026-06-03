@@ -352,7 +352,7 @@ export default function SettingsModal({
           model: aiConfig.model,
           apiKey: aiApiKey || '••••••',
           baseUrl: aiConfig.baseUrl,
-          enabled: aiConfig.enabled,
+          // 'enabled' is no longer sent — server derives it from validation result
         })
       });
       if (res.ok) {
@@ -881,18 +881,14 @@ export default function SettingsModal({
             {/* AI Assistant Tab */}
             {activeTab === 'ai' && (
               <div className="space-y-4">
-                {/* Enabled toggle */}
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="ai-enabled"
-                    checked={aiConfig.enabled}
-                    onChange={e => setAiConfig({ ...aiConfig, enabled: e.target.checked })}
-                    className={c.checkbox}
-                  />
-                  <label htmlFor="ai-enabled" className={`${c.label} mb-0 cursor-pointer normal-case text-sm`}>
-                    {t('aiEnabled')}
-                  </label>
+                {/* Status indicator — replaces the manual "enable" checkbox */}
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium ${
+                  aiConfig.validated
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                }`}>
+                  <span>{aiConfig.validated ? '●' : '○'}</span>
+                  <span>{aiConfig.validated ? t('aiStatusActive') : t('aiStatusInactive')}</span>
                 </div>
 
                 {/* Provider */}

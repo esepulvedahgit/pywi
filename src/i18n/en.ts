@@ -391,6 +391,8 @@ export const en = {
   aiOpenBtn: 'Open AI assistant',
   aiHasKey: 'API Key saved',
   aiNoKey: 'No API Key',
+  aiStatusActive: 'Assistant active',
+  aiStatusInactive: 'Inactive — save with a valid connection to enable it',
   aiNeedsConfigTitle: 'AI assistant not configured',
   aiNeedsConfigDesc: 'Configure and validate your AI provider in Settings to enable the assistant.',
   aiGoToConfig: 'Go to settings',

@@ -391,6 +391,8 @@ export const es = {
   aiOpenBtn: 'Abrir asistente IA',
   aiHasKey: 'API Key guardada',
   aiNoKey: 'Sin API Key',
+  aiStatusActive: 'Asistente activo',
+  aiStatusInactive: 'Inactivo — guarda con una conexión válida para activarlo',
   aiNeedsConfigTitle: 'Asistente IA no configurado',
   aiNeedsConfigDesc: 'Configura y valida tu proveedor de IA en Ajustes para activar el asistente.',
   aiGoToConfig: 'Ir a configuración',

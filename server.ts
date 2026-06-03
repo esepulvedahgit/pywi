@@ -1379,10 +1379,11 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
     ? encryptApiKey(incomingKey)   // new key supplied — encrypt it
     : existingEncryptedKey;        // keep existing (already encrypted or empty)
 
-  // Auto-validate: probe the provider if config is complete
+  // Auto-validate whenever the config is complete (key + model), regardless of the 'enabled' field.
+  // 'enabled' is now derived from the validation result — no manual toggle needed.
   let validated = false;
   let validationError = '';
-  if (!!enabled && keyToStore && model.trim()) {
+  if (keyToStore && model.trim()) {
     const decryptedKey = decryptApiKey(keyToStore);
     if (decryptedKey) {
       try {
@@ -1404,7 +1405,7 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
     model: model.trim(),
     apiKey: keyToStore,
     baseUrl: baseUrl?.trim() || undefined,
-    enabled: !!enabled,
+    enabled: validated,   // enabled is always in sync with validated — no manual toggle
     validated,
   };
   writeDB(database);
