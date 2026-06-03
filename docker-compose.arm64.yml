@@ -4,11 +4,17 @@
 # Requisitos en el host:
 #   - Kernel BSP de Rockchip (6.1.x con sufijo rk* o 5.10.x)
 #   - Driver RKNPU v0.9.8 cargado (verificar: sudo cat /sys/kernel/debug/rknpu/version)
-#   - debugfs montado (mount -t debugfs debugfs /sys/kernel/debug) si se usa la ruta de fallback
 #
-# ANTES DE USAR: verificar el GID del grupo 'render' en el host y actualizarlo aquí:
-#   getent group render
-# Reemplaza <RENDER_GID> con el número resultante (ej: 103).
+# RENDER_GID — GID del grupo 'render' del host (para acceso a /dev/dri).
+# En Radxa 5A / Orange Pi 5 el valor por defecto es 103.
+# Si tu placa usa un GID distinto, pásalo al comando o decláralo en .env:
+#   RENDER_GID=<n> docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d
+#   getent group render   → muestra el GID correcto
+#
+# Monitorización de carga NPU:
+#   Ruta primaria  : /sys/class/devfreq/<npu>/load  (sin root, sin volúmenes extra)
+#   Ruta de reserva: /sys/kernel/debug/rknpu/load   (proporciona detalle por núcleo;
+#     requiere descomentar el volumen debugfs más abajo y RENDER_GID con acceso a debugfs)
 
 services:
   web-ide:
@@ -23,23 +29,24 @@ services:
         reservations:
           devices: !reset []
 
-    # Montar los render nodes de la NPU (RK3588S usa /dev/dri/renderD128-130)
+    # Render nodes de la NPU — necesarios para inferencia con rknn-toolkit-lite2
     devices:
       - /dev/dri:/dev/dri
 
-    # Añadir el GID del grupo 'render' al usuario del contenedor para acceder a /dev/dri
-    # Obtener GID: getent group render   → reemplaza <RENDER_GID> con el número
+    # GID del grupo 'render' del host; por defecto 103 (Radxa 5A, Orange Pi 5).
+    # Sobrescribir con: RENDER_GID=<n> docker compose ... up -d
     group_add:
-      - "<RENDER_GID>"
+      - "${RENDER_GID:-103}"
 
-    volumes:
-      # Montar debugfs read-only para que el backend pueda leer /sys/kernel/debug/rknpu/load
-      # (solo necesario si /sys/class/devfreq no expone la carga de la NPU sin root)
-      - /sys/kernel/debug:/sys/kernel/debug:ro
-
-    # cap_add DAC_READ_SEARCH permite al proceso no-root (appuser) atravesar
-    # el directorio /sys/kernel/debug (permisos 700 root) para leer rknpu/load.
-    # Si el backend usa /sys/class/devfreq/*/load como fuente primaria (sin root),
-    # esta capability puede eliminarse.
-    cap_add:
-      - DAC_READ_SEARCH
+    # ── Volumen debugfs (OPCIONAL) ────────────────────────────────────────────
+    # Descomenta si quieres detalle de carga por núcleo (Core0/Core1/Core2) en
+    # el panel de rendimiento. No es necesario para la monitorización básica:
+    # la ruta primaria /sys/class/devfreq/<npu>/load funciona sin este volumen.
+    #
+    # volumes:
+    #   - /sys/kernel/debug:/sys/kernel/debug:ro
+    #
+    # Si activas el volumen y el host tiene debugfs con permisos 700 (root),
+    # añade también:
+    #   cap_add:
+    #     - DAC_READ_SEARCH

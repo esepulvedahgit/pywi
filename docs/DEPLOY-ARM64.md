@@ -31,7 +31,11 @@ uname -r
 sudo cat /sys/kernel/debug/rknpu/version
 # Esperado: RKNPU driver: v0.9.8
 
-# Carga de la NPU (los 3 núcleos deben aparecer)
+# Carga de la NPU — ruta primaria (sin root)
+ls /sys/class/devfreq/ | grep -i npu && cat /sys/class/devfreq/fdab0000.npu/load
+# Esperado: 0@1000000000Hz  (carga%@frecuenciaHz)
+
+# Carga de la NPU — ruta de reserva con detalle por núcleo (requiere root)
 sudo cat /sys/kernel/debug/rknpu/load
 # Esperado: NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,
 
@@ -40,8 +44,9 @@ ls -l /dev/dri/
 # Esperado: renderD128, renderD129, renderD130 con grupo "render"
 ```
 
-Si alguno de estos falla, la NPU no está disponible en tu kernel y el despliegue
-no podrá usarla.
+Si la ruta primaria devfreq no existe, la NPU no está accesible y el despliegue
+no podrá reportar su carga. Si solo falla la ruta debugfs, el monitoreo básico
+sigue funcionando (sin detalle por núcleo).
 
 ---
 
@@ -177,11 +182,24 @@ docker compose -f docker-compose.yml -f docker-compose.arm64.yml exec web-ide \
 
 ### 7c. Que el contenedor puede leer la carga de la NPU
 
+El backend usa dos rutas en orden de preferencia:
+
+**Ruta primaria — devfreq sysfs (sin root, siempre disponible):**
+```bash
+docker compose -f docker-compose.yml -f docker-compose.arm64.yml exec web-ide \
+  cat /sys/class/devfreq/fdab0000.npu/load
+# Esperado: 0@1000000000Hz   (carga%@frecuenciaHz en reposo)
+```
+
+**Ruta de reserva — debugfs (requiere el volumen descomentado en el override):**
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.arm64.yml exec web-ide \
   cat /sys/kernel/debug/rknpu/load
 # Esperado: NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,
 ```
+
+Con la configuración por defecto (devfreq, sin volumen debugfs) solo la primera
+ruta es accesible. Eso es suficiente para la monitorización básica.
 
 ### 7d. Panel de la interfaz web
 
@@ -190,11 +208,14 @@ rendimiento) deberías ver:
 
 ```
 NPU   0.0%
-C0 0% · C1 0% · C2 0%
 [══════════════════] (barra cyan vacía en reposo)
 ```
 
-Cuando la NPU esté procesando, los porcentajes subirán.
+Cuando la NPU esté procesando, el porcentaje y la barra subirán.
+
+> **Nota:** El detalle por núcleo (`C0 0% · C1 0% · C2 0%`) solo aparece cuando
+> el contenedor usa la ruta debugfs (volumen comentado en `docker-compose.arm64.yml`).
+> Con la ruta devfreq (por defecto) se muestra únicamente el porcentaje agregado.
 
 ---
 
@@ -352,11 +373,27 @@ docker compose -f docker-compose.yml -f docker-compose.arm64.yml build --no-cach
 
 ### La carga NPU siempre muestra 0%
 
-El contenedor no puede leer `/sys/kernel/debug/rknpu/load`. Verifica:
-1. Que `debugfs` está montado: `mount | grep debugfs`
-2. Que el volumen está montado en el contenedor: `docker compose ... exec web-ide ls /sys/kernel/debug/rknpu/`
-3. Si no está montado el debugfs: `sudo mount -t debugfs debugfs /sys/kernel/debug`
+El backend lee la carga en dos pasos; verifica cada uno:
+
+**Paso 1 — ruta primaria (devfreq, sin root):**
+```bash
+# Desde el host:
+ls /sys/class/devfreq/ | grep -i npu
+# Esperado: fdab0000.npu  (o similar)
+
+cat /sys/class/devfreq/fdab0000.npu/load
+# Esperado: 0@1000000000Hz
+```
+Si este archivo existe y es legible, el backend ya puede leer la carga. No se
+necesita nada más. Si el problema persiste, reinicia el contenedor.
+
+**Paso 2 — ruta de reserva (debugfs) — solo si la ruta primaria falla:**
+1. Descomenta el volumen debugfs en `docker-compose.arm64.yml`.
+2. Verifica que `debugfs` está montado en el host: `mount | grep debugfs`
+3. Si no lo está: `sudo mount -t debugfs debugfs /sys/kernel/debug`
    Para que persista tras reboot: añadir `debugfs /sys/kernel/debug debugfs defaults 0 0` a `/etc/fstab`
+4. Vuelve a levantar el contenedor:
+   `docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d`
 
 ### Error de acceso a `/dev/dri`
 
