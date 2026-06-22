@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2, BarChart2, Download } from 'lucide-react';
+import { X, CornerRightDown, Terminal, CheckCircle2, AlertTriangle, Clock, Maximize2, Minimize2, ChevronDown, ChevronRight, Trash2, BarChart2, Download, Sparkles } from 'lucide-react';
 import { ExecutionResult } from '../types';
 import { useT } from '../i18n';
 import PlotsPanel from './PlotsPanel';
@@ -91,6 +91,8 @@ interface ConsoleSheetProps {
   waitingForInput?: boolean;
   inputPrompt?: string;
   onSendInput?: (text: string) => void;
+  /** Called when the user clicks "Explain with tutor" — opens the AI panel with the error pre-sent */
+  onExplainError?: () => void;
 }
 
 export default function ConsoleSheet({
@@ -106,6 +108,7 @@ export default function ConsoleSheet({
   waitingForInput = false,
   inputPrompt = '',
   onSendInput,
+  onExplainError,
 }: ConsoleSheetProps) {
   const t = useT();
   const [showRawTrace, setShowRawTrace] = useState(false);
@@ -306,6 +309,16 @@ export default function ConsoleSheet({
                             <span className="text-[10px] text-slate-400 font-mono select-text">
                               {parsedError.filename}:{parsedError.lineNumber}
                             </span>
+                          )}
+                          {onExplainError && (
+                            <button
+                              onClick={onExplainError}
+                              className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-600/80 hover:bg-indigo-500 text-indigo-100 transition-colors shrink-0 select-none"
+                              title={t('aiExplainErrorBtn')}
+                            >
+                              <Sparkles className="h-2.5 w-2.5" />
+                              {t('aiExplainErrorBtn')}
+                            </button>
                           )}
                         </div>
                         {parsedError.errorMessage && (

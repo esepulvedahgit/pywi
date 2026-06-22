@@ -60,6 +60,38 @@ export interface AIConfig {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  proposals?: DiffProposal[]; // parsed <diff_proposal> blocks for this message
+}
+
+// Context snapshot sent to /api/ai/chat alongside the message history
+export interface IdeSelection {
+  text: string;
+  fromLine: number;
+  toLine: number;
+  from: number; // char offset in document
+  to: number;
+}
+
+export interface IdeContext {
+  code: string;           // full file content (will be line-numbered on server)
+  selection?: IdeSelection;
+  fileName?: string;
+  projectName?: string;
+  execution?: {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+  };
+}
+
+// A proposed code change from the AI tutor
+export interface DiffProposal {
+  target: 'selection' | 'file';
+  description: string;
+  content: string;        // the new code content to apply
+  beforeContent?: string; // captured at parse time for diff display
+  applied?: boolean;      // true once the user accepted it
+  rejected?: boolean;     // true once the user dismissed it
 }
 
 export interface OutdatedPackage {

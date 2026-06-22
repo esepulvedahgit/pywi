@@ -49,6 +49,8 @@ export const en = {
   run: 'Run',
   runScript: 'script',
   running: 'Running...',
+  stop: 'Stop',
+  stopTooltip: 'Stop execution',
   successCode0: 'SUCCESS (CODE 0)',
   failed: 'FAILED (CODE 1)',
   stdoutConsole: 'Stdout / Output Console',
@@ -376,6 +378,9 @@ export const en = {
   aiInputPlaceholder: 'Ask a question about your code…',
   aiSend: 'Send',
   aiClearChat: 'Clear conversation',
+  aiSelectionAttached: 'Lines {{from}}–{{to}} attached',
+  aiSelectionAttachedOne: 'Line {{line}} attached',
+  aiClearSelectionTooltip: 'Remove selection',
   aiChipExplainError: 'Explain error',
   aiChipExplainCode: 'Explain code',
   aiChipImprove: 'Suggest improvement',
@@ -407,4 +412,13 @@ export const en = {
   lockScreenLogout: 'Sign out',
   lockScreenPasswordError: 'Incorrect password. Please try again.',
   lockScreenPasswordPlaceholder: 'Enter your password',
+
+  // AI Tutor — Colab-style improvements
+  aiExplainErrorBtn: 'Explain with tutor',
+  aiExplainErrorPrompt: 'Explain the error shown in the console and how to fix it.',
+  aiInlinePlaceholder: 'What do you want to generate or change?',
+  aiInlineTitle: 'Generate with AI tutor',
+  aiInlineSend: 'Generate',
+  aiInlineHint: 'Enter to send · Esc to close',
+  aiInlinePromptPrefix: 'Generate or modify the code at the cursor/selection with this instruction and return a <diff_proposal target="selection">. User instruction: ',
 };

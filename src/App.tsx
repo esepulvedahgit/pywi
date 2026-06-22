@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Play,
   Menu,
@@ -16,14 +16,16 @@ import {
   Keyboard,
   Settings,
   X,
-  Bell
+  Bell,
+  Wand2,
+  Square
 } from 'lucide-react';
-import { EditorView } from '@codemirror/view';
+import { EditorView, keymap } from '@codemirror/view';
 import { indentUnit } from '@codemirror/language';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 
-import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig } from './types';
+import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DiffProposal } from './types';
 import { LanguageProvider, useLang, useT } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
@@ -79,6 +81,12 @@ function AppContent() {
   });
   const [showAiNotice, setShowAiNotice] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>('editor');
+  // aiCommand: dispatch a pre-filled message to the tutor from outside the panel
+  const [aiCommand, setAiCommand] = useState<{ text: string; nonce: number } | null>(null);
+  // Inline AI prompt overlay (Ctrl+I)
+  const [inlinePromptOpen, setInlinePromptOpen] = useState(false);
+  const [inlinePromptValue, setInlinePromptValue] = useState('');
+  const inlineInputRef = useRef<HTMLInputElement>(null);
 
   // Theme & customization visual state
   const [activeTheme, setActiveTheme] = useState<'light' | 'vibrant-dark' | 'midnight-obsidian'>(() => {
@@ -121,6 +129,8 @@ function AppContent() {
   const [runId, setRunId] = useState<string | null>(null);
   const [waitingForInput, setWaitingForInput] = useState(false);
   const [inputPrompt, setInputPrompt] = useState('');
+  // Ref to abort the streaming fetch when the user clears the console mid-run
+  const runAbortRef = useRef<AbortController | null>(null);
 
   // Dataset preview state
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
@@ -139,6 +149,8 @@ function AppContent() {
   // Layout UI management
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const editorRef = useRef<EditorView | null>(null);
+  // Tracks lines currently selected in the editor (for AI tutor badge)
+  const [aiSelection, setAiSelection] = useState<{ fromLine: number; toLine: number } | null>(null);
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Poll for environment restoration status
@@ -628,11 +640,15 @@ function AppContent() {
     // Auto save physical file change before running
     await handleSaveFile(code);
 
+    const ac = new AbortController();
+    runAbortRef.current = ac;
+
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/run`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId: user.id, runCode: code })
+        body: JSON.stringify({ userId: user.id, runCode: code }),
+        signal: ac.signal
       });
 
       // Streaming NDJSON: show stdout/stderr as it arrives
@@ -715,15 +731,18 @@ function AppContent() {
         setExecutionResult(data);
       }
     } catch (err: any) {
-      setExecutionResult({
-        success: false,
-        stdout: '',
-        stderr: `${tl('errorExecutionEngine')}: ${err.message}`,
-        exitCode: -1,
-        duration: 0,
-        timestamp: new Date().toISOString()
-      });
+      if (err?.name !== 'AbortError') {
+        setExecutionResult({
+          success: false,
+          stdout: '',
+          stderr: `${tl('errorExecutionEngine')}: ${err.message}`,
+          exitCode: -1,
+          duration: 0,
+          timestamp: new Date().toISOString()
+        });
+      }
     } finally {
+      runAbortRef.current = null;
       setIsRunning(false);
     }
   };
@@ -744,6 +763,52 @@ function AppContent() {
         body: JSON.stringify({ text })
       });
     } catch { /* process may have already ended */ }
+  };
+
+  // Collapse the editor selection so the AI tutor badge disappears
+  const handleClearAiSelection = () => {
+    const view = editorRef.current;
+    if (view) {
+      const head = view.state.selection.main.head;
+      view.dispatch({ selection: { anchor: head } }); // collapse to cursor
+    }
+    setAiSelection(null);
+  };
+
+  // Detener la ejecución en curso conservando la salida ya mostrada
+  const handleStopRun = async () => {
+    if (runId) {
+      try {
+        await fetch(`/api/run/${runId}/stop`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' })
+        });
+      } catch { /* el proceso puede haber terminado ya */ }
+    }
+    runAbortRef.current?.abort();
+    setIsRunning(false);
+    setRunId(null);
+    setWaitingForInput(false);
+    setInputPrompt('');
+    // NO se llama a setExecutionResult(null): la salida permanece visible
+  };
+
+  // Clear the console; if a run is active, stop it first so "Ejecutar" is re-enabled
+  const handleClearConsole = async () => {
+    if (isRunning && runId) {
+      try {
+        await fetch(`/api/run/${runId}/stop`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' })
+        });
+      } catch { /* process may have already ended */ }
+    }
+    runAbortRef.current?.abort();
+    setIsRunning(false);
+    setRunId(null);
+    setWaitingForInput(false);
+    setInputPrompt('');
+    setExecutionResult(null);
   };
 
   // Open dataset preview modal and fetch preview data from the backend
@@ -786,6 +851,65 @@ function AppContent() {
     }
   };
 
+  // Helper: Capture a snapshot of the current IDE state for the AI tutor
+  const getEditorContext = (): IdeContext => {
+    const view = editorRef.current;
+    let selection: IdeContext['selection'];
+
+    if (view) {
+      const sel = view.state.selection.main;
+      const selText = view.state.doc.sliceString(sel.from, sel.to);
+      if (selText) {
+        selection = {
+          text: selText,
+          fromLine: view.state.doc.lineAt(sel.from).number,
+          toLine: view.state.doc.lineAt(sel.to).number,
+          from: sel.from,
+          to: sel.to,
+        };
+      }
+    }
+
+    return {
+      code,
+      selection,
+      fileName: currentFile?.filename,
+      projectName: currentProject?.name,
+      execution: executionResult
+        ? {
+            stdout: executionResult.stdout,
+            stderr: executionResult.stderr,
+            exitCode: executionResult.exitCode,
+          }
+        : undefined,
+    };
+  };
+
+  // Helper: Apply an AI-proposed code change to the CodeMirror editor
+  const handleApplyAiEdit = ({ target, content }: Pick<DiffProposal, 'target' | 'content'>) => {
+    const view = editorRef.current;
+    if (!view) {
+      // Fallback: no editor view — replace whole state value
+      if (target === 'file') setCode(content);
+      return;
+    }
+    if (target === 'file') {
+      const docLen = view.state.doc.length;
+      view.dispatch({ changes: { from: 0, to: docLen, insert: content } });
+    } else {
+      // target === 'selection': replace current selection (or insert at cursor)
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: content },
+        selection: { anchor: sel.from + content.length },
+      });
+    }
+    // Sync React state and trigger auto-save (handleSaveFile is debounced via onChange)
+    const newCode = view.state.doc.toString();
+    setCode(newCode);
+    view.focus();
+  };
+
   // Helper: Download current code as local file
   const handleDownloadFile = () => {
     if (!currentFile) return;
@@ -817,6 +941,17 @@ function AppContent() {
       setShowAiNotice(true);
     }
   };
+
+  /**
+   * Dispatch a pre-filled message to the AI tutor from outside the panel.
+   * Opens the panel (if closed) and injects the command; the panel's useEffect
+   * will fire sendMessage once isOpen && !isThinking.
+   */
+  const triggerAiCommand = useCallback((text: string) => {
+    if (!aiReady) { setShowAiNotice(true); return; }
+    setShowAIAssistant(true);
+    setAiCommand({ text, nonce: Date.now() });
+  }, [aiReady]);
 
   const getThemeClasses = (theme: string) => {
     switch (theme) {
@@ -1053,7 +1188,20 @@ function AppContent() {
                 </>
               )}
             </button>
-            
+
+            {/* Stop button: only visible while a script is running */}
+            {isRunning && (
+              <button
+                onClick={handleStopRun}
+                className="flex items-center gap-1.5 sm:gap-2 bg-rose-600 hover:bg-rose-700 text-white px-2.5 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-semibold transition-colors shadow-sm shrink-0"
+                title={tl('stopTooltip')}
+                id="btn-stop-python-code"
+              >
+                <Square className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current shrink-0" />
+                <span>{tl('stop')}</span>
+              </button>
+            )}
+
             {/* Desktop Visual Theme selector */}
             <div className="relative hidden lg:block" id="theme-visual-selector-dropdown-desktop">
               <button
@@ -1438,6 +1586,75 @@ function AppContent() {
 
               {/* Robust CodeMirror Editor workspace container */}
               <div className="flex-1 min-h-0 relative select-text" id="codemirror-wrapper-layer">
+                {/* Inline AI prompt overlay — opens on Ctrl+I */}
+                {inlinePromptOpen && (
+                  <div className="absolute inset-x-0 top-0 z-30 flex items-start justify-center pt-3 px-3 pointer-events-none">
+                    <div
+                      className={`pointer-events-auto w-full max-w-lg rounded-xl shadow-2xl border overflow-hidden ${
+                        activeTheme === 'light'
+                          ? 'bg-white border-slate-200'
+                          : activeTheme === 'midnight-obsidian'
+                          ? 'bg-[#0a0a0a] border-neutral-800'
+                          : 'bg-slate-900 border-slate-700'
+                      }`}
+                    >
+                      <div className={`flex items-center gap-2 px-3 py-2 border-b ${
+                        activeTheme === 'light' ? 'border-slate-100 bg-slate-50' : activeTheme === 'midnight-obsidian' ? 'border-neutral-900 bg-[#080808]' : 'border-slate-800 bg-slate-950'
+                      }`}>
+                        <Wand2 className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                        <span className={`text-[11px] font-semibold uppercase tracking-wider ${activeTheme === 'light' ? 'text-slate-500' : 'text-slate-400'}`}>
+                          {tl('aiInlineTitle')}
+                        </span>
+                        <button
+                          onClick={() => { setInlinePromptOpen(false); setInlinePromptValue(''); editorRef.current?.focus(); }}
+                          className={`ml-auto p-0.5 rounded ${activeTheme === 'light' ? 'hover:bg-slate-100 text-slate-400' : 'hover:bg-slate-800 text-slate-500'}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2 px-3 py-2">
+                        <input
+                          ref={inlineInputRef}
+                          type="text"
+                          value={inlinePromptValue}
+                          onChange={e => setInlinePromptValue(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Escape') {
+                              setInlinePromptOpen(false);
+                              setInlinePromptValue('');
+                              editorRef.current?.focus();
+                            } else if (e.key === 'Enter' && inlinePromptValue.trim()) {
+                              const prefix = tl('aiInlinePromptPrefix');
+                              triggerAiCommand(prefix + inlinePromptValue.trim());
+                              setInlinePromptOpen(false);
+                              setInlinePromptValue('');
+                            }
+                          }}
+                          placeholder={tl('aiInlinePlaceholder')}
+                          className={`flex-1 text-xs outline-none bg-transparent ${activeTheme === 'light' ? 'text-slate-800 placeholder:text-slate-400' : 'text-slate-100 placeholder:text-slate-500'}`}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                        <button
+                          onClick={() => {
+                            if (!inlinePromptValue.trim()) return;
+                            const prefix = tl('aiInlinePromptPrefix');
+                            triggerAiCommand(prefix + inlinePromptValue.trim());
+                            setInlinePromptOpen(false);
+                            setInlinePromptValue('');
+                          }}
+                          disabled={!inlinePromptValue.trim()}
+                          className="shrink-0 px-3 py-1 text-[11px] rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white transition-colors"
+                        >
+                          {tl('aiInlineSend')}
+                        </button>
+                      </div>
+                      <div className={`px-3 py-1 text-[10px] ${activeTheme === 'light' ? 'text-slate-400' : 'text-slate-600'}`}>
+                        {tl('aiInlineHint')}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <CodeMirror
                   value={code}
                   height="100%"
@@ -1445,7 +1662,35 @@ function AppContent() {
                   extensions={[
                     python(),
                     EditorView.lineWrapping,
-                    indentUnit.of(' '.repeat(userSettings.indentation))
+                    indentUnit.of(' '.repeat(userSettings.indentation)),
+                    keymap.of([{
+                      key: 'Mod-i',
+                      run: () => {
+                        if (!currentFile) return false;
+                        setInlinePromptOpen(true);
+                        setTimeout(() => inlineInputRef.current?.focus(), 50);
+                        return true;
+                      },
+                    }]),
+                    // Brand-colour selection highlight: indigo instead of CM default blue.
+                    // Also styles the unfocused state so the highlight persists while the
+                    // user types in the AI tutor panel (editor loses focus but keeps selection).
+                    EditorView.theme({
+                      '.cm-selectionBackground': { backgroundColor: 'rgba(99,102,241,0.30) !important' },
+                      '&.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(99,102,241,0.40) !important' },
+                    }),
+                    EditorView.updateListener.of((update) => {
+                      if (!update.selectionSet && !update.docChanged) return;
+                      const sel = update.state.selection.main;
+                      if (sel.empty) { setAiSelection(null); return; }
+                      const doc = update.state.doc;
+                      // If selection ends exactly at the start of a line, don't count that line.
+                      const toPos = sel.to > sel.from ? sel.to - 1 : sel.to;
+                      setAiSelection({
+                        fromLine: doc.lineAt(sel.from).number,
+                        toLine: doc.lineAt(toPos).number,
+                      });
+                    }),
                   ]}
                   onChange={(val) => {
                     setCode(val);
@@ -1522,6 +1767,13 @@ function AppContent() {
           language={userSettings.language}
           userId={user.id}
           aiReady={aiReady}
+          getEditorContext={getEditorContext}
+          onApplyEdit={handleApplyAiEdit}
+          currentFile={currentFile}
+          currentProject={currentProject}
+          aiCommand={aiCommand}
+          selectionInfo={aiSelection}
+          onClearSelection={handleClearAiSelection}
         />
 
         {/* 3. Sliding lower Console Sheet panel */}
@@ -1529,7 +1781,7 @@ function AppContent() {
           result={executionResult}
           isOpen={isConsoleOpen}
           onClose={() => setIsConsoleOpen(false)}
-          onClear={() => setExecutionResult(null)}
+          onClear={handleClearConsole}
           isExpanded={isConsoleExpanded}
           onToggleExpand={() => setIsConsoleExpanded(!isConsoleExpanded)}
           isRunning={isRunning}
@@ -1538,6 +1790,7 @@ function AppContent() {
           waitingForInput={waitingForInput}
           inputPrompt={inputPrompt}
           onSendInput={handleSendStdin}
+          onExplainError={aiReady ? () => triggerAiCommand(tl('aiExplainErrorPrompt')) : undefined}
         />
 
         {/* Settings Modal */}

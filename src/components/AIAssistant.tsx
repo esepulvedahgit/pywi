@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Maximize2, Minimize2, Sparkles, Send, Trash2, Zap, Code2, Lightbulb, Copy, Check, RotateCcw } from 'lucide-react';
-import { ExecutionResult, ChatMessage, TokenUsage } from '../types';
+import { X, Maximize2, Minimize2, Sparkles, Send, Trash2, Zap, Code2, Lightbulb, Copy, Check, RotateCcw, CheckCircle2, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { ExecutionResult, ChatMessage, TokenUsage, IdeContext, DiffProposal, FileItem, Project } from '../types';
 import { useT } from '../i18n';
+import { lineDiff } from '../lib/lineDiff';
 
 interface AIAssistantProps {
   isOpen: boolean;
@@ -15,6 +16,16 @@ interface AIAssistantProps {
   language: string;
   userId: string;
   aiReady: boolean; // true when config is validated and assistant can be used
+  getEditorContext: () => IdeContext;
+  onApplyEdit: (proposal: Pick<DiffProposal, 'target' | 'content'>) => void;
+  currentFile: FileItem | null;
+  currentProject: Project | null;
+  /** Pre-filled command dispatched from outside the panel (e.g. "Explain error", inline gen) */
+  aiCommand?: { text: string; nonce: number } | null;
+  /** Lines currently selected in the editor; shown as a badge above the input */
+  selectionInfo?: { fromLine: number; toLine: number } | null;
+  /** Collapses the editor selection so the badge disappears */
+  onClearSelection?: () => void;
 }
 
 // Bloque de código con botón de copiar al portapapeles
@@ -55,6 +66,149 @@ function CodeBlock({ code, lang, isLight }: { code: string; lang: string; isLigh
           : <><Copy className="h-3 w-3" />{t('aiCopyCode')}</>
         }
       </button>
+    </div>
+  );
+}
+
+// ── Diff proposal parsing ─────────────────────────────────────────────────────
+
+/**
+ * Extract all <diff_proposal> blocks from an assistant message.
+ * Returns proposals with their "before" content captured at parse time.
+ */
+function parseDiffProposals(text: string, ctx: IdeContext): DiffProposal[] {
+  const PROPOSAL_RE = /<diff_proposal\s+target="(selection|file)"\s+description="([^"]*)">([\s\S]*?)<\/diff_proposal>/g;
+  const proposals: DiffProposal[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = PROPOSAL_RE.exec(text)) !== null) {
+    const target = match[1] as 'selection' | 'file';
+    const description = match[2];
+    // Strip the surrounding ```python ... ``` fence if present
+    let content = match[3].trim();
+    const fenceMatch = content.match(/^```(?:\w+)?\n?([\s\S]*?)```$/);
+    if (fenceMatch) content = fenceMatch[1].trimEnd();
+
+    // Capture "before" for diff display at parse time
+    const beforeContent = target === 'selection'
+      ? (ctx.selection?.text ?? '')
+      : (ctx.code ?? '');
+
+    proposals.push({ target, description, content, beforeContent });
+  }
+  return proposals;
+}
+
+/** Strip all <diff_proposal> blocks from text before markdown rendering. */
+function stripDiffProposals(text: string): string {
+  return text.replace(/<diff_proposal[\s\S]*?<\/diff_proposal>/g, '').trim();
+}
+
+// ── DiffProposalCard component ────────────────────────────────────────────────
+
+interface DiffProposalCardProps {
+  proposal: DiffProposal;
+  isLight: boolean;
+  onApply: () => void;
+  onReject: () => void;
+}
+
+function DiffProposalCard({ proposal, isLight, onApply, onReject }: DiffProposalCardProps) {
+  const [showDiff, setShowDiff] = useState(false);
+
+  const bgCard = isLight
+    ? 'bg-white border border-slate-200 shadow-sm'
+    : 'bg-slate-800/80 border border-slate-700/60';
+
+  const headerBg = isLight ? 'bg-slate-50 border-b border-slate-200' : 'bg-slate-900/60 border-b border-slate-700/40';
+  const labelColor = isLight ? 'text-slate-500' : 'text-slate-400';
+  const descColor = isLight ? 'text-slate-800' : 'text-slate-200';
+
+  const targetLabel = proposal.target === 'file' ? '📄 Archivo completo' : '✂️ Selección';
+
+  const diffRows = showDiff && proposal.beforeContent !== undefined
+    ? lineDiff(proposal.beforeContent, proposal.content)
+    : [];
+
+  if (proposal.applied) {
+    return (
+      <div className={`mt-2 rounded-xl px-3 py-2 flex items-center gap-2 text-xs ${isLight ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-emerald-950/30 border border-emerald-700/40 text-emerald-400'}`}>
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        <span>Cambio aplicado — <span className="opacity-70">{proposal.description}</span></span>
+      </div>
+    );
+  }
+
+  if (proposal.rejected) {
+    return (
+      <div className={`mt-2 rounded-xl px-3 py-2 flex items-center gap-2 text-xs ${isLight ? 'bg-slate-100 border border-slate-200 text-slate-400' : 'bg-slate-900/40 border border-slate-700/30 text-slate-600'}`}>
+        <XCircle className="h-3.5 w-3.5 shrink-0" />
+        <span>Rechazado — <span className="opacity-70">{proposal.description}</span></span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`mt-2 rounded-xl overflow-hidden ${bgCard}`}>
+      {/* Header */}
+      <div className={`px-3 py-2 flex items-center justify-between gap-2 ${headerBg}`}>
+        <div className="min-w-0">
+          <span className={`text-[10px] font-mono uppercase tracking-wider ${labelColor}`}>{targetLabel}</span>
+          <p className={`text-xs font-medium leading-tight mt-0.5 ${descColor}`}>{proposal.description}</p>
+        </div>
+        <button
+          onClick={() => setShowDiff(v => !v)}
+          className={`shrink-0 flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg transition-colors ${isLight ? 'hover:bg-slate-100 text-slate-500' : 'hover:bg-slate-700 text-slate-400'}`}
+          title={showDiff ? 'Ocultar diff' : 'Ver diff'}
+        >
+          {showDiff ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          diff
+        </button>
+      </div>
+
+      {/* Diff view */}
+      {showDiff && (
+        <div className="overflow-x-auto max-h-48 text-[11px] font-mono leading-5">
+          {diffRows.length === 0 ? (
+            <div className={`px-3 py-2 ${isLight ? 'bg-emerald-50 text-emerald-700' : 'bg-emerald-950/20 text-emerald-400'}`}>
+              + (inserción vacía / sin contexto previo)
+            </div>
+          ) : diffRows.map((row, i) => (
+            <div
+              key={i}
+              className={
+                row.type === 'added'
+                  ? isLight ? 'bg-emerald-50 text-emerald-800' : 'bg-emerald-950/30 text-emerald-300'
+                  : row.type === 'removed'
+                    ? isLight ? 'bg-rose-50 text-rose-700' : 'bg-rose-950/30 text-rose-400'
+                    : isLight ? 'text-slate-500' : 'text-slate-500'
+              }
+            >
+              <span className={`select-none pr-2 pl-2 font-bold ${row.type === 'added' ? 'text-emerald-500' : row.type === 'removed' ? 'text-rose-500' : 'opacity-0'}`}>
+                {row.type === 'added' ? '+' : row.type === 'removed' ? '−' : ' '}
+              </span>
+              {row.text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="px-3 py-2 flex gap-2 justify-end">
+        <button
+          onClick={onReject}
+          className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg transition-colors ${isLight ? 'text-slate-500 hover:bg-slate-100' : 'text-slate-400 hover:bg-slate-700/60'}`}
+        >
+          <XCircle className="h-3.5 w-3.5" />
+          Rechazar
+        </button>
+        <button
+          onClick={onApply}
+          className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors shadow-sm"
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Aplicar
+        </button>
+      </div>
     </div>
   );
 }
@@ -135,6 +289,13 @@ export default function AIAssistant({
   language,
   userId,
   aiReady,
+  getEditorContext,
+  onApplyEdit,
+  currentFile: _currentFile,
+  currentProject: _currentProject,
+  aiCommand,
+  selectionInfo,
+  onClearSelection,
 }: AIAssistantProps) {
   const t = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -151,11 +312,25 @@ export default function AIAssistant({
   const introRequestedRef = useRef(false);
   // Caches the model's intro greeting so "Borrar" can restore it instantly without a new API call
   const cachedIntroRef = useRef<ChatMessage | null>(null);
+  // Tracks the last aiCommand nonce we handled — avoids re-firing the same command
+  const lastHandledNonceRef = useRef<number | null>(null);
 
   // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking]);
+
+  // External command dispatch: fires sendMessage when the panel is open, ready, and idle.
+  // If the intro call is still in progress (isThinking), the effect re-runs when it finishes.
+  useEffect(() => {
+    if (!aiCommand) return;
+    if (!isOpen || !aiReady) return;
+    if (aiCommand.nonce === lastHandledNonceRef.current) return;
+    if (isThinking) return; // wait for intro or previous message to complete
+    lastHandledNonceRef.current = aiCommand.nonce;
+    sendMessage(aiCommand.text);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiCommand, isOpen, aiReady, isThinking]);
 
   // Auto-presentation: when the panel opens with an empty chat and a valid config,
   // ask the model to introduce itself before the user types anything.
@@ -203,6 +378,15 @@ export default function AIAssistant({
     setInput('');
     setIsThinking(true);
 
+    // Capture IDE context snapshot at the moment the user sends the message
+    const ideContext = getEditorContext();
+
+    // Insert an empty assistant message immediately — we'll stream text into it
+    const placeholderIdx = updatedMsgs.length; // index of the incoming assistant msg
+    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+    let fullText = '';
+
     try {
       const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/ai/chat', {
@@ -211,30 +395,83 @@ export default function AIAssistant({
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ messages: updatedMsgs })
+        body: JSON.stringify({ messages: updatedMsgs, ideContext })
       });
 
-      const data = await res.json();
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
+        // Non-streaming error (e.g. auth failure before headers were sent)
+        const data = await res.json().catch(() => ({})) as any;
         setError(data.error || 'Error al consultar la IA');
-      } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
-        // Accumulate token usage for the session counter
-        if (data.usage) {
-          setSessionUsage(prev => ({
-            promptTokens:     prev.promptTokens     + (data.usage.promptTokens     ?? 0),
-            completionTokens: prev.completionTokens + (data.usage.completionTokens ?? 0),
-            totalTokens:      prev.totalTokens      + (data.usage.totalTokens      ?? 0),
-          }));
+        // Remove the empty placeholder
+        setMessages(prev => prev.slice(0, placeholderIdx));
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const chunk = JSON.parse(trimmed) as any;
+            if (chunk.type === 'delta' && chunk.text) {
+              fullText += chunk.text;
+              // Stream text into the placeholder message
+              setMessages(prev => prev.map((m, i) =>
+                i === placeholderIdx ? { ...m, content: fullText } : m
+              ));
+            } else if (chunk.type === 'done') {
+              // Finalize: parse diff proposals and attach them
+              const proposals = parseDiffProposals(fullText, ideContext);
+              setMessages(prev => prev.map((m, i) =>
+                i === placeholderIdx
+                  ? { ...m, content: fullText, proposals: proposals.length > 0 ? proposals : undefined }
+                  : m
+              ));
+              if (chunk.usage) {
+                setSessionUsage(prev => ({
+                  promptTokens:     prev.promptTokens     + (chunk.usage.promptTokens     ?? 0),
+                  completionTokens: prev.completionTokens + (chunk.usage.completionTokens ?? 0),
+                  totalTokens:      prev.totalTokens      + (chunk.usage.totalTokens      ?? 0),
+                }));
+              }
+              if (chunk.model) setCurrentModel(chunk.model);
+            } else if (chunk.type === 'error') {
+              setError(chunk.error || 'Error al consultar la IA');
+              if (!fullText) setMessages(prev => prev.slice(0, placeholderIdx));
+            }
+          } catch { /* skip malformed NDJSON line */ }
         }
-        if (data.model) setCurrentModel(data.model);
+      }
+
+      // If stream ended with no text and no error, clean up the placeholder
+      if (!fullText) {
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'assistant' && !last.content) return prev.slice(0, -1);
+          return prev;
+        });
       }
     } catch {
       setError('Error de conexión');
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'assistant' && !last.content) return prev.slice(0, -1);
+        return prev;
+      });
     } finally {
       setIsThinking(false);
     }
-  }, [messages, isThinking]);
+  }, [messages, isThinking, getEditorContext]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -243,19 +480,18 @@ export default function AIAssistant({
     }
   };
 
+  // Chips send a short instruction — the IDE context (code, selection, stderr) is
+  // attached automatically by sendMessage via getEditorContext(), so we no longer
+  // need to paste the code into the chat message itself.
   const handleChip = (type: 'error' | 'code' | 'improve') => {
-    const codeSnippet = code ? `\`\`\`python\n${code.slice(0, 2000)}\n\`\`\`` : '';
-    const errorSnippet = executionResult?.stderr ? `\nError:\n\`\`\`\n${executionResult.stderr.slice(0, 1000)}\n\`\`\`` : '';
-
     const prompts: Record<string, string> = {
-      error: `Explica este error de Python y cómo corregirlo:${errorSnippet}\n\nCódigo:\n${codeSnippet}`,
-      code: `Explica qué hace este código Python paso a paso:\n${codeSnippet}`,
-      improve: `Sugiere mejoras o buenas prácticas para este código Python:\n${codeSnippet}`,
+      error: t('aiExplainErrorPrompt'),
+      code: 'Explica qué hace el código del archivo activo, paso a paso.',
+      improve: 'Sugiere mejoras y buenas prácticas para el código del archivo activo.',
     };
     if (language === 'en') {
-      prompts.error = `Explain this Python error and how to fix it:${errorSnippet}\n\nCode:\n${codeSnippet}`;
-      prompts.code = `Explain what this Python code does step by step:\n${codeSnippet}`;
-      prompts.improve = `Suggest improvements and best practices for this Python code:\n${codeSnippet}`;
+      prompts.code = 'Explain what the active file\'s code does, step by step.';
+      prompts.improve = 'Suggest improvements and best practices for the active file\'s code.';
     }
     sendMessage(prompts[type]);
   };
@@ -429,14 +665,46 @@ export default function AIAssistant({
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          {messages.map((msg, msgIdx) => (
+            <div key={msgIdx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
               <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${msg.role === 'user' ? userBubble + ' rounded-br-sm' : aiBubble + ' rounded-bl-sm'}`}>
                 {msg.role === 'assistant'
-                  ? <div className="space-y-1">{renderMarkdown(msg.content, isLight)}</div>
+                  ? <div className="space-y-1">{renderMarkdown(stripDiffProposals(msg.content), isLight)}</div>
                   : <span className="whitespace-pre-wrap">{msg.content}</span>
                 }
               </div>
+              {/* Render diff proposal cards below assistant messages */}
+              {msg.role === 'assistant' && msg.proposals && msg.proposals.map((proposal, pIdx) => (
+                <div key={pIdx} className="w-full max-w-[92%]">
+                  <DiffProposalCard
+                    proposal={proposal}
+                    isLight={isLight}
+                    onApply={() => {
+                      onApplyEdit({ target: proposal.target, content: proposal.content });
+                      setMessages(prev => prev.map((m, mi) => {
+                        if (mi !== msgIdx || !m.proposals) return m;
+                        return {
+                          ...m,
+                          proposals: m.proposals.map((p, pi) =>
+                            pi === pIdx ? { ...p, applied: true } : p
+                          ),
+                        };
+                      }));
+                    }}
+                    onReject={() => {
+                      setMessages(prev => prev.map((m, mi) => {
+                        if (mi !== msgIdx || !m.proposals) return m;
+                        return {
+                          ...m,
+                          proposals: m.proposals.map((p, pi) =>
+                            pi === pIdx ? { ...p, rejected: true } : p
+                          ),
+                        };
+                      }));
+                    }}
+                  />
+                </div>
+              ))}
             </div>
           ))}
 
@@ -467,7 +735,31 @@ export default function AIAssistant({
         </div>
 
         {/* Input area */}
-        <div className={`px-3 py-2 flex items-end gap-2 ${inputAreaBg}`}>
+        <div className={`px-3 py-2 flex flex-col gap-1.5 ${inputAreaBg}`}>
+          {/* Selection badge: shown when the user has lines selected in the editor */}
+          {selectionInfo && (
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg w-fit text-[11px] font-medium
+              bg-indigo-500/10 border border-indigo-500/30
+              ${isLight ? 'text-indigo-600' : 'text-indigo-300'}`}>
+              <Code2 className="h-3 w-3 shrink-0" />
+              <span>
+                {selectionInfo.fromLine === selectionInfo.toLine
+                  ? t('aiSelectionAttachedOne', { line: selectionInfo.fromLine })
+                  : t('aiSelectionAttached', { from: selectionInfo.fromLine, to: selectionInfo.toLine })}
+              </span>
+              {onClearSelection && (
+                <button
+                  onClick={onClearSelection}
+                  title={t('aiClearSelectionTooltip')}
+                  className={`ml-0.5 transition-colors ${isLight ? 'hover:text-indigo-800' : 'hover:text-indigo-100'}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -487,6 +779,7 @@ export default function AIAssistant({
           >
             <Send className="h-3.5 w-3.5" />
           </button>
+          </div>
         </div>
       </motion.div>
     </AnimatePresence>

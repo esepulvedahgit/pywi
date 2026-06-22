@@ -49,6 +49,8 @@ export const es = {
   run: 'Ejecutar',
   runScript: 'script',
   running: 'Ejecutando...',
+  stop: 'Detener',
+  stopTooltip: 'Detener la ejecución',
   successCode0: 'ÉXITO (CODE 0)',
   failed: 'FALLIDO (CODE 1)',
   stdoutConsole: 'Stdout / Consola de Salida',
@@ -376,6 +378,9 @@ export const es = {
   aiInputPlaceholder: 'Haz una pregunta sobre tu código…',
   aiSend: 'Enviar',
   aiClearChat: 'Limpiar conversación',
+  aiSelectionAttached: 'Líneas {{from}}–{{to}} adjuntas',
+  aiSelectionAttachedOne: 'Línea {{line}} adjunta',
+  aiClearSelectionTooltip: 'Quitar selección',
   aiChipExplainError: 'Explicar error',
   aiChipExplainCode: 'Explicar código',
   aiChipImprove: 'Sugerir mejora',
@@ -407,4 +412,13 @@ export const es = {
   lockScreenLogout: 'Cerrar sesión',
   lockScreenPasswordError: 'Contraseña incorrecta. Inténtalo de nuevo.',
   lockScreenPasswordPlaceholder: 'Introduce tu contraseña',
+
+  // Tutor IA — mejoras Colab
+  aiExplainErrorBtn: 'Explicar con el tutor',
+  aiExplainErrorPrompt: 'Explica el error que aparece en la consola y cómo corregirlo.',
+  aiInlinePlaceholder: '¿Qué quieres generar o modificar?',
+  aiInlineTitle: 'Generar con el tutor IA',
+  aiInlineSend: 'Generar',
+  aiInlineHint: 'Enter para enviar · Esc para cerrar',
+  aiInlinePromptPrefix: 'Genera o modifica el código en el cursor/selección con esta instrucción y devuelve un <diff_proposal target="selection">. Instrucción del usuario: ',
 };
