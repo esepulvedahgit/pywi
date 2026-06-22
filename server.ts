@@ -175,16 +175,23 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const APP_DATA_DIR = path.join(DATA_DIR, 'app_data');
 
-// Execution timeout in ms. Override via EXEC_TIMEOUT_MS env var (e.g. 300000 = 5 min).
-// Default 180s — enough for basic ML training without blocking the server forever.
+// Compute budget in ms (wall-clock time spent actually running, NOT counting input() waits).
+// Override via EXEC_TIMEOUT_MS env var. Default 180s.
+// The timer pauses while the process is blocked on input() and resumes when stdin is received.
 const EXEC_TIMEOUT_MS = Number(process.env.EXEC_TIMEOUT_MS) || 180000;
+
+// How long to wait for the human to respond to an input() before killing the process.
+// Avoids zombie processes when the user closes the tab mid-input.
+// Override via INPUT_IDLE_TIMEOUT_MS env var. Default 10 min.
+const INPUT_IDLE_TIMEOUT_MS = Number(process.env.INPUT_IDLE_TIMEOUT_MS) || 600000;
 
 // Marker emitted by the Python input() wrapper to signal the client that stdin is needed.
 // Uses null bytes so it won't appear in normal program output.
 const INPUT_MARKER = '\x00__PYWI_INPUT__\x00';
 
-// Active Python processes indexed by runId — allows POST /api/run/:runId/stdin to inject stdin
-type RunningProcess = { child: ReturnType<typeof spawn>; userId: string };
+// Active Python processes indexed by runId — allows POST /api/run/:runId/stdin to inject stdin.
+// onStdinReceived is called by the stdin endpoint to resume the compute timer.
+type RunningProcess = { child: ReturnType<typeof spawn>; userId: string; onStdinReceived?: () => void };
 const runningProcesses = new Map<string, RunningProcess>();
 
 // Helper: safe path construction — prevents path traversal attacks
@@ -782,6 +789,147 @@ async function callAIProvider(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// ── Streaming AI provider call ─────────────────────────────────────────────────
+/**
+ * Stream tokens from the AI provider, calling onDelta for each text chunk.
+ * Returns accumulated usage when the stream ends.
+ * Uses an idle-timeout (reset per chunk) instead of a fixed 30 s wall-clock timeout.
+ */
+async function callAIProviderStream(
+  config: AIConfig,
+  messages: ChatMessage[],
+  onDelta: (text: string) => void
+): Promise<{ usage: TokenUsageServer; model: string }> {
+  const IDLE_TIMEOUT_MS = 30_000;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const controller = new AbortController();
+
+  const resetIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => controller.abort(), IDLE_TIMEOUT_MS);
+  };
+  resetIdle();
+
+  const usage: TokenUsageServer = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+  try {
+    if (config.provider === 'gemini') {
+      const model = config.model || 'gemini-1.5-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(config.apiKey)}`;
+
+      const systemMsg = messages.find(m => m.role === 'system');
+      const chatMsgs = messages.filter(m => m.role !== 'system');
+      const contents = chatMsgs.map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content }],
+      }));
+      const body: Record<string, unknown> = { contents };
+      if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal as any,
+      });
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({})) as any;
+        throw new Error(err.error?.message || `Gemini stream error ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        resetIdle();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const json = trimmed.slice(5).trim();
+          if (!json || json === '[DONE]') continue;
+          try {
+            const chunk = JSON.parse(json) as any;
+            const text: string = chunk.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+            if (text) onDelta(text);
+            const meta = chunk.usageMetadata;
+            if (meta) {
+              usage.promptTokens     = meta.promptTokenCount     ?? usage.promptTokens;
+              usage.completionTokens = meta.candidatesTokenCount ?? usage.completionTokens;
+              usage.totalTokens      = meta.totalTokenCount      ?? usage.totalTokens;
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+    } else {
+      // OpenAI-compatible: openai, deepseek, custom
+      const defaultBaseUrls: Record<string, string> = {
+        openai: 'https://api.openai.com/v1',
+        deepseek: 'https://api.deepseek.com/v1',
+      };
+      const base = (config.baseUrl || defaultBaseUrls[config.provider] || 'https://api.openai.com/v1').replace(/\/$/, '');
+      const url = `${base}/chat/completions`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages,
+          max_tokens: 2048,
+          stream: true,
+          stream_options: { include_usage: true },
+        }),
+        signal: controller.signal as any,
+      });
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({})) as any;
+        throw new Error(err.error?.message || `API stream error ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        resetIdle();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const json = trimmed.slice(5).trim();
+          if (!json || json === '[DONE]') continue;
+          try {
+            const chunk = JSON.parse(json) as any;
+            const text: string = chunk.choices?.[0]?.delta?.content ?? '';
+            if (text) onDelta(text);
+            // usage appears in the last chunk (stream_options.include_usage)
+            if (chunk.usage) {
+              usage.promptTokens     = chunk.usage.prompt_tokens     ?? usage.promptTokens;
+              usage.completionTokens = chunk.usage.completion_tokens ?? usage.completionTokens;
+              usage.totalTokens      = chunk.usage.total_tokens      ?? usage.totalTokens;
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+    }
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
+  }
+
+  return { usage, model: config.model };
 }
 
 // Read database and migrate roles if missing, then encrypt any plaintext API keys
@@ -1464,6 +1612,112 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
 const AI_MAX_MESSAGES = 12;
 const AI_MAX_CONTENT_LEN = 8000;
 
+// ── PyWI Tutor persona (replaces the old static prompt) ───────────────────────
+const TUTOR_SYSTEM_PROMPT: Record<'es' | 'en', string> = {
+  es: `Eres PyWI Tutor, un asistente educativo experto en programación Python y Data Science integrado en un IDE web similar a Google Colab. Tu trabajo es observar el código del usuario, explicar conceptos, y cuando sea necesario, proponer cambios al código que el usuario puede aprobar o rechazar.
+
+**Personalidad:** Didáctico y paciente. Conciso pero completo. Usa ejemplos prácticos cuando ayuda. Prioriza la comprensión sobre la corrección.
+
+**REGLAS CRÍTICAS:**
+1. NUNCA escribas código directamente en el IDE sin aprobación del usuario.
+2. Cuando propongas cambios, usa EXACTAMENTE el formato <diff_proposal> definido abajo.
+3. Si el usuario ha seleccionado código (indicado en el contexto del IDE), enfócate PRIMERO en esa selección, luego en el contexto general.
+4. Explica ANTES de proponer cambios, salvo que el usuario pida directamente "corrige esto", "genera", "modifica" o similar — en ese caso emite el <diff_proposal> directamente.
+5. Usa markdown para formatear explicaciones (bloques \`\`\`python\`\`\`, listas, negritas).
+6. Si detectas un error grave (bug, seguridad, performance), avisa antes de responder otra cosa.
+7. Cuando el usuario pida generar o modificar código (instrucción inline desde el editor), responde SIEMPRE con un <diff_proposal target="selection"> como primera acción, precedido de una línea breve de explicación.
+
+**FORMATO DE PROPUESTA DE CAMBIO:**
+Cuando quieras proponer una modificación al código, emite EXACTAMENTE este bloque (fuera del markdown normal, nunca dentro de un bloque de código):
+
+<diff_proposal target="selection|file" description="descripción breve de qué hace el cambio">
+\`\`\`python
+contenido nuevo que reemplaza el objetivo
+\`\`\`
+</diff_proposal>
+
+- \`target="selection"\`: reemplaza la selección actual del usuario (o inserta en el cursor si no hay selección; contenido vacío elimina la selección).
+- \`target="file"\`: reemplaza el contenido completo del archivo activo.
+
+El usuario verá un diff visual con botones **Aplicar** / **Rechazar**. Ningún cambio se aplica sin su aprobación.`,
+
+  en: `You are PyWI Tutor, an expert educational Python and Data Science assistant embedded in a web IDE similar to Google Colab. Your role is to observe the user's code, explain concepts, and when necessary propose code changes that the user can approve or reject.
+
+**Personality:** Didactic and patient. Concise but thorough. Use practical examples when helpful. Prioritize understanding over just fixing.
+
+**CRITICAL RULES:**
+1. NEVER write code directly into the IDE without the user's approval.
+2. When proposing changes, use EXACTLY the <diff_proposal> format defined below.
+3. If the user has selected code (indicated in the IDE context), focus FIRST on that selection, then on the broader context.
+4. Explain BEFORE proposing changes, unless the user explicitly says "fix this", "generate", "modify" or similar — in that case emit the <diff_proposal> directly.
+5. Use markdown to format explanations (\`\`\`python\`\`\` code blocks, lists, bold text).
+6. If you detect a serious issue (bug, security, performance), warn the user first.
+7. When the user asks to generate or modify code (inline instruction from the editor), ALWAYS respond with a <diff_proposal target="selection"> as your first action, preceded by a brief one-line explanation.
+
+**CODE CHANGE FORMAT:**
+When you want to propose a code modification, emit EXACTLY this block (outside normal markdown, never inside a code block):
+
+<diff_proposal target="selection|file" description="brief description of what the change does">
+\`\`\`python
+new content that replaces the target
+\`\`\`
+</diff_proposal>
+
+- \`target="selection"\`: replaces the user's current selection (or inserts at cursor if no selection; empty content deletes the selection).
+- \`target="file"\`: replaces the entire active file's content.
+
+The user will see a visual diff with **Apply** / **Reject** buttons. No change is applied without explicit approval.`,
+};
+
+// ── IDE context snapshot type (sent by client alongside messages) ──────────────
+interface IdeContextPayload {
+  code?: string;
+  selection?: { text: string; fromLine: number; toLine: number };
+  fileName?: string;
+  projectName?: string;
+  execution?: { stdout?: string; stderr?: string; exitCode?: number | null };
+}
+
+/** Build a context block from an IDE snapshot for injection into the system prompt. */
+function buildIdeContextBlock(ctx: IdeContextPayload, lang: 'es' | 'en'): string {
+  const parts: string[] = [];
+  const h = (s: string) => `\n--- ${s} ---`;
+
+  if (ctx.projectName || ctx.fileName) {
+    const label = lang === 'en' ? 'Active file' : 'Archivo activo';
+    parts.push(`${label}: ${ctx.fileName || '?'} | Proyecto: ${ctx.projectName || '?'}`);
+  }
+
+  if (ctx.code) {
+    const truncated = ctx.code.slice(0, 6000);
+    const numbered = truncated
+      .split('\n')
+      .map((line, i) => `${String(i + 1).padStart(4, ' ')} | ${line}`)
+      .join('\n');
+    const label = lang === 'en' ? 'Current file content (line-numbered)' : 'Contenido del archivo activo (numerado)';
+    parts.push(`${h(label)}\n\`\`\`python\n${numbered}\n\`\`\``);
+  }
+
+  if (ctx.selection?.text) {
+    const label = lang === 'en'
+      ? `User selection (lines ${ctx.selection.fromLine}–${ctx.selection.toLine}) — focus here first`
+      : `Selección del usuario (líneas ${ctx.selection.fromLine}–${ctx.selection.toLine}) — enfócate aquí primero`;
+    parts.push(`${h(label)}\n\`\`\`python\n${ctx.selection.text.slice(0, 2000)}\n\`\`\``);
+  }
+
+  if (ctx.execution?.stdout) {
+    const label = lang === 'en' ? 'Last stdout' : 'Última salida (stdout)';
+    parts.push(`${h(label)}\n\`\`\`\n${ctx.execution.stdout.slice(0, 800)}\n\`\`\``);
+  }
+
+  if (ctx.execution?.stderr) {
+    const label = lang === 'en' ? 'Last error (stderr)' : 'Último error (stderr)';
+    parts.push(`${h(label)}\n\`\`\`\n${ctx.execution.stderr.slice(0, 1200)}\n\`\`\``);
+  }
+
+  return parts.join('\n');
+}
+
 app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   const userId = (req as any).userId;
   const database = readDB();
@@ -1482,7 +1736,7 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   }
   const cfgForChat = { ...cfg, apiKey: decryptedChatKey };
 
-  const { messages } = req.body;
+  const { messages, ideContext } = req.body;
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'Mensajes inválidos' });
   }
@@ -1495,24 +1749,45 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
       content: String(m.content).slice(0, AI_MAX_CONTENT_LEN)
     }));
 
-  const lang = user.settings?.language || 'es';
-  const systemPrompt = lang === 'en'
-    ? 'You are PyWI Tutor, an expert Python educational assistant. Help students learn Python, data science, machine learning and deep learning. When analyzing tracebacks or errors explain them clearly and suggest fixes with code examples. Use markdown for code blocks. Be concise and educational.'
-    : 'Eres PyWI Tutor, un asistente educativo experto en Python. Ayuda a los estudiantes a aprender Python, ciencia de datos, machine learning y deep learning. Al analizar errores o tracebacks, explícalos con claridad y sugiere correcciones con ejemplos de código. Usa markdown para bloques de código. Sé conciso y educativo.';
+  const lang = (user.settings?.language || 'es') as 'es' | 'en';
+
+  // Build the combined system prompt: persona + optional IDE context snapshot
+  let systemContent = TUTOR_SYSTEM_PROMPT[lang];
+  if (ideContext && typeof ideContext === 'object') {
+    const ctxBlock = buildIdeContextBlock(ideContext as IdeContextPayload, lang);
+    if (ctxBlock.trim()) {
+      const separator = lang === 'en'
+        ? '\n\n===== CURRENT IDE STATE (injected automatically) ====='
+        : '\n\n===== ESTADO ACTUAL DEL IDE (inyectado automáticamente) =====';
+      systemContent = `${systemContent}${separator}\n${ctxBlock}`;
+    }
+  }
 
   const fullMessages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: systemContent },
     ...trimmed
   ];
 
+  // Stream response as NDJSON: {type:'delta',text} per token, then {type:'done',usage,model}
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  const write = (obj: object) => res.write(JSON.stringify(obj) + '\n');
+
   try {
-    const { reply, usage } = await callAIProvider(cfgForChat, fullMessages);
-    res.json({ reply, usage, model: cfgForChat.model });
+    const { usage, model } = await callAIProviderStream(cfgForChat, fullMessages, (text) => {
+      write({ type: 'delta', text });
+    });
+    write({ type: 'done', usage, model });
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      return res.status(408).json({ error: 'Tiempo de espera agotado (30s). Intenta con un mensaje más corto.' });
-    }
-    res.status(500).json({ error: err.message || 'Error al consultar el proveedor IA' });
+    const isAbort = err.name === 'AbortError';
+    const errorMsg = isAbort
+      ? 'Tiempo de espera agotado. Intenta con un mensaje más corto.'
+      : (err.message || 'Error al consultar el proveedor IA');
+    write({ type: 'error', error: errorMsg });
+  } finally {
+    res.end();
   }
 });
 
@@ -1533,17 +1808,14 @@ app.post('/api/ai/intro', requireAuth, aiLimiter, async (req, res) => {
   }
   const cfgForIntro = { ...cfg, apiKey: decryptedKey };
 
-  const lang = user.settings?.language || 'es';
-  const systemPrompt = lang === 'en'
-    ? 'You are PyWI Tutor, an expert Python educational assistant. Help students learn Python, data science, machine learning and deep learning. When analyzing tracebacks or errors explain them clearly and suggest fixes with code examples. Use markdown for code blocks. Be concise and educational.'
-    : 'Eres PyWI Tutor, un asistente educativo experto en Python. Ayuda a los estudiantes a aprender Python, ciencia de datos, machine learning y deep learning. Al analizar errores o tracebacks, explícalos con claridad y sugiere correcciones con ejemplos de código. Usa markdown para bloques de código. Sé conciso y educativo.';
+  const lang = (user.settings?.language || 'es') as 'es' | 'en';
 
   const introInstruction = lang === 'en'
-    ? 'Introduce yourself briefly (2-3 sentences) as PyWI Tutor, a Python assistant, and invite the user to ask their first question. Be warm and concise. Do not include code blocks.'
-    : 'Preséntate brevemente (2-3 frases) como PyWI Tutor, asistente de Python, e invita al usuario a hacer su primera pregunta. Sé cercano y conciso. No incluyas bloques de código.';
+    ? 'Introduce yourself briefly (2-3 sentences) as PyWI Tutor, a Python and Data Science assistant integrated in a web IDE. Invite the user to ask their first question. Be warm and concise. Do NOT include code blocks or <diff_proposal> blocks in this greeting.'
+    : 'Preséntate brevemente (2-3 frases) como PyWI Tutor, asistente de Python y Data Science integrado en un IDE web. Invita al usuario a hacer su primera pregunta. Sé cercano y conciso. NO incluyas bloques de código ni bloques <diff_proposal> en esta presentación.';
 
   const introMessages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: TUTOR_SYSTEM_PROMPT[lang] },
     { role: 'user', content: introInstruction },
   ];
 
@@ -2512,10 +2784,27 @@ app.post('/api/run/:runId/stdin', requireAuth, (req, res) => {
 
   try {
     entry.child.stdin!.write(text + '\n');
+    // Resume the compute timer now that the human has responded
+    entry.onStdinReceived?.();
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Error escribiendo stdin' });
   }
+});
+
+// API: Stop (kill) a running Python process
+app.post('/api/run/:runId/stop', requireAuth, (req, res) => {
+  const { runId } = req.params;
+  const userId = (req as any).userId;
+
+  const entry = runningProcesses.get(runId);
+  if (entry && entry.userId === userId) {
+    try {
+      entry.child.kill('SIGKILL');
+    } catch { /* process may have already exited */ }
+  }
+  // Always respond OK — idempotent (process may have already ended)
+  res.json({ ok: true });
 });
 
 // API: Execute code (Crucial Engine Flow)
@@ -2717,17 +3006,66 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
         env: safeSubprocessEnv
       });
 
-      // Register so POST /api/run/:runId/stdin can write to child.stdin
-      runningProcesses.set(runId, { child, userId });
-      writeChunk({ type: 'started', runId });
+      // ── Pausable compute-budget timer ─────────────────────────────────────
+      // The compute timer only counts wall-clock time spent actually computing,
+      // NOT the time the human takes to type a response to input().
+      // Two limits:
+      //   EXEC_TIMEOUT_MS      — compute budget (paused during input() waits)
+      //   INPUT_IDLE_TIMEOUT_MS — max wait for a human to respond to input()
+      let computeRemainingMs = EXEC_TIMEOUT_MS;
+      let segmentStartedAt = Date.now();
+      let computeTimer: ReturnType<typeof setTimeout> | null = null;
+      let inputTimer: ReturnType<typeof setTimeout> | null = null;
+      let waitingForInputNow = false;
+      let deathCause: 'compute' | 'input' | null = null;
 
-      // Hard timeout — configurable via EXEC_TIMEOUT_MS (default 120s)
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL');
-      }, EXEC_TIMEOUT_MS);
+      const clearAllTimers = () => {
+        if (computeTimer) { clearTimeout(computeTimer); computeTimer = null; }
+        if (inputTimer)   { clearTimeout(inputTimer);   inputTimer   = null; }
+      };
+
+      const startComputeTimer = () => {
+        if (computeTimer) clearTimeout(computeTimer);
+        segmentStartedAt = Date.now();
+        computeTimer = setTimeout(() => {
+          deathCause = 'compute';
+          child.kill('SIGKILL');
+        }, computeRemainingMs);
+      };
+
+      const pauseComputeTimer = () => {
+        if (computeTimer) { clearTimeout(computeTimer); computeTimer = null; }
+        computeRemainingMs = Math.max(0, computeRemainingMs - (Date.now() - segmentStartedAt));
+      };
+
+      const enterInputWait = () => {
+        if (waitingForInputNow) return; // already waiting (multiple markers in one chunk)
+        waitingForInputNow = true;
+        pauseComputeTimer();
+        inputTimer = setTimeout(() => {
+          deathCause = 'input';
+          child.kill('SIGKILL');
+        }, INPUT_IDLE_TIMEOUT_MS);
+      };
+
+      const exitInputWait = () => {
+        if (!waitingForInputNow) return;
+        waitingForInputNow = false;
+        if (inputTimer) { clearTimeout(inputTimer); inputTimer = null; }
+        startComputeTimer();
+      };
+
+      // Kick off the compute budget immediately
+      startComputeTimer();
+
+      // Register so POST /api/run/:runId/stdin can write to child.stdin and resume timer
+      runningProcesses.set(runId, { child, userId, onStdinReceived: exitInputWait });
+      writeChunk({ type: 'started', runId });
 
       child.stdout.on('data', (chunk: Buffer) => {
         const str = chunk.toString();
+        // Detect input() wait — pause compute timer regardless of output size limits
+        if (str.includes(INPUT_MARKER)) enterInputWait();
         outputSize += str.length;
         if (outputSize <= MAX_OUTPUT) {
           stdoutChunks += str;
@@ -2747,7 +3085,7 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
       });
 
       child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-        clearTimeout(timer);
+        clearAllTimers();
         runningProcesses.delete(runId);
         const duration = Date.now() - startTime;
         const killed = signal === 'SIGKILL';
@@ -2767,15 +3105,29 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
           }
         }
 
+        // Build timeout message based on the actual cause of death
+        let timeoutMsg = '';
+        if (killed && !stderrChunks) {
+          if (deathCause === 'input') {
+            timeoutMsg =
+              `⌨️ La ejecución se detuvo porque tu programa esperaba un input() y no recibió datos en ` +
+              `${INPUT_IDLE_TIMEOUT_MS / 1000}s.\n` +
+              `Escribe la respuesta en el campo de entrada de la consola cuando aparezca y presiona Enter.`;
+          } else if (deathCause === 'compute') {
+            timeoutMsg =
+              `⏱️ La ejecución superó el límite de ${EXEC_TIMEOUT_MS / 1000}s de cómputo.\n` +
+              `Suele indicar un bucle que no termina o un cálculo demasiado largo ` +
+              `(¿un while sin condición de salida?). Revisa tu código y vuelve a ejecutar.`;
+          } else {
+            timeoutMsg = '⚠️ La ejecución se detuvo de forma inesperada. Vuelve a ejecutar.';
+          }
+        }
+
         writeChunk({
           type: 'end',
           success,
           stdout: stdoutChunks,
-          stderr: stderrChunks || (killed
-            ? `⏱️ La ejecución se detuvo al superar el límite de ${EXEC_TIMEOUT_MS / 1000} segundos.\n` +
-              `Esto suele pasar cuando el programa quedó esperando un input() sin recibir datos, ` +
-              `o cuando hay un bucle que no termina. Revisa tu código y vuelve a ejecutar.`
-            : ''),
+          stderr: stderrChunks || timeoutMsg,
           exitCode,
           duration,
           timestamp: new Date().toISOString(),
@@ -2785,7 +3137,7 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
       });
 
       child.on('error', (err: Error) => {
-        clearTimeout(timer);
+        clearAllTimers();
         runningProcesses.delete(runId);
         const duration = Date.now() - startTime;
         writeChunk({

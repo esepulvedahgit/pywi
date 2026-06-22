@@ -1,0 +1,37 @@
+# docker-compose autocontenido para despliegue en Radxa (arm64 / RK3588S)
+# Uso: docker compose -f docker-compose.radxa.yml up -d
+#
+# Requisitos previos en la Radxa:
+#   1. Imagen importada:  docker load < python-web-ide-arm64.tar.gz
+#   2. Archivo .env.local con JWT_SECRET, ENCRYPTION_KEY y APP_URL
+#   3. Directorio data/ (se crea automáticamente al primer arranque)
+#
+# RENDER_GID — GID del grupo 'render' del host (para acceso a /dev/dri).
+#   getent group render   → muestra el GID correcto
+#   Por defecto 103 en Radxa 5A / Orange Pi 5.
+
+services:
+  web-ide:
+    image: python-web-ide:arm64
+    platform: linux/arm64
+    container_name: python-web-ide
+    ports:
+      - "0.0.0.0:3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    restart: always
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-103}"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'

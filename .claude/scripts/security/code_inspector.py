@@ -24,4 +24,4 @@ def analyze_code(file_path):
     sys.exit(0)
 
 if __name__ == "__main__":
-    analyze_code(sys.argv[1])
+    analyze_code(sys.argv[1])/agen

@@ -19,6 +19,12 @@
 services:
   web-ide:
     platform: linux/arm64
+    # Imagen pre-construida para despliegue en Radxa (via docker load).
+    # En la máquina de build: docker buildx build --platform linux/arm64 -t python-web-ide:arm64 --load .
+    # Exportar: docker save python-web-ide:arm64 | gzip > python-web-ide-arm64.tar.gz
+    # En Radxa:  docker load < python-web-ide-arm64.tar.gz
+    #            docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d
+    image: python-web-ide:arm64
 
     # Anular la reserva GPU NVIDIA que viene del docker-compose.yml base.
     # Sin esto, Docker intentaría inicializar el runtime nvidia en arm64 y fallaría.
@@ -38,12 +44,18 @@ services:
     group_add:
       - "${RENDER_GID:-103}"
 
+    # ── Volúmenes para despliegue con imagen importada ───────────────────────
+    # Reemplaza los volúmenes del base: descarta el bind mount .:/app (que
+    # pistaría la app dentro de la imagen) y los anonymous volumes de shield.
+    # Solo persiste los datos de usuario en el host.
+    volumes:
+      - ./data:/app/data
+
     # ── Volumen debugfs (OPCIONAL) ────────────────────────────────────────────
     # Descomenta si quieres detalle de carga por núcleo (Core0/Core1/Core2) en
     # el panel de rendimiento. No es necesario para la monitorización básica:
     # la ruta primaria /sys/class/devfreq/<npu>/load funciona sin este volumen.
     #
-    # volumes:
     #   - /sys/kernel/debug:/sys/kernel/debug:ro
     #
     # Si activas el volumen y el host tiene debugfs con permisos 700 (root),
