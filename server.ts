@@ -708,6 +708,21 @@ interface TokenUsageServer {
   totalTokens: number;
 }
 
+// Guard against SSRF via user-supplied baseUrl.
+// Blocks cloud metadata endpoints (169.254.169.254, metadata.google.internal) while
+// intentionally allowing localhost and private ranges for self-hosted LLMs (Ollama, LM Studio…).
+function assertSafeBaseUrl(raw?: string): void {
+  if (!raw) return; // no override → provider default is safe
+  let u: URL;
+  try { u = new URL(raw); }
+  catch { throw new Error('baseUrl no es una URL válida'); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:')
+    throw new Error('baseUrl debe usar http o https');
+  const host = u.hostname.toLowerCase();
+  if (host === '169.254.169.254' || host === 'metadata.google.internal')
+    throw new Error('baseUrl apunta a un endpoint de metadata no permitido');
+}
+
 // AI provider adapter — supports OpenAI-compatible (openai/deepseek/custom) and Gemini REST
 async function callAIProvider(
   config: AIConfig,
@@ -743,7 +758,8 @@ async function callAIProvider(
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as any;
-        throw new Error(err.error?.message || `Gemini error ${res.status}`);
+        console.error('[ai] upstream error', res.status, err);
+        throw new Error(`El proveedor respondió con un error (${res.status}).`);
       }
 
       const data = await res.json() as any;
@@ -756,6 +772,7 @@ async function callAIProvider(
 
     } else {
       // OpenAI-compatible: openai, deepseek, custom
+      assertSafeBaseUrl(config.baseUrl);
       const defaultBaseUrls: Record<string, string> = {
         openai: 'https://api.openai.com/v1',
         deepseek: 'https://api.deepseek.com/v1',
@@ -775,7 +792,8 @@ async function callAIProvider(
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as any;
-        throw new Error(err.error?.message || `API error ${res.status}`);
+        console.error('[ai] upstream error', res.status, err);
+        throw new Error(`El proveedor respondió con un error (${res.status}).`);
       }
 
       const data = await res.json() as any;
@@ -846,7 +864,8 @@ async function callAIProviderStream(
       });
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({})) as any;
-        throw new Error(err.error?.message || `Gemini stream error ${res.status}`);
+        console.error('[ai] upstream error', res.status, err);
+        throw new Error(`El proveedor respondió con un error (${res.status}).`);
       }
 
       const reader = res.body.getReader();
@@ -914,6 +933,7 @@ async function callAIProviderStream(
       }
     } else {
       // OpenAI-compatible: openai, deepseek, custom
+      assertSafeBaseUrl(config.baseUrl);
       const defaultBaseUrls: Record<string, string> = {
         openai: 'https://api.openai.com/v1',
         deepseek: 'https://api.deepseek.com/v1',
@@ -938,7 +958,8 @@ async function callAIProviderStream(
       });
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({})) as any;
-        throw new Error(err.error?.message || `API stream error ${res.status}`);
+        console.error('[ai] upstream error', res.status, err);
+        throw new Error(`El proveedor respondió con un error (${res.status}).`);
       }
 
       const reader = res.body.getReader();
