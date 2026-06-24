@@ -544,7 +544,12 @@ export default function AIAssistant({
   const [floatRect, setFloatRect] = useState<FloatRect>(() => {
     try {
       const stored = localStorage.getItem(FLOAT_KEY);
-      if (stored) return clampSize(clampPos(JSON.parse(stored)));
+      if (stored) {
+        const r = JSON.parse(stored);
+        // Guard against corrupted/manipulated values that would produce NaN
+        const ok = r && ['top', 'left', 'width', 'height'].every(k => Number.isFinite(r[k]));
+        if (ok) return clampSize(clampPos(r));
+      }
     } catch { /* ignore */ }
     return defaultFloatRect();
   });
