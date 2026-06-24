@@ -51,6 +51,10 @@ db.json
 # Superpowers brainstorming artifacts
 docs/superpowers/img/
 
+# App export artifacts — large binaries that must not be versioned
+export/
+*.tar
+
 # Development / test artifacts
 TASK8_VERIFICATION_RESULTS.md
 playwright-test.mjs
