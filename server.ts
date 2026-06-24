@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { exec, execSync, execFile, spawnSync, spawn } from 'child_process';
 import crypto from 'crypto';
+import net from 'net';
 import os from 'os';
 import multer from 'multer';
 import jwt from 'jsonwebtoken';
@@ -709,8 +710,36 @@ interface TokenUsageServer {
 }
 
 // Guard against SSRF via user-supplied baseUrl.
-// Blocks cloud metadata endpoints (169.254.169.254, metadata.google.internal) while
-// intentionally allowing localhost and private ranges for self-hosted LLMs (Ollama, LM Studio…).
+// Policy (user decision): block only cloud metadata endpoints (169.254.0.0/16,
+// metadata.google.internal). Localhost and private ranges are intentionally
+// allowed to support self-hosted LLMs (Ollama, LM Studio, etc.).
+//
+// Bypass vectors addressed:
+//   - Direct IPv4 numeric: 169.254.169.254
+//   - IPv6-mapped IPv4:    ::ffff:169.254.169.254  (bracket form: [::ffff:169.254.x.x])
+//   - Trailing FQDN dot:   169.254.169.254.
+//   - Redirect bypass:     fetch uses redirect:'manual' so 3xx responses are
+//     caught by the !res.ok check instead of being followed silently.
+function isMetadataHost(hostname: string): boolean {
+  // Strip trailing FQDN dot and lowercase
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+
+  // Named cloud metadata hostnames
+  if (h === 'metadata.google.internal') return true;
+
+  // Normalize IPv6-mapped IPv4 (::ffff:x.x.x.x) — URL.hostname strips brackets
+  const v4mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+  const ipToCheck = v4mapped ? v4mapped[1] : h;
+
+  // IPv4: block 169.254.0.0/16 (link-local, covers all major cloud metadata services)
+  if (net.isIPv4(ipToCheck)) {
+    const [a, b] = ipToCheck.split('.').map(Number);
+    return a === 169 && b === 254;
+  }
+
+  return false;
+}
+
 function assertSafeBaseUrl(raw?: string): void {
   if (!raw) return; // no override → provider default is safe
   let u: URL;
@@ -718,8 +747,7 @@ function assertSafeBaseUrl(raw?: string): void {
   catch { throw new Error('baseUrl no es una URL válida'); }
   if (u.protocol !== 'http:' && u.protocol !== 'https:')
     throw new Error('baseUrl debe usar http o https');
-  const host = u.hostname.toLowerCase();
-  if (host === '169.254.169.254' || host === 'metadata.google.internal')
+  if (isMetadataHost(u.hostname))
     throw new Error('baseUrl apunta a un endpoint de metadata no permitido');
 }
 
@@ -787,7 +815,8 @@ async function callAIProvider(
           'Authorization': `Bearer ${config.apiKey}`
         },
         body: JSON.stringify({ model: config.model, messages, max_tokens: 2048 }),
-        signal: controller.signal as any
+        signal: controller.signal as any,
+        redirect: 'manual', // prevents redirect-based SSRF bypass
       });
 
       if (!res.ok) {
@@ -955,6 +984,7 @@ async function callAIProviderStream(
           stream_options: { include_usage: true },
         }),
         signal: controller.signal as any,
+        redirect: 'manual', // prevents redirect-based SSRF bypass
       });
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({})) as any;
