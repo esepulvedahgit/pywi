@@ -381,6 +381,7 @@ export const en = {
   aiSelectionAttached: 'Lines {{from}}–{{to}} attached',
   aiSelectionAttachedOne: 'Line {{line}} attached',
   aiClearSelectionTooltip: 'Remove selection',
+  aiNoTextResponse: 'The tutor returned no response. Try rephrasing or reducing the attached selection.',
   aiChipExplainError: 'Explain error',
   aiChipExplainCode: 'Explain code',
   aiChipImprove: 'Suggest improvement',

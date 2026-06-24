@@ -276,6 +276,36 @@ function formatTokens(n: number): string {
 
 const ZERO_USAGE: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+// ── Floating panel geometry (desktop mode) ────────────────────────────────────
+
+const FLOAT_KEY = 'py_ide_ai_float';
+const MIN_W = 320, MIN_H = 360, MAX_W = 720;
+
+type FloatRect = { top: number; left: number; width: number; height: number };
+
+function clampSize(r: FloatRect): FloatRect {
+  const maxH = window.innerHeight * 0.92;
+  return {
+    ...r,
+    width:  Math.min(MAX_W, Math.max(MIN_W, r.width)),
+    height: Math.min(maxH, Math.max(MIN_H, r.height)),
+  };
+}
+
+function clampPos(r: FloatRect): FloatRect {
+  return {
+    ...r,
+    top:  Math.min(window.innerHeight - 80, Math.max(0, r.top)),
+    left: Math.min(window.innerWidth  - 80, Math.max(-r.width + 80, r.left)),
+  };
+}
+
+function defaultFloatRect(): FloatRect {
+  const w = 400;
+  const h = Math.min(640, window.innerHeight * 0.78);
+  return { top: 56, left: window.innerWidth - w - 12, width: w, height: h };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AIAssistant({
@@ -453,8 +483,11 @@ export default function AIAssistant({
         }
       }
 
-      // If stream ended with no text and no error, clean up the placeholder
+      // If stream ended with no text and no error — server already throws a
+      // descriptive error for RECITATION/SAFETY/MAX_TOKENS, so this branch is a
+      // last-resort safety net rather than the normal empty-response path.
       if (!fullText) {
+        setError(t('aiNoTextResponse'));
         setMessages(prev => {
           const last = prev[prev.length - 1];
           if (last?.role === 'assistant' && !last.content) return prev.slice(0, -1);
@@ -496,7 +529,41 @@ export default function AIAssistant({
     sendMessage(prompts[type]);
   };
 
-  // Drag-to-resize
+  // ── Desktop vs Mobile detection ────────────────────────────────────────────
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  // ── Floating window geometry state ──────────────────────────────────────────
+  const [floatRect, setFloatRect] = useState<FloatRect>(() => {
+    try {
+      const stored = localStorage.getItem(FLOAT_KEY);
+      if (stored) return clampSize(clampPos(JSON.parse(stored)));
+    } catch { /* ignore */ }
+    return defaultFloatRect();
+  });
+  const preExpandRectRef = useRef<FloatRect | null>(null);
+
+  // Persist float geometry when it changes (desktop only)
+  useEffect(() => {
+    if (!isDesktop) return;
+    try { localStorage.setItem(FLOAT_KEY, JSON.stringify(floatRect)); } catch { /* ignore */ }
+  }, [floatRect, isDesktop]);
+
+  // Reclamp on browser window resize so the panel stays visible
+  useEffect(() => {
+    const onResize = () => setFloatRect(prev => clampSize(clampPos(prev)));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // ── Mobile: resize bottom-sheet by dragging the top handle ──────────────────
   const handleResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -516,250 +583,268 @@ export default function AIAssistant({
     document.addEventListener('pointercancel', cleanup);
   };
 
-  // Theme-aware colors (mirrors ConsoleSheet dark style; light gets a soft variant)
-  const isLight = activeTheme === 'light';
+  // ── Desktop: drag the header to move the floating window ────────────────────
+  const handleDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Don't start drag when the user clicks a button inside the header
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startLeft = floatRect.left;
+    const startTop  = floatRect.top;
+    const onMove = (ev: PointerEvent) => {
+      setFloatRect(prev => clampPos({
+        ...prev,
+        left: startLeft + (ev.clientX - startX),
+        top:  startTop  + (ev.clientY - startY),
+      }));
+    };
+    const cleanup = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', cleanup);
+      document.removeEventListener('pointercancel', cleanup);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', cleanup);
+    document.addEventListener('pointercancel', cleanup);
+  };
+
+  // ── Desktop: resize from edges/corners ──────────────────────────────────────
+  type ResizeDir = 'left' | 'right' | 'bottom' | 'bottom-left' | 'bottom-right';
+  const handleFloatResize = (e: React.PointerEvent<HTMLDivElement>, dir: ResizeDir) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const { top: st, left: sl, width: sw, height: sh } = floatRect;
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      const next = { top: st, left: sl, width: sw, height: sh };
+      if (dir === 'right'  || dir === 'bottom-right') next.width  = sw + dx;
+      if (dir === 'left'   || dir === 'bottom-left')  { next.width = sw - dx; next.left = sl + dx; }
+      if (dir === 'bottom' || dir === 'bottom-left' || dir === 'bottom-right') next.height = sh + dy;
+      setFloatRect(clampPos(clampSize(next)));
+    };
+    const cleanup = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', cleanup);
+      document.removeEventListener('pointercancel', cleanup);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', cleanup);
+    document.addEventListener('pointercancel', cleanup);
+  };
+
+  // ── Desktop: maximize / restore the floating window ─────────────────────────
+  const handleExpandDesktop = () => {
+    if (isExpanded) {
+      if (preExpandRectRef.current) setFloatRect(preExpandRectRef.current);
+      onToggleExpand();
+    } else {
+      preExpandRectRef.current = floatRect;
+      const maxH = window.innerHeight * 0.92;
+      setFloatRect(clampPos({ top: 8, left: window.innerWidth - MAX_W - 8, width: MAX_W, height: maxH }));
+      onToggleExpand();
+    }
+  };
+
+  // ── Theme-aware colors ───────────────────────────────────────────────────────
+  const isLight    = activeTheme === 'light';
   const isObsidian = activeTheme === 'midnight-obsidian';
-  const panelBg = isLight ? 'bg-slate-50 border-t border-slate-200' : isObsidian ? 'bg-black border-t border-neutral-900' : 'bg-slate-950 border-t border-slate-700/80';
-  const headerBg = isLight ? 'bg-white border-b border-slate-200' : isObsidian ? 'bg-[#080808] border-b border-neutral-900' : 'bg-slate-900 border-b border-slate-800';
-  const headerText = isLight ? 'text-slate-700' : 'text-slate-200';
-  const contentBg = isLight ? 'bg-slate-50' : isObsidian ? 'bg-black' : 'bg-[#0b0f19]';
-  const inputBg = isLight ? 'bg-white border border-slate-300 text-slate-800 focus:border-indigo-400' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100 focus:border-indigo-500' : 'bg-slate-800/60 border border-slate-700 text-slate-100 focus:border-indigo-500';
-  const inputAreaBg = isLight ? 'bg-white border-t border-slate-200' : isObsidian ? 'bg-[#080808] border-t border-neutral-900' : 'bg-slate-900 border-t border-slate-800';
-  const userBubble = 'bg-indigo-600 text-white';
-  const aiBubble = isLight ? 'bg-white border border-slate-200 text-slate-800' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100' : 'bg-slate-800/70 border border-slate-700/50 text-slate-200';
-  const chipStyle = isLight ? 'bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200' : 'bg-slate-800/60 hover:bg-indigo-950/40 text-slate-400 hover:text-indigo-300 border border-slate-700/50 hover:border-indigo-700/50';
-  const iconBtn = isLight ? 'p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded transition-colors' : 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors';
+  // Background and border colours split so each mode applies borders differently
+  const panelBg     = isLight ? 'bg-slate-50'  : isObsidian ? 'bg-black'    : 'bg-slate-950';
+  const panelBorder = isLight ? 'border-slate-200' : isObsidian ? 'border-neutral-900' : 'border-slate-700/80';
+  const headerBg    = isLight ? 'bg-white border-b border-slate-200'   : isObsidian ? 'bg-[#080808] border-b border-neutral-900' : 'bg-slate-900 border-b border-slate-800';
+  const headerText  = isLight ? 'text-slate-700' : 'text-slate-200';
+  const contentBg   = isLight ? 'bg-slate-50'  : isObsidian ? 'bg-black'    : 'bg-[#0b0f19]';
+  const inputBg     = isLight ? 'bg-white border border-slate-300 text-slate-800 focus:border-indigo-400' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100 focus:border-indigo-500' : 'bg-slate-800/60 border border-slate-700 text-slate-100 focus:border-indigo-500';
+  const inputAreaBg = isLight ? 'bg-white border-t border-slate-200'   : isObsidian ? 'bg-[#080808] border-t border-neutral-900' : 'bg-slate-900 border-t border-slate-800';
+  const userBubble  = 'bg-indigo-600 text-white';
+  const aiBubble    = isLight ? 'bg-white border border-slate-200 text-slate-800' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100' : 'bg-slate-800/70 border border-slate-700/50 text-slate-200';
+  const chipStyle   = isLight ? 'bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200' : 'bg-slate-800/60 hover:bg-indigo-950/40 text-slate-400 hover:text-indigo-300 border border-slate-700/50 hover:border-indigo-700/50';
+  const iconBtn     = isLight ? 'p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded transition-colors' : 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors';
 
   if (!isOpen) return null;
 
   const hasError = !!executionResult?.stderr;
-  const hasCode = !!code?.trim();
+  const hasCode  = !!code?.trim();
 
-  return (
-    <AnimatePresence>
-      <motion.div
-        ref={panelRef}
-        initial={{ y: '100%' }}
-        animate={{ y: 0 }}
-        exit={{ y: '100%' }}
-        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        style={customHeight ? { height: `${customHeight}px` } : undefined}
-        className={`fixed bottom-0 left-0 right-0 z-41 shadow-2xl flex flex-col font-sans select-none ${panelBg} ${
-          !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[50vh] sm:h-[55vh]') : ''
-        }`}
-        id="ai-assistant-panel"
-        onAnimationComplete={() => {
-          // Scroll to bottom after open animation — the container has its final
-          // height now, so scrollIntoView lands correctly
-          messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
-        }}
+  // ── Shared inner content (identical in both modes) ───────────────────────────
+  const innerContent = (
+    <>
+      {/* Header — also the drag handle in desktop mode */}
+      <div
+        className={`px-4 py-2 flex items-center justify-between select-none shrink-0 ${headerBg}${isDesktop ? ' cursor-grab active:cursor-grabbing' : ''}`}
+        onPointerDown={isDesktop ? handleDragStart : undefined}
       >
-        {/* Drag handle — touch-none evita que el browser interprete el gesto como scroll */}
-        <div
-          onPointerDown={handleResizeStart}
-          className={`w-full h-5 flex items-center justify-center cursor-row-resize select-none touch-none ${isLight ? 'bg-slate-200 hover:bg-slate-300 active:bg-slate-400' : 'bg-slate-800 hover:bg-slate-700 active:bg-slate-600'}`}
-        >
-          <div className={`w-12 h-1.5 rounded-full pointer-events-none ${isLight ? 'bg-slate-300' : 'bg-slate-600'}`} />
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-indigo-400 shrink-0" />
+          <h3 className={`font-semibold text-xs tracking-tight uppercase ${headerText}`}>
+            {t('aiPanelTitle')}
+          </h3>
         </div>
+        <div className="flex items-center gap-1">
+          {/* Token usage indicator — shows after first message */}
+          {sessionUsage.totalTokens > 0 && (() => {
+            const cost = calcCost(currentModel, sessionUsage);
+            return (
+              <div className="flex items-center gap-1 text-[10px] font-mono opacity-50 hover:opacity-100 transition-opacity mr-1">
+                <span title={`Entrada: ${sessionUsage.promptTokens} | Salida: ${sessionUsage.completionTokens}`}>
+                  ↑{formatTokens(sessionUsage.promptTokens)} ↓{formatTokens(sessionUsage.completionTokens)}
+                </span>
+                {cost !== null && <span title="Costo estimado de la sesión">~${cost.toFixed(4)}</span>}
+                <button
+                  onClick={() => { setSessionUsage(ZERO_USAGE); setCurrentModel(''); }}
+                  className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                  title={t('aiResetUsage')}
+                >
+                  <RotateCcw className="h-2.5 w-2.5" />
+                </button>
+              </div>
+            );
+          })()}
+          {messages.length > 0 && (
+            <button
+              onClick={() => {
+                // Restore cached greeting instantly — no new API call, no cost, no latency
+                setMessages(cachedIntroRef.current ? [cachedIntroRef.current] : []);
+                setError('');
+                setSessionUsage(ZERO_USAGE);
+              }}
+              className={iconBtn}
+              title={t('aiClearChat')}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            onClick={isDesktop ? handleExpandDesktop : () => { setCustomHeight(null); onToggleExpand(); }}
+            className={iconBtn}
+            title={isExpanded ? t('consoleRestoreTooltip') : t('consoleMaximizeTooltip')}
+          >
+            {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+          <button onClick={onClose} className={iconBtn} title={t('consoleCloseTooltip')}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
 
-        {/* Header */}
-        <div className={`px-4 py-2 flex items-center justify-between ${headerBg}`}>
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-indigo-400 shrink-0" />
-            <h3 className={`font-semibold text-xs tracking-tight uppercase ${headerText}`}>
-              {t('aiPanelTitle')}
-            </h3>
+      {/* Quick action chips */}
+      <div className={`px-3 py-2 flex gap-2 overflow-x-auto scrollbar-hide shrink-0 ${inputAreaBg}`}>
+        {hasError && (
+          <button onClick={() => handleChip('error')} disabled={isThinking}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-40 ${chipStyle}`}>
+            <Zap className="h-3 w-3" />{t('aiChipExplainError')}
+          </button>
+        )}
+        {hasCode && (
+          <button onClick={() => handleChip('code')} disabled={isThinking}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-40 ${chipStyle}`}>
+            <Code2 className="h-3 w-3" />{t('aiChipExplainCode')}
+          </button>
+        )}
+        {hasCode && (
+          <button onClick={() => handleChip('improve')} disabled={isThinking}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-40 ${chipStyle}`}>
+            <Lightbulb className="h-3 w-3" />{t('aiChipImprove')}
+          </button>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className={`flex-1 overflow-y-auto px-3 py-3 space-y-3 ${contentBg} select-text`}>
+        {messages.length === 0 && !isThinking && (
+          <div className={`h-full flex flex-col items-center justify-center gap-3 py-8 ${isLight ? 'text-slate-400' : 'text-slate-600'}`}>
+            <Sparkles className="h-10 w-10 opacity-40" />
+            <p className="text-xs text-center px-4 opacity-70">
+              {aiReady ? t('aiInputPlaceholder') : t('aiNoConfig')}
+            </p>
           </div>
-          <div className="flex items-center gap-1">
-            {/* Token usage indicator — shows after first message */}
-            {sessionUsage.totalTokens > 0 && (() => {
-              const cost = calcCost(currentModel, sessionUsage);
-              return (
-                <div className="flex items-center gap-1 text-[10px] font-mono opacity-50 hover:opacity-100 transition-opacity mr-1">
-                  <span title={`Entrada: ${sessionUsage.promptTokens} | Salida: ${sessionUsage.completionTokens}`}>
-                    ↑{formatTokens(sessionUsage.promptTokens)} ↓{formatTokens(sessionUsage.completionTokens)}
-                  </span>
-                  {cost !== null && (
-                    <span title="Costo estimado de la sesión">~${cost.toFixed(4)}</span>
-                  )}
-                  <button
-                    onClick={() => { setSessionUsage(ZERO_USAGE); setCurrentModel(''); }}
-                    className={`p-0.5 rounded hover:bg-white/10 transition-colors`}
-                    title={t('aiResetUsage')}
-                  >
-                    <RotateCcw className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              );
-            })()}
-            {messages.length > 0 && (
-              <button
-                onClick={() => {
-                  // Restore cached greeting instantly — no new API call, no cost, no latency
-                  setMessages(cachedIntroRef.current ? [cachedIntroRef.current] : []);
-                  setError('');
-                  setSessionUsage(ZERO_USAGE);
-                  // introRequestedRef stays true → useEffect won't re-call /api/ai/intro
-                }}
-                className={iconBtn}
-                title={t('aiClearChat')}
-              >
-                <Trash2 className="h-4 w-4" />
+        )}
+
+        {messages.map((msg, msgIdx) => (
+          <div key={msgIdx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${
+              msg.role === 'user' ? userBubble + ' rounded-br-sm' : aiBubble + ' rounded-bl-sm'
+            }`}>
+              {msg.role === 'assistant'
+                ? <div className="space-y-1">{renderMarkdown(stripDiffProposals(msg.content), isLight)}</div>
+                : <span className="whitespace-pre-wrap">{msg.content}</span>
+              }
+            </div>
+            {/* Diff proposal cards below assistant messages */}
+            {msg.role === 'assistant' && msg.proposals && msg.proposals.map((proposal, pIdx) => (
+              <div key={pIdx} className="w-full max-w-[92%]">
+                <DiffProposalCard
+                  proposal={proposal}
+                  isLight={isLight}
+                  onApply={() => {
+                    onApplyEdit({ target: proposal.target, content: proposal.content });
+                    setMessages(prev => prev.map((m, mi) => {
+                      if (mi !== msgIdx || !m.proposals) return m;
+                      return { ...m, proposals: m.proposals.map((p, pi) => pi === pIdx ? { ...p, applied: true } : p) };
+                    }));
+                  }}
+                  onReject={() => {
+                    setMessages(prev => prev.map((m, mi) => {
+                      if (mi !== msgIdx || !m.proposals) return m;
+                      return { ...m, proposals: m.proposals.map((p, pi) => pi === pIdx ? { ...p, rejected: true } : p) };
+                    }));
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        ))}
+
+        {isThinking && (
+          <div className="flex justify-start">
+            <div className={`rounded-2xl rounded-bl-sm px-3 py-2 text-xs flex items-center gap-2 ${aiBubble}`}>
+              <span className="inline-flex gap-1">
+                {[0, 1, 2].map(d => (
+                  <span key={d} className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
+                    style={{ animationDelay: `${d * 0.15}s` }} />
+                ))}
+              </span>
+              <span className={`${isLight ? 'text-slate-400' : 'text-slate-500'}`}>{t('aiThinking')}</span>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="text-center text-[11px] text-rose-400 bg-rose-950/20 border border-rose-500/20 rounded-lg px-3 py-2 mx-2">
+            {error}
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input area */}
+      <div className={`px-3 py-2 flex flex-col gap-1.5 ${inputAreaBg}`}>
+        {/* Selection badge: shown when the user has lines selected in the editor */}
+        {selectionInfo && (
+          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg w-fit text-[11px] font-medium
+            bg-indigo-500/10 border border-indigo-500/30
+            ${isLight ? 'text-indigo-600' : 'text-indigo-300'}`}>
+            <Code2 className="h-3 w-3 shrink-0" />
+            <span>
+              {selectionInfo.fromLine === selectionInfo.toLine
+                ? t('aiSelectionAttachedOne', { line: selectionInfo.fromLine })
+                : t('aiSelectionAttached', { from: selectionInfo.fromLine, to: selectionInfo.toLine })}
+            </span>
+            {onClearSelection && (
+              <button onClick={onClearSelection} title={t('aiClearSelectionTooltip')}
+                className={`ml-0.5 transition-colors ${isLight ? 'hover:text-indigo-800' : 'hover:text-indigo-100'}`}>
+                <X className="h-3 w-3" />
               </button>
             )}
-            <button
-              onClick={() => { setCustomHeight(null); onToggleExpand(); }}
-              className={iconBtn}
-              title={isExpanded ? t('consoleRestoreTooltip') : t('consoleMaximizeTooltip')}
-            >
-              {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </button>
-            <button onClick={onClose} className={iconBtn} title={t('consoleCloseTooltip')}>
-              <X className="h-4 w-4" />
-            </button>
           </div>
-        </div>
-
-        {/* Quick action chips */}
-        <div className={`px-3 py-2 flex gap-2 overflow-x-auto scrollbar-hide shrink-0 ${inputAreaBg}`}>
-          {hasError && (
-            <button
-              onClick={() => handleChip('error')}
-              disabled={isThinking}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-40 ${chipStyle}`}
-            >
-              <Zap className="h-3 w-3" />
-              {t('aiChipExplainError')}
-            </button>
-          )}
-          {hasCode && (
-            <button
-              onClick={() => handleChip('code')}
-              disabled={isThinking}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-40 ${chipStyle}`}
-            >
-              <Code2 className="h-3 w-3" />
-              {t('aiChipExplainCode')}
-            </button>
-          )}
-          {hasCode && (
-            <button
-              onClick={() => handleChip('improve')}
-              disabled={isThinking}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-40 ${chipStyle}`}
-            >
-              <Lightbulb className="h-3 w-3" />
-              {t('aiChipImprove')}
-            </button>
-          )}
-        </div>
-
-        {/* Messages */}
-        <div className={`flex-1 overflow-y-auto px-3 py-3 space-y-3 ${contentBg} select-text`}>
-          {messages.length === 0 && !isThinking && (
-            <div className={`h-full flex flex-col items-center justify-center gap-3 py-8 ${isLight ? 'text-slate-400' : 'text-slate-600'}`}>
-              <Sparkles className="h-10 w-10 opacity-40" />
-              <p className="text-xs text-center px-4 opacity-70">
-                {aiReady ? t('aiInputPlaceholder') : t('aiNoConfig')}
-              </p>
-            </div>
-          )}
-
-          {messages.map((msg, msgIdx) => (
-            <div key={msgIdx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${msg.role === 'user' ? userBubble + ' rounded-br-sm' : aiBubble + ' rounded-bl-sm'}`}>
-                {msg.role === 'assistant'
-                  ? <div className="space-y-1">{renderMarkdown(stripDiffProposals(msg.content), isLight)}</div>
-                  : <span className="whitespace-pre-wrap">{msg.content}</span>
-                }
-              </div>
-              {/* Render diff proposal cards below assistant messages */}
-              {msg.role === 'assistant' && msg.proposals && msg.proposals.map((proposal, pIdx) => (
-                <div key={pIdx} className="w-full max-w-[92%]">
-                  <DiffProposalCard
-                    proposal={proposal}
-                    isLight={isLight}
-                    onApply={() => {
-                      onApplyEdit({ target: proposal.target, content: proposal.content });
-                      setMessages(prev => prev.map((m, mi) => {
-                        if (mi !== msgIdx || !m.proposals) return m;
-                        return {
-                          ...m,
-                          proposals: m.proposals.map((p, pi) =>
-                            pi === pIdx ? { ...p, applied: true } : p
-                          ),
-                        };
-                      }));
-                    }}
-                    onReject={() => {
-                      setMessages(prev => prev.map((m, mi) => {
-                        if (mi !== msgIdx || !m.proposals) return m;
-                        return {
-                          ...m,
-                          proposals: m.proposals.map((p, pi) =>
-                            pi === pIdx ? { ...p, rejected: true } : p
-                          ),
-                        };
-                      }));
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          ))}
-
-          {isThinking && (
-            <div className="flex justify-start">
-              <div className={`rounded-2xl rounded-bl-sm px-3 py-2 text-xs flex items-center gap-2 ${aiBubble}`}>
-                <span className="inline-flex gap-1">
-                  {[0, 1, 2].map(d => (
-                    <span
-                      key={d}
-                      className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
-                      style={{ animationDelay: `${d * 0.15}s` }}
-                    />
-                  ))}
-                </span>
-                <span className={`${isLight ? 'text-slate-400' : 'text-slate-500'}`}>{t('aiThinking')}</span>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="text-center text-[11px] text-rose-400 bg-rose-950/20 border border-rose-500/20 rounded-lg px-3 py-2 mx-2">
-              {error}
-            </div>
-          )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input area */}
-        <div className={`px-3 py-2 flex flex-col gap-1.5 ${inputAreaBg}`}>
-          {/* Selection badge: shown when the user has lines selected in the editor */}
-          {selectionInfo && (
-            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg w-fit text-[11px] font-medium
-              bg-indigo-500/10 border border-indigo-500/30
-              ${isLight ? 'text-indigo-600' : 'text-indigo-300'}`}>
-              <Code2 className="h-3 w-3 shrink-0" />
-              <span>
-                {selectionInfo.fromLine === selectionInfo.toLine
-                  ? t('aiSelectionAttachedOne', { line: selectionInfo.fromLine })
-                  : t('aiSelectionAttached', { from: selectionInfo.fromLine, to: selectionInfo.toLine })}
-              </span>
-              {onClearSelection && (
-                <button
-                  onClick={onClearSelection}
-                  title={t('aiClearSelectionTooltip')}
-                  className={`ml-0.5 transition-colors ${isLight ? 'hover:text-indigo-800' : 'hover:text-indigo-100'}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="flex items-end gap-2">
+        )}
+        <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -779,9 +864,81 @@ export default function AIAssistant({
           >
             <Send className="h-3.5 w-3.5" />
           </button>
-          </div>
         </div>
-      </motion.div>
+      </div>
+    </>
+  );
+
+  // ── Render: Desktop = floating panel | Mobile = bottom-sheet ─────────────────
+  return (
+    <AnimatePresence>
+      {isDesktop ? (
+        /* ── Desktop floating window ── */
+        <motion.div
+          ref={panelRef}
+          key="desktop-float"
+          initial={{ opacity: 0, scale: 0.96, y: -8 }}
+          animate={{ opacity: 1, scale: 1,    y:  0 }}
+          exit={{    opacity: 0, scale: 0.96, y: -8 }}
+          transition={{ type: 'spring', damping: 22, stiffness: 280 }}
+          style={{
+            position: 'fixed',
+            top:    floatRect.top,
+            left:   floatRect.left,
+            width:  floatRect.width,
+            height: floatRect.height,
+            transformOrigin: 'top right',
+            zIndex: 50,
+          }}
+          className={`flex flex-col font-sans overflow-hidden rounded-2xl shadow-2xl border ${panelBorder} ${panelBg}`}
+          id="ai-assistant-panel"
+          onAnimationComplete={() => messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })}
+        >
+          {innerContent}
+
+          {/* Resize handles — invisible but pointer-interactive strips on each edge/corner */}
+          {/* Left edge */}
+          <div className="absolute left-0 top-10 bottom-10 w-1.5 cursor-ew-resize z-10 hover:bg-indigo-500/10 rounded-l-2xl transition-colors"
+            onPointerDown={e => handleFloatResize(e, 'left')} />
+          {/* Right edge */}
+          <div className="absolute right-0 top-10 bottom-10 w-1.5 cursor-ew-resize z-10 hover:bg-indigo-500/10 rounded-r-2xl transition-colors"
+            onPointerDown={e => handleFloatResize(e, 'right')} />
+          {/* Bottom edge */}
+          <div className="absolute bottom-0 left-10 right-10 h-1.5 cursor-ns-resize z-10 hover:bg-indigo-500/10 rounded-b-2xl transition-colors"
+            onPointerDown={e => handleFloatResize(e, 'bottom')} />
+          {/* Bottom-left corner */}
+          <div className="absolute bottom-0 left-0 w-4 h-4 cursor-nesw-resize z-10"
+            onPointerDown={e => handleFloatResize(e, 'bottom-left')} />
+          {/* Bottom-right corner */}
+          <div className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-10"
+            onPointerDown={e => handleFloatResize(e, 'bottom-right')} />
+        </motion.div>
+      ) : (
+        /* ── Mobile bottom-sheet (unchanged) ── */
+        <motion.div
+          ref={panelRef}
+          key="mobile-sheet"
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+          style={customHeight ? { height: `${customHeight}px` } : undefined}
+          className={`fixed bottom-0 left-0 right-0 z-[41] shadow-2xl flex flex-col font-sans select-none border-t ${panelBorder} ${panelBg} ${
+            !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[50vh] sm:h-[55vh]') : ''
+          }`}
+          id="ai-assistant-panel"
+          onAnimationComplete={() => messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })}
+        >
+          {/* Mobile drag handle — touch-none prevents browser scroll interpretation */}
+          <div
+            onPointerDown={handleResizeStart}
+            className={`w-full h-5 flex items-center justify-center cursor-row-resize select-none touch-none ${isLight ? 'bg-slate-200 hover:bg-slate-300 active:bg-slate-400' : 'bg-slate-800 hover:bg-slate-700 active:bg-slate-600'}`}
+          >
+            <div className={`w-12 h-1.5 rounded-full pointer-events-none ${isLight ? 'bg-slate-300' : 'bg-slate-600'}`} />
+          </div>
+          {innerContent}
+        </motion.div>
+      )}
     </AnimatePresence>
   );
 }

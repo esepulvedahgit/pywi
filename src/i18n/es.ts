@@ -381,6 +381,7 @@ export const es = {
   aiSelectionAttached: 'Líneas {{from}}–{{to}} adjuntas',
   aiSelectionAttachedOne: 'Línea {{line}} adjunta',
   aiClearSelectionTooltip: 'Quitar selección',
+  aiNoTextResponse: 'El tutor no devolvió respuesta. Intenta reformular o reducir la selección adjunta.',
   aiChipExplainError: 'Explicar error',
   aiChipExplainCode: 'Explicar código',
   aiChipImprove: 'Sugerir mejora',

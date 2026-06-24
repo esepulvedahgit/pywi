@@ -814,6 +814,11 @@ async function callAIProviderStream(
 
   const usage: TokenUsageServer = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+  // Track whether the provider emitted at least one non-empty text delta.
+  // If the stream ends with zero text we surface an actionable error instead
+  // of silently swallowing the response (e.g. Gemini RECITATION / SAFETY blocks).
+  let sawText = false;
+
   try {
     if (config.provider === 'gemini') {
       const model = config.model || 'gemini-1.5-flash';
@@ -825,7 +830,12 @@ async function callAIProviderStream(
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
       }));
-      const body: Record<string, unknown> = { contents };
+      const body: Record<string, unknown> = {
+        contents,
+        // Ensure a response budget even for thinking models; mirrors the
+        // max_tokens: 2048 used in the OpenAI-compatible branch.
+        generationConfig: { maxOutputTokens: 2048 },
+      };
       if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
 
       const res = await fetch(url, {
@@ -842,6 +852,10 @@ async function callAIProviderStream(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      // Persist the last seen reason codes across chunks so we can report them
+      // if no text was ever emitted (RECITATION, SAFETY, MAX_TOKENS, …).
+      let finishReason = '';
+      let blockReason  = '';
       while (true) {
         const { done, value } = await reader.read();
         resetIdle();
@@ -856,8 +870,12 @@ async function callAIProviderStream(
           if (!json || json === '[DONE]') continue;
           try {
             const chunk = JSON.parse(json) as any;
+            // Capture finish/block reason before checking for text, so we have
+            // this information even on the first (and only) chunk.
+            finishReason = chunk.candidates?.[0]?.finishReason  ?? finishReason;
+            blockReason  = chunk.promptFeedback?.blockReason    ?? blockReason;
             const text: string = chunk.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-            if (text) onDelta(text);
+            if (text) { sawText = true; onDelta(text); }
             const meta = chunk.usageMetadata;
             if (meta) {
               usage.promptTokens     = meta.promptTokenCount     ?? usage.promptTokens;
@@ -865,6 +883,33 @@ async function callAIProviderStream(
               usage.totalTokens      = meta.totalTokenCount      ?? usage.totalTokens;
             }
           } catch { /* skip malformed chunk */ }
+        }
+      }
+
+      // If the stream ended without any text, throw so the caller returns an
+      // actionable error message to the user instead of empty silence.
+      if (!sawText) {
+        const reason = blockReason || finishReason;
+        if (reason === 'RECITATION') {
+          throw new Error(
+            'El modelo bloqueó la respuesta porque detectó reproducción de contenido (RECITATION). ' +
+            'Intenta reformular tu pregunta o reducir la selección de código adjunta.'
+          );
+        } else if (blockReason || reason === 'SAFETY') {
+          throw new Error(
+            `El modelo bloqueó la respuesta por políticas de seguridad (motivo: ${reason || 'SAFETY'}). ` +
+            'Intenta reformular tu pregunta.'
+          );
+        } else if (reason === 'MAX_TOKENS') {
+          throw new Error(
+            'La respuesta se truncó antes de emitir texto (MAX_TOKENS). ' +
+            'Intenta con una selección más corta o un mensaje más breve.'
+          );
+        } else {
+          throw new Error(
+            `El proveedor no devolvió ningún texto${reason ? ` (motivo: ${reason})` : ''}. ` +
+            'Intenta de nuevo o reformula tu pregunta.'
+          );
         }
       }
     } else {
@@ -899,6 +944,7 @@ async function callAIProviderStream(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let finishReason = '';
       while (true) {
         const { done, value } = await reader.read();
         resetIdle();
@@ -913,8 +959,9 @@ async function callAIProviderStream(
           if (!json || json === '[DONE]') continue;
           try {
             const chunk = JSON.parse(json) as any;
+            finishReason = chunk.choices?.[0]?.finish_reason ?? finishReason;
             const text: string = chunk.choices?.[0]?.delta?.content ?? '';
-            if (text) onDelta(text);
+            if (text) { sawText = true; onDelta(text); }
             // usage appears in the last chunk (stream_options.include_usage)
             if (chunk.usage) {
               usage.promptTokens     = chunk.usage.prompt_tokens     ?? usage.promptTokens;
@@ -922,6 +969,26 @@ async function callAIProviderStream(
               usage.totalTokens      = chunk.usage.total_tokens      ?? usage.totalTokens;
             }
           } catch { /* skip malformed chunk */ }
+        }
+      }
+
+      if (!sawText) {
+        const reason = finishReason;
+        if (reason === 'content_filter') {
+          throw new Error(
+            'El modelo bloqueó la respuesta por filtro de contenido. ' +
+            'Intenta reformular tu pregunta.'
+          );
+        } else if (reason === 'length') {
+          throw new Error(
+            'La respuesta se truncó antes de emitir texto (límite de tokens). ' +
+            'Intenta con una selección más corta o un mensaje más breve.'
+          );
+        } else {
+          throw new Error(
+            `El proveedor no devolvió ningún texto${reason ? ` (motivo: ${reason})` : ''}. ` +
+            'Intenta de nuevo o reformula tu pregunta.'
+          );
         }
       }
     }
@@ -1621,7 +1688,7 @@ const TUTOR_SYSTEM_PROMPT: Record<'es' | 'en', string> = {
 **REGLAS CRÍTICAS:**
 1. NUNCA escribas código directamente en el IDE sin aprobación del usuario.
 2. Cuando propongas cambios, usa EXACTAMENTE el formato <diff_proposal> definido abajo.
-3. Si el usuario ha seleccionado código (indicado en el contexto del IDE), enfócate PRIMERO en esa selección, luego en el contexto general.
+3. Si el usuario ha seleccionado código (indicado en el contexto del IDE), enfócate PRIMERO en esa selección, luego en el contexto general. Al explicarla, **referénciala por número de línea** y cita solo los fragmentos cortos imprescindibles — no reproduzcas bloques grandes verbatim.
 4. Explica ANTES de proponer cambios, salvo que el usuario pida directamente "corrige esto", "genera", "modifica" o similar — en ese caso emite el <diff_proposal> directamente.
 5. Usa markdown para formatear explicaciones (bloques \`\`\`python\`\`\`, listas, negritas).
 6. Si detectas un error grave (bug, seguridad, performance), avisa antes de responder otra cosa.
@@ -1648,7 +1715,7 @@ El usuario verá un diff visual con botones **Aplicar** / **Rechazar**. Ningún 
 **CRITICAL RULES:**
 1. NEVER write code directly into the IDE without the user's approval.
 2. When proposing changes, use EXACTLY the <diff_proposal> format defined below.
-3. If the user has selected code (indicated in the IDE context), focus FIRST on that selection, then on the broader context.
+3. If the user has selected code (indicated in the IDE context), focus FIRST on that selection, then on the broader context. When explaining it, **reference it by line number** and quote only the short fragments strictly necessary — do not reproduce large blocks verbatim.
 4. Explain BEFORE proposing changes, unless the user explicitly says "fix this", "generate", "modify" or similar — in that case emit the <diff_proposal> directly.
 5. Use markdown to format explanations (\`\`\`python\`\`\` code blocks, lists, bold text).
 6. If you detect a serious issue (bug, security, performance), warn the user first.
