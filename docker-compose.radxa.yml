@@ -25,6 +25,9 @@ services:
       - APP_URL=${APP_URL:-http://localhost:3000}
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # Timeouts opcionales — ver .env.example para valores recomendados
+      - EXEC_TIMEOUT_MS=${EXEC_TIMEOUT_MS:-180000}
+      - INPUT_IDLE_TIMEOUT_MS=${INPUT_IDLE_TIMEOUT_MS:-600000}
     restart: always
     devices:
       - /dev/dri:/dev/dri
