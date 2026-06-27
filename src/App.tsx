@@ -740,10 +740,13 @@ function AppContent() {
     }
   };
 
+  // Strip ANSI escape sequences (SGR + cursor-movement) from PTY output before sending to AI.
+  const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+
   // Extract the last Python traceback from the PTY terminal buffer for the AI tutor.
   const extractTraceback = (buffer: string): string => {
     const idx = buffer.lastIndexOf('Traceback (most recent call last)');
-    return idx !== -1 ? buffer.slice(idx).replace(/\x1b\[[0-9;]*m/g, '') : '';
+    return idx !== -1 ? stripAnsi(buffer.slice(idx)) : '';
   };
 
   // Helper: Capture a snapshot of the current IDE state for the AI tutor
@@ -772,7 +775,7 @@ function AppContent() {
       projectName: currentProject?.name,
       execution: lastExitResult
         ? {
-            stdout: lastExitResult.ptyBuffer,
+            stdout: stripAnsi(lastExitResult.ptyBuffer),
             stderr: extractTraceback(lastExitResult.ptyBuffer),
             exitCode: lastExitResult.exitCode,
           }
@@ -1670,7 +1673,7 @@ function AppContent() {
           code={code}
           executionResult={lastExitResult ? {
             success: lastExitResult.success,
-            stdout: lastExitResult.ptyBuffer,
+            stdout: stripAnsi(lastExitResult.ptyBuffer),
             stderr: extractTraceback(lastExitResult.ptyBuffer),
             exitCode: lastExitResult.exitCode,
             duration: lastExitResult.duration,

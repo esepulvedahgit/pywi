@@ -3385,11 +3385,18 @@ async function startServer() {
   });
 
   const httpServer = http.createServer(app);
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
   // Simple per-IP rate limiter for WS upgrades (max 20 connections per 60s)
   const wsRateMap = new Map<string, { count: number; resetAt: number }>();
   const wsUserRateMap = new Map<string, { count: number; resetAt: number }>();
+
+  // Prune expired rate-limit entries to prevent unbounded memory growth
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of wsRateMap) if (now > v.resetAt) wsRateMap.delete(k);
+    for (const [k, v] of wsUserRateMap) if (now > v.resetAt) wsUserRateMap.delete(k);
+  }, WS_RATE_WINDOW_MS);
 
   httpServer.on('upgrade', (req, socket, head) => {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
