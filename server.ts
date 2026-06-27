@@ -189,6 +189,10 @@ const EXEC_TIMEOUT_MS = Number(process.env.EXEC_TIMEOUT_MS) || 180000;
 // Override via INPUT_IDLE_TIMEOUT_MS env var. Default 10 min.
 const INPUT_IDLE_TIMEOUT_MS = Number(process.env.INPUT_IDLE_TIMEOUT_MS) || 600000;
 
+// WebSocket rate-limit constants (per-IP and per-user): max 20 runs per 60s window
+const WS_RATE_LIMIT = 20;
+const WS_RATE_WINDOW_MS = 60_000;
+
 // Active PTY processes indexed by runId (WebSocket execution)
 type RunningPty = { pty: pty.IPty; userId: string };
 const runningPtys = new Map<string, RunningPty>();
@@ -3086,7 +3090,7 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
 // Vite middleware API endpoints mounting should precede static routing
 const isProduction = process.env.NODE_ENV === 'production';
 
-function setupWsRunHandler(wss: WebSocketServer) {
+function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { count: number; resetAt: number }>) {
   wss.on('connection', (ws: WS) => {
     // Auth + params arrive in the very first message
     ws.once('message', async (rawMsg) => {
@@ -3107,6 +3111,19 @@ function setupWsRunHandler(wss: WebSocketServer) {
         ws.send(JSON.stringify({ type: 'denied', message: 'Token inválido o expirado' })); ws.close(); return;
       }
       const userId = payload.userId;
+
+      // Per-user rate limit (20 runs/60s, mirrors runLimiter)
+      const nowU = Date.now();
+      const userRateEntry = wsUserRateMap.get(userId);
+      if (!userRateEntry || nowU > userRateEntry.resetAt) {
+        wsUserRateMap.set(userId, { count: 1, resetAt: nowU + WS_RATE_WINDOW_MS });
+      } else {
+        userRateEntry.count++;
+        if (userRateEntry.count > WS_RATE_LIMIT) {
+          ws.send(JSON.stringify({ type: 'denied', message: 'Demasiadas ejecuciones. Intenta de nuevo en un minuto.' }));
+          ws.close(); return;
+        }
+      }
 
       // Invalidate tokens issued before the last password change (mirrors requireAuth)
       const database = readDB();
@@ -3137,7 +3154,12 @@ function setupWsRunHandler(wss: WebSocketServer) {
       if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
 
       // Save updated code if provided
+      const MAX_CODE_SIZE = 1024 * 512; // 512 KB
       if (typeof runCode === 'string') {
+        if (Buffer.byteLength(runCode) > MAX_CODE_SIZE) {
+          ws.send(JSON.stringify({ type: 'denied', message: 'El código supera el tamaño máximo permitido (512 KB).' }));
+          ws.close(); return;
+        }
         fs.writeFileSync(filepath, runCode, 'utf8');
         fileRecord.size = Buffer.byteLength(runCode);
         fileRecord.updatedAt = new Date().toISOString();
@@ -3200,16 +3222,18 @@ function setupWsRunHandler(wss: WebSocketServer) {
         catch { pythonPath = 'python'; }
       }
 
-      // Security: code_inspector.py pre-execution check
+      // Security: code_inspector.py pre-execution check (fail-closed)
       const inspectorPath = path.join(process.cwd(), '.claude', 'scripts', 'security', 'code_inspector.py');
-      if (fs.existsSync(inspectorPath)) {
-        const inspectorPython = getVenvPythonPath() || pythonPath;
-        const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], { encoding: 'utf8', timeout: 10000 });
-        if (inspectResult.status !== 0) {
-          const violation = inspectResult.stdout?.trim() || inspectResult.stderr?.trim() || 'Código rechazado por el inspector de seguridad';
-          ws.send(JSON.stringify({ type: 'denied', message: violation }));
-          ws.close(); return;
-        }
+      if (!fs.existsSync(inspectorPath)) {
+        ws.send(JSON.stringify({ type: 'denied', message: 'Inspector de seguridad no disponible. Contacta al administrador.' }));
+        ws.close(); return;
+      }
+      const inspectorPython = getVenvPythonPath() || pythonPath;
+      const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], { encoding: 'utf8', timeout: 10000 });
+      if (inspectResult.status !== 0) {
+        const violation = inspectResult.stdout?.trim() || inspectResult.stderr?.trim() || 'Código rechazado por el inspector de seguridad';
+        ws.send(JSON.stringify({ type: 'denied', message: violation }));
+        ws.close(); return;
       }
 
       // Minimal allowlist env — no server secrets
@@ -3226,8 +3250,8 @@ function setupWsRunHandler(wss: WebSocketServer) {
       // Spawn PTY — input() works natively with a real TTY
       const ptyProc = pty.spawn(pythonPath, ['-u', filepath], {
         name: 'xterm-color',
-        cols: Number(cols) || 80,
-        rows: Number(rows) || 24,
+        cols: Math.min(Math.max(Number(cols) || 80, 1), 500),
+        rows: Math.min(Math.max(Number(rows) || 24, 1), 200),
         cwd: projectDir,
         env: safeSubprocessEnv,
       });
@@ -3278,8 +3302,8 @@ function setupWsRunHandler(wss: WebSocketServer) {
             armTimer(INPUT_IDLE_TIMEOUT_MS); // human is typing — renew idle window
             ptyProc.write(msg.data);
           } else if (msg.type === 'resize') {
-            const c = Number(msg.cols) || 80;
-            const r = Number(msg.rows) || 24;
+            const c = Math.min(Math.max(Number(msg.cols) || 80, 1), 500);
+            const r = Math.min(Math.max(Number(msg.rows) || 24, 1), 200);
             ptyProc.resize(c, r);
           } else if (msg.type === 'stop') {
             try { ptyProc.kill(); } catch { /* already dead */ }
@@ -3365,8 +3389,7 @@ async function startServer() {
 
   // Simple per-IP rate limiter for WS upgrades (max 20 connections per 60s)
   const wsRateMap = new Map<string, { count: number; resetAt: number }>();
-  const WS_RATE_LIMIT = 20;
-  const WS_RATE_WINDOW_MS = 60_000;
+  const wsUserRateMap = new Map<string, { count: number; resetAt: number }>();
 
   httpServer.on('upgrade', (req, socket, head) => {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
@@ -3375,8 +3398,7 @@ async function startServer() {
       return;
     }
     // Rate limit by client IP
-    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
-      ?? (req.socket.remoteAddress ?? 'unknown');
+    const ip = req.socket.remoteAddress ?? 'unknown';
     const now = Date.now();
     const entry = wsRateMap.get(ip);
     if (!entry || now > entry.resetAt) {
@@ -3393,7 +3415,7 @@ async function startServer() {
   });
 
   // Register the WS run handler
-  setupWsRunHandler(wss);
+  setupWsRunHandler(wss, wsUserRateMap);
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Web Python IDE running at http://0.0.0.0:${PORT}`);
