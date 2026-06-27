@@ -303,9 +303,9 @@ export default function XtermConsole({
 
   // ── Download plot helper ──────────────────────────────────────────────────
   const handleDownload = async (filename: string) => {
-    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`;
+    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}`;
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
