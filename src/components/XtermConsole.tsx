@@ -459,29 +459,32 @@ export default function XtermConsole({
           </div>
         </div>
 
-        {/* Content pane */}
-        <div className="flex-1 overflow-hidden flex flex-col">
-          {viewMode === 'plots' && exitResult?.generatedFiles?.length ? (
-            <div className="flex-1 overflow-auto p-4 bg-[#0b0f19]">
-              <PlotsPanel projectId={projectId} files={exitResult.generatedFiles} token={token} />
-            </div>
-          ) : (
-            <div className="flex-1 relative">
-              {/* xterm.js mount point — always rendered so Terminal stays mounted */}
-              <div
-                ref={termRef}
-                className="absolute inset-0 p-2"
-                style={{ background: XTERM_THEMES[activeTheme].background }}
-              />
-              {/* "Waiting" overlay when idle (no run yet and not running) */}
-              {!isRunning && !exitResult && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 italic gap-2 pointer-events-none">
-                  <Terminal className="h-8 w-8 text-slate-700" />
-                  <span className="text-xs">{t('waiting')}</span>
-                </div>
-              )}
+        {/* Content pane — terminal div always mounted, visibility toggled with CSS */}
+        <div className="flex-1 overflow-hidden relative">
+          {/* xterm terminal — always in DOM so xterm doesn't need to re-init */}
+          <div
+            ref={termRef}
+            className="absolute inset-0 p-2"
+            style={{
+              display: viewMode === 'console' ? 'block' : 'none',
+              background: XTERM_THEMES[activeTheme].background,
+            }}
+          />
+
+          {/* Idle overlay — shown only in console view when no run has happened yet */}
+          {viewMode === 'console' && !isRunning && !exitResult && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 italic gap-2 pointer-events-none">
+              <Terminal className="h-8 w-8 text-slate-700" />
+              <span className="text-xs">{t('waiting')}</span>
             </div>
           )}
+
+          {/* Plots panel — overlays when viewMode === 'plots' */}
+          {viewMode === 'plots' && exitResult?.generatedFiles?.length ? (
+            <div className="absolute inset-0 overflow-auto p-4 bg-[#0b0f19]">
+              <PlotsPanel projectId={projectId} files={exitResult.generatedFiles} token={token} />
+            </div>
+          ) : null}
         </div>
       </motion.div>
     </AnimatePresence>
