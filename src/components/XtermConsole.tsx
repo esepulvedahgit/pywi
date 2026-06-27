@@ -8,7 +8,14 @@ import { useT } from '../i18n';
 import PlotsPanel from './PlotsPanel';
 
 // ── Xterm theme objects — one per IDE theme ──────────────────────────────────
-// Colours chosen to match each theme's editor canvas and palette anchors.
+// Shared ANSI palettes — only per-theme surface colours differ.
+const BASE_DARK_ANSI = {
+  black: '#0f172a',   red: '#f87171',   green: '#4ade80',   yellow: '#facc15',
+  blue: '#60a5fa',    magenta: '#c084fc', cyan: '#22d3ee',  white: '#e2e8f0',
+  brightBlack: '#475569', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde68a',
+  brightBlue: '#93c5fd',  brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#f8fafc',
+};
+
 const XTERM_THEMES = {
   light: {
     background: '#f8fafc',
@@ -21,24 +28,22 @@ const XTERM_THEMES = {
     brightBlue: '#60a5fa',  brightMagenta: '#c084fc', brightCyan: '#22d3ee', brightWhite: '#ffffff',
   },
   'vibrant-dark': {
+    ...BASE_DARK_ANSI,
     background: '#090d16',
     foreground: '#e2e8f0',
     cursor: '#6366f1',
     cursorAccent: '#090d16',
-    black: '#0f172a',   red: '#f87171',   green: '#4ade80',   yellow: '#facc15',
-    blue: '#60a5fa',    magenta: '#c084fc', cyan: '#22d3ee',  white: '#e2e8f0',
-    brightBlack: '#475569', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde68a',
-    brightBlue: '#93c5fd',  brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#f8fafc',
   },
   'midnight-obsidian': {
+    ...BASE_DARK_ANSI,
+    black: '#1a1a1a',           // darker cell background vs vibrant-dark
+    white: '#d4d4d4',           // slightly dimmer default text
+    brightBlack: '#525252',     // lighter mid-gray
+    brightWhite: '#fafafa',     // near-white
     background: '#080808',
     foreground: '#d4d4d4',
     cursor: '#a3a3a3',
     cursorAccent: '#080808',
-    black: '#1a1a1a',   red: '#f87171',   green: '#4ade80',   yellow: '#facc15',
-    blue: '#60a5fa',    magenta: '#c084fc', cyan: '#22d3ee',  white: '#d4d4d4',
-    brightBlack: '#525252', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde68a',
-    brightBlue: '#93c5fd',  brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#fafafa',
   },
 } as const;
 
@@ -91,14 +96,16 @@ export default function XtermConsole({
   // ── Run state ────────────────────────────────────────────────────────────
   const [isRunning, setIsRunning] = useState(false);
   const [exitResult, setExitResult] = useState<ExitResult | null>(null);
-  const [hasTraceback, setHasTraceback] = useState(false);
+  // hasTraceback is derived from exitResult in render — no extra useState needed
 
   // ── xterm refs ───────────────────────────────────────────────────────────
   const termRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const ptyBufferRef = useRef('');
+  // Buffer accumulated as an array of chunks to avoid O(n²) per-chunk string concat.
+  // Joined and tail-sliced once at run exit (consumed by the AI tutor).
+  const ptyChunksRef = useRef<string[]>([]);
 
   // ── Initialise xterm once the panel div mounts ───────────────────────────
   useEffect(() => {
@@ -165,6 +172,22 @@ export default function XtermConsole({
     return () => clearTimeout(timer);
   }, [isOpen, isExpanded, customHeight]);
 
+  // ── Shared helpers ───────────────────────────────────────────────────────
+  // Single call-site for stopping the running state.
+  const stopRunning = () => { setIsRunning(false); onRunStateChange?.(false); };
+
+  // Reset terminal display and buffer for a fresh run.
+  const resetRunState = () => {
+    ptyChunksRef.current = [];
+    setExitResult(null);
+    setViewMode('console');
+    const term = xtermRef.current;
+    if (term) {
+      term.reset();
+      term.options.theme = XTERM_THEMES[activeTheme];
+    }
+  };
+
   // ── Start a run when runNonce increments ─────────────────────────────────
   useEffect(() => {
     if (runNonce === 0) return; // initial mount — no run yet
@@ -175,17 +198,7 @@ export default function XtermConsole({
       wsRef.current = null;
     }
 
-    // Reset state for new run
-    ptyBufferRef.current = '';
-    setExitResult(null);
-    setHasTraceback(false);
-    setViewMode('console');
-
-    const term = xtermRef.current;
-    if (term) {
-      term.reset();
-      term.options.theme = XTERM_THEMES[activeTheme];
-    }
+    resetRunState();
 
     // Build WS URL — same origin, replace http/https → ws/wss
     const wsUrl = `${window.location.origin.replace(/^http/, 'ws')}/ws/run`;
@@ -213,18 +226,15 @@ export default function XtermConsole({
         const msg = JSON.parse(event.data);
         if (msg.type === 'output') {
           const data: string = msg.data ?? '';
-          // Write to terminal
+          // Write to terminal; accumulate raw chunks (joined + sliced at exit)
           xtermRef.current?.write(data);
-          // Accumulate buffer (capped at MAX_BUFFER_CHARS)
-          ptyBufferRef.current = (ptyBufferRef.current + data).slice(-MAX_BUFFER_CHARS);
+          ptyChunksRef.current.push(data);
         } else if (msg.type === 'denied') {
           xtermRef.current?.writeln(`\r\n\x1b[31m⛔ ${msg.message ?? 'Acceso denegado'}\x1b[0m`);
-          setIsRunning(false);
-          onRunStateChange?.(false);
+          stopRunning();
         } else if (msg.type === 'exit') {
-          const buf = ptyBufferRef.current;
-          const tb = buf.includes('Traceback (most recent call last)');
-          setHasTraceback(tb);
+          // Join chunks once and tail-slice to cap size
+          const buf = ptyChunksRef.current.join('').slice(-MAX_BUFFER_CHARS);
 
           const result: ExitResult = {
             success: msg.success,
@@ -235,8 +245,7 @@ export default function XtermConsole({
           };
           setExitResult(result);
           onExitResult?.(result);
-          setIsRunning(false);
-          onRunStateChange?.(false);
+          stopRunning();
 
           // Auto-switch to plots view if images were generated
           if (result.generatedFiles.length > 0) setViewMode('plots');
@@ -246,15 +255,13 @@ export default function XtermConsole({
 
     ws.onerror = () => {
       xtermRef.current?.writeln('\r\n\x1b[31m[Error de conexión WebSocket]\x1b[0m');
-      setIsRunning(false);
-      onRunStateChange?.(false);
+      stopRunning();
     };
 
     // Use wsRef guard to avoid stale closure on isRunning
     ws.onclose = () => {
       if (wsRef.current === ws) {
-        setIsRunning(false);
-        onRunStateChange?.(false);
+        stopRunning();
         wsRef.current = null;
       }
     };
@@ -321,17 +328,15 @@ export default function XtermConsole({
   const handleClear = () => {
     wsRef.current?.close();
     wsRef.current = null;
-    xtermRef.current?.reset();
-    ptyBufferRef.current = '';
-    setExitResult(null);
-    setHasTraceback(false);
-    setIsRunning(false);
-    onRunStateChange?.(false);
-    setViewMode('console');
+    stopRunning();
+    resetRunState();
     onClear();
   };
 
   if (!isOpen) return null;
+
+  // Derived — no state needed
+  const hasTraceback = !!exitResult?.ptyBuffer.includes('Traceback (most recent call last)');
 
   const heightStyle = customHeight
     ? { height: `${customHeight}px`, bottom: 'var(--keyboard-inset, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }

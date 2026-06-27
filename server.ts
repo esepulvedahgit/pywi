@@ -3090,6 +3090,22 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
 // Vite middleware API endpoints mounting should precede static routing
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Shared windowed counter for WS rate limiting (IP and per-user).
+// Returns true when the caller has exceeded WS_RATE_LIMIT in the current window.
+function wsHitRateLimit(
+  map: Map<string, { count: number; resetAt: number }>,
+  key: string
+): boolean {
+  const now = Date.now();
+  const entry = map.get(key);
+  if (!entry || now > entry.resetAt) {
+    map.set(key, { count: 1, resetAt: now + WS_RATE_WINDOW_MS });
+    return false;
+  }
+  entry.count++;
+  return entry.count > WS_RATE_LIMIT;
+}
+
 function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { count: number; resetAt: number }>) {
   wss.on('connection', (ws: WS) => {
     // Auth + params arrive in the very first message
@@ -3102,45 +3118,34 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
 
       const { token, projectId, fileId, runCode, cols = 80, rows = 24 } = parsed;
 
+      // ── Local helper: send a denial frame and close the socket ───────────────
+      const deny = (message: string) => {
+        ws.send(JSON.stringify({ type: 'denied', message })); ws.close();
+      };
+
       // ── Auth ──────────────────────────────────────────────────────────────────
-      if (typeof token !== 'string') {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Token requerido' })); ws.close(); return;
-      }
+      if (typeof token !== 'string') { deny('Token requerido'); return; }
       const payload = verifyToken(token);
-      if (!payload) {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Token inválido o expirado' })); ws.close(); return;
-      }
+      if (!payload) { deny('Token inválido o expirado'); return; }
       const userId = payload.userId;
 
       // Per-user rate limit (20 runs/60s, mirrors runLimiter)
-      const nowU = Date.now();
-      const userRateEntry = wsUserRateMap.get(userId);
-      if (!userRateEntry || nowU > userRateEntry.resetAt) {
-        wsUserRateMap.set(userId, { count: 1, resetAt: nowU + WS_RATE_WINDOW_MS });
-      } else {
-        userRateEntry.count++;
-        if (userRateEntry.count > WS_RATE_LIMIT) {
-          ws.send(JSON.stringify({ type: 'denied', message: 'Demasiadas ejecuciones. Intenta de nuevo en un minuto.' }));
-          ws.close(); return;
-        }
+      if (wsHitRateLimit(wsUserRateMap, userId)) {
+        deny('Demasiadas ejecuciones. Intenta de nuevo en un minuto.'); return;
       }
 
       // Invalidate tokens issued before the last password change (mirrors requireAuth)
       const database = readDB();
       const userRecord = database.users.find((u: any) => u.id === userId);
       if (userRecord?.passwordChangedAt && payload.iat < userRecord.passwordChangedAt) {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Sesión invalidada. Inicia sesión de nuevo.' })); ws.close(); return;
+        deny('Sesión invalidada. Inicia sesión de nuevo.'); return;
       }
 
       // ── Ownership check ───────────────────────────────────────────────────────
       const project = database.projects.find((p: any) => p.id === projectId);
-      if (!project || project.userId !== userId) {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Acceso denegado' })); ws.close(); return;
-      }
+      if (!project || project.userId !== userId) { deny('Acceso denegado'); return; }
       const fileRecord = database.files.find((f: any) => f.id === fileId && f.projectId === projectId);
-      if (!fileRecord) {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Archivo no encontrado' })); ws.close(); return;
-      }
+      if (!fileRecord) { deny('Archivo no encontrado'); return; }
 
       // ── Path resolution ───────────────────────────────────────────────────────
       let projectDir: string;
@@ -3149,7 +3154,7 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
         projectDir = safePath(APP_DATA_DIR, userId, projectId);
         filepath = safePath(projectDir, fileRecord.folder || '', fileRecord.filename);
       } catch {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Ruta de archivo inválida' })); ws.close(); return;
+        deny('Ruta de archivo inválida'); return;
       }
       if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
 
@@ -3157,8 +3162,7 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       const MAX_CODE_SIZE = 1024 * 512; // 512 KB
       if (typeof runCode === 'string') {
         if (Buffer.byteLength(runCode) > MAX_CODE_SIZE) {
-          ws.send(JSON.stringify({ type: 'denied', message: 'El código supera el tamaño máximo permitido (512 KB).' }));
-          ws.close(); return;
+          deny('El código supera el tamaño máximo permitido (512 KB).'); return;
         }
         fs.writeFileSync(filepath, runCode, 'utf8');
         fileRecord.size = Buffer.byteLength(runCode);
@@ -3225,15 +3229,13 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       // Security: code_inspector.py pre-execution check (fail-closed)
       const inspectorPath = path.join(process.cwd(), '.claude', 'scripts', 'security', 'code_inspector.py');
       if (!fs.existsSync(inspectorPath)) {
-        ws.send(JSON.stringify({ type: 'denied', message: 'Inspector de seguridad no disponible. Contacta al administrador.' }));
-        ws.close(); return;
+        deny('Inspector de seguridad no disponible. Contacta al administrador.'); return;
       }
-      const inspectorPython = getVenvPythonPath() || pythonPath;
+      const inspectorPython = pythonPath; // already resolved above — no second getVenvPythonPath()
       const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], { encoding: 'utf8', timeout: 10000 });
       if (inspectResult.status !== 0) {
         const violation = inspectResult.stdout?.trim() || inspectResult.stderr?.trim() || 'Código rechazado por el inspector de seguridad';
-        ws.send(JSON.stringify({ type: 'denied', message: violation }));
-        ws.close(); return;
+        deny(violation); return;
       }
 
       // Minimal allowlist env — no server secrets
@@ -3247,14 +3249,25 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
         TERM: 'xterm-color',
       };
 
+      // ── PTY helpers (declared here so they close over ptyProc and ws) ─────────
+      const clampCols = (c: unknown): number => Math.min(Math.max(Number(c) || 80, 1), 500);
+      const clampRows = (r: unknown): number => Math.min(Math.max(Number(r) || 24, 1), 200);
+
       // Spawn PTY — input() works natively with a real TTY
       const ptyProc = pty.spawn(pythonPath, ['-u', filepath], {
         name: 'xterm-color',
-        cols: Math.min(Math.max(Number(cols) || 80, 1), 500),
-        rows: Math.min(Math.max(Number(rows) || 24, 1), 200),
+        cols: clampCols(cols),
+        rows: clampRows(rows),
         cwd: projectDir,
         env: safeSubprocessEnv,
       });
+
+      const sendOutput = (data: string) => {
+        try { ws.send(JSON.stringify({ type: 'output', data })); } catch { /* client gone */ }
+      };
+      const killPty = () => {
+        try { ptyProc.kill(); } catch { /* already dead */ }
+      };
 
       const runStartTime = Date.now();
       const MAX_OUTPUT = 1024 * 1024 * 2; // 2 MB cap
@@ -3274,9 +3287,8 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       const armTimer = (ms: number) => {
         if (execTimer) clearTimeout(execTimer);
         execTimer = setTimeout(() => {
-          const msg = `\r\n⏱️ La ejecución superó el límite de ${Math.round(ms / 1000)}s.\r\n`;
-          try { ws.send(JSON.stringify({ type: 'output', data: msg })); } catch { /* client gone */ }
-          try { ptyProc.kill(); } catch { /* already dead */ }
+          sendOutput(`\r\n⏱️ La ejecución superó el límite de ${Math.round(ms / 1000)}s.\r\n`);
+          killPty();
         }, ms);
       };
       armTimer(EXEC_TIMEOUT_MS);
@@ -3285,12 +3297,11 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       ptyProc.onData((data) => {
         outputSize += data.length;
         if (outputSize <= MAX_OUTPUT) {
-          try { ws.send(JSON.stringify({ type: 'output', data })); } catch { /* client gone */ }
+          sendOutput(data);
         } else if (!limitReached) {
           limitReached = true;
-          const truncMsg = '\r\n[OUTPUT TRUNCADO: límite de 2MB alcanzado]\r\n';
-          try { ws.send(JSON.stringify({ type: 'output', data: truncMsg })); } catch { /* client gone */ }
-          try { ptyProc.kill(); } catch { /* already dead */ }
+          sendOutput('\r\n[OUTPUT TRUNCADO: límite de 2MB alcanzado]\r\n');
+          killPty();
         }
       });
 
@@ -3302,11 +3313,9 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
             armTimer(INPUT_IDLE_TIMEOUT_MS); // human is typing — renew idle window
             ptyProc.write(msg.data);
           } else if (msg.type === 'resize') {
-            const c = Math.min(Math.max(Number(msg.cols) || 80, 1), 500);
-            const r = Math.min(Math.max(Number(msg.rows) || 24, 1), 200);
-            ptyProc.resize(c, r);
+            ptyProc.resize(clampCols(msg.cols), clampRows(msg.rows));
           } else if (msg.type === 'stop') {
-            try { ptyProc.kill(); } catch { /* already dead */ }
+            killPty();
           }
         } catch { /* ignore malformed messages */ }
       });
@@ -3342,7 +3351,7 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       ws.on('close', () => {
         if (execTimer) clearTimeout(execTimer);
         runningPtys.delete(runId);
-        try { ptyProc.kill(); } catch { /* already dead */ }
+        killPty();
       });
     });
   });
@@ -3406,17 +3415,10 @@ async function startServer() {
     }
     // Rate limit by client IP
     const ip = req.socket.remoteAddress ?? 'unknown';
-    const now = Date.now();
-    const entry = wsRateMap.get(ip);
-    if (!entry || now > entry.resetAt) {
-      wsRateMap.set(ip, { count: 1, resetAt: now + WS_RATE_WINDOW_MS });
-    } else {
-      entry.count++;
-      if (entry.count > WS_RATE_LIMIT) {
-        socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
-        socket.destroy();
-        return;
-      }
+    if (wsHitRateLimit(wsRateMap, ip)) {
+      socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
+      socket.destroy();
+      return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });

@@ -668,10 +668,9 @@ function AppContent() {
   };
 
   // API Call: RUN PYTHON CODE (WebSocket PTY pipeline)
-  const handleRunCode = async () => {
+  // The WS handler writes the file and updates DB metadata (size, updatedAt) — no pre-save needed.
+  const handleRunCode = () => {
     if (!user || !currentProject || !currentFile) return;
-    // Auto-save before running (keeps file listing in sync)
-    await handleSaveFile(code);
     setIsConsoleOpen(true);
     setRunNonce(n => n + 1);
   };
@@ -749,6 +748,20 @@ function AppContent() {
     return idx !== -1 ? stripAnsi(buffer.slice(idx)) : '';
   };
 
+  // Convert an ExitResult (from XtermConsole) to the ExecutionResult shape the AI tutor expects.
+  // Defined once to avoid running stripAnsi/extractTraceback twice per render.
+  const aiExecutionResult = lastExitResult
+    ? {
+        success: lastExitResult.success,
+        stdout: stripAnsi(lastExitResult.ptyBuffer),
+        stderr: extractTraceback(lastExitResult.ptyBuffer),
+        exitCode: lastExitResult.exitCode,
+        duration: lastExitResult.duration,
+        timestamp: new Date().toISOString(),
+        generatedFiles: lastExitResult.generatedFiles,
+      }
+    : null;
+
   // Helper: Capture a snapshot of the current IDE state for the AI tutor
   const getEditorContext = (): IdeContext => {
     const view = editorRef.current;
@@ -773,12 +786,8 @@ function AppContent() {
       selection,
       fileName: currentFile?.filename,
       projectName: currentProject?.name,
-      execution: lastExitResult
-        ? {
-            stdout: stripAnsi(lastExitResult.ptyBuffer),
-            stderr: extractTraceback(lastExitResult.ptyBuffer),
-            exitCode: lastExitResult.exitCode,
-          }
+      execution: aiExecutionResult
+        ? { stdout: aiExecutionResult.stdout, stderr: aiExecutionResult.stderr, exitCode: aiExecutionResult.exitCode }
         : undefined,
     };
   };
@@ -1671,15 +1680,7 @@ function AppContent() {
           onToggleExpand={() => setIsAIExpanded(v => !v)}
           activeTheme={activeTheme}
           code={code}
-          executionResult={lastExitResult ? {
-            success: lastExitResult.success,
-            stdout: stripAnsi(lastExitResult.ptyBuffer),
-            stderr: extractTraceback(lastExitResult.ptyBuffer),
-            exitCode: lastExitResult.exitCode,
-            duration: lastExitResult.duration,
-            timestamp: new Date().toISOString(),
-            generatedFiles: lastExitResult.generatedFiles,
-          } : null}
+          executionResult={aiExecutionResult}
           language={userSettings.language}
           userId={user.id}
           aiReady={aiReady}
