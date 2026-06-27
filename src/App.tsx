@@ -18,19 +18,21 @@ import {
   X,
   Bell,
   Wand2,
-  Square
+  Square,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react';
 import { EditorView, keymap } from '@codemirror/view';
 import { indentUnit } from '@codemirror/language';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 
-import { User, Project, FileItem, ExecutionResult, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DiffProposal } from './types';
+import { User, Project, FileItem, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DiffProposal } from './types';
 import { LanguageProvider, useLang, useT } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
 import SpecialKeys from './components/SpecialKeys';
-import ConsoleSheet from './components/ConsoleSheet';
+import XtermConsole, { ExitResult } from './components/XtermConsole';
 import PackageManagerModal from './components/PackageManagerModal';
 import SettingsModal from './components/SettingsModal';
 import EnvRestoreOverlay from './components/EnvRestoreOverlay';
@@ -57,6 +59,39 @@ function AppContent() {
   });
   const [isLocked, setIsLocked] = useState(false);
   const [adminExists, setAdminExists] = useState<boolean>(true);
+
+  // Publica el viewport VISIBLE como variables CSS para que el root y los paneles fijos
+  // abracen exactamente el área visible sin dejar huecos negros debajo del teclado.
+  //
+  //   --app-height     = visualViewport.height  (alto visible; encoge al abrir el teclado)
+  //   --vv-top         = visualViewport.offsetTop (iOS desplaza el vv; Android siempre 0)
+  //   --keyboard-inset = alto que el teclado consume del layout viewport (0 al cerrarse)
+  //
+  // El root usa position:fixed + top:--vv-top + height:--app-height → siempre pegado al
+  // área visible. Los paneles fijos (XtermConsole, AIAssistant) usan bottom:--keyboard-inset
+  // para no quedar tapados por el teclado. Fallback a innerHeight si no hay visualViewport.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const setAppHeight = () => {
+      const h = vv?.height ?? window.innerHeight;
+      const top = vv?.offsetTop ?? 0;
+      const root = document.documentElement.style;
+      root.setProperty('--app-height', `${h}px`);
+      root.setProperty('--vv-top', `${top}px`);
+      root.setProperty('--keyboard-inset', `${Math.max(0, window.innerHeight - h - top)}px`);
+    };
+    setAppHeight();
+    vv?.addEventListener('resize', setAppHeight);
+    vv?.addEventListener('scroll', setAppHeight);
+    window.addEventListener('resize', setAppHeight);
+    window.addEventListener('orientationchange', setAppHeight);
+    return () => {
+      vv?.removeEventListener('resize', setAppHeight);
+      vv?.removeEventListener('scroll', setAppHeight);
+      window.removeEventListener('resize', setAppHeight);
+      window.removeEventListener('orientationchange', setAppHeight);
+    };
+  }, []);
 
   useEffect(() => {
     fetch('/api/auth/admin-exists')
@@ -120,17 +155,14 @@ function AppContent() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Execution console state
-  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isConsoleExpanded, setIsConsoleExpanded] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
-  // Interactive input() state
-  const [runId, setRunId] = useState<string | null>(null);
-  const [waitingForInput, setWaitingForInput] = useState(false);
-  const [inputPrompt, setInputPrompt] = useState('');
-  // Ref to abort the streaming fetch when the user clears the console mid-run
-  const runAbortRef = useRef<AbortController | null>(null);
+  // WS+PTY execution state
+  const [lastExitResult, setLastExitResult] = useState<ExitResult | null>(null);
+  const [runNonce, setRunNonce] = useState(0);   // increment to start a run
+  const [stopNonce, setStopNonce] = useState(0); // increment to stop a run
 
   // Dataset preview state
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
@@ -148,6 +180,12 @@ function AppContent() {
 
   // Layout UI management
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('py_ide_sidebar_collapsed') === 'true';
+  });
+  useEffect(() => {
+    localStorage.setItem('py_ide_sidebar_collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
   const editorRef = useRef<EditorView | null>(null);
   // Tracks lines currently selected in the editor (for AI tutor badge)
   const [aiSelection, setAiSelection] = useState<{ fromLine: number; toLine: number } | null>(null);
@@ -629,140 +667,13 @@ function AppContent() {
     }
   };
 
-  // API Call: RUN PYTHON CODE (Critical Compiler Pipeline)
+  // API Call: RUN PYTHON CODE (WebSocket PTY pipeline)
   const handleRunCode = async () => {
     if (!user || !currentProject || !currentFile) return;
-
-    setIsRunning(true);
-    setExecutionResult(null);
-    setIsConsoleOpen(true); // Open "Bottom Sheet" on run trig
-
-    // Auto save physical file change before running
+    // Auto-save before running (keeps file listing in sync)
     await handleSaveFile(code);
-
-    const ac = new AbortController();
-    runAbortRef.current = ac;
-
-    try {
-      const res = await fetch(`/api/projects/${currentProject.id}/files/${currentFile.id}/run`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId: user.id, runCode: code }),
-        signal: ac.signal
-      });
-
-      // Streaming NDJSON: show stdout/stderr as it arrives
-      if (res.body && res.headers.get('content-type')?.includes('ndjson')) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let liveStdout = '';
-        let liveStderr = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const msg = JSON.parse(line);
-              const INPUT_MARKER = '\x00__PYWI_INPUT__\x00';
-              if (msg.type === 'started') {
-                setRunId(msg.runId);
-              } else if (msg.type === 'stdout') {
-                const data: string = msg.data ?? '';
-                const markerIdx = data.indexOf(INPUT_MARKER);
-                if (markerIdx !== -1) {
-                  // Stdout before the marker goes to display; after is the input prompt
-                  const cleanPart = data.slice(0, markerIdx);
-                  const prompt = data.slice(markerIdx + INPUT_MARKER.length);
-                  if (cleanPart) liveStdout += cleanPart;
-                  setInputPrompt(prompt);
-                  setWaitingForInput(true);
-                } else {
-                  liveStdout += data;
-                }
-                setExecutionResult({
-                  success: true,
-                  stdout: liveStdout,
-                  stderr: liveStderr,
-                  exitCode: null,
-                  duration: 0,
-                  timestamp: new Date().toISOString(),
-                });
-              } else if (msg.type === 'stderr') {
-                liveStderr += msg.data;
-                setExecutionResult(prev => prev
-                  ? { ...prev, stderr: liveStderr }
-                  : {
-                      success: false,
-                      stdout: liveStdout,
-                      stderr: liveStderr,
-                      exitCode: null,
-                      duration: 0,
-                      timestamp: new Date().toISOString(),
-                    });
-              } else if (msg.type === 'end') {
-                setRunId(null);
-                setWaitingForInput(false);
-                setInputPrompt('');
-                // Strip INPUT_MARKER from final stdout (may appear if process killed mid-input)
-                const cleanStdout = (msg.stdout as string).split(INPUT_MARKER)[0];
-                setExecutionResult({
-                  success: msg.success,
-                  stdout: cleanStdout,
-                  stderr: msg.stderr,
-                  exitCode: msg.exitCode,
-                  duration: msg.duration,
-                  timestamp: msg.timestamp,
-                  generatedFiles: msg.generatedFiles,
-                });
-              }
-            } catch { /* ignore malformed NDJSON lines */ }
-          }
-        }
-      } else {
-        // Fallback: plain JSON (e.g. Python simulator path)
-        const data = await res.json();
-        setExecutionResult(data);
-      }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        setExecutionResult({
-          success: false,
-          stdout: '',
-          stderr: `${tl('errorExecutionEngine')}: ${err.message}`,
-          exitCode: -1,
-          duration: 0,
-          timestamp: new Date().toISOString()
-        });
-      }
-    } finally {
-      runAbortRef.current = null;
-      setIsRunning(false);
-    }
-  };
-
-  // Send text to stdin of the running Python process (interactive input support)
-  const handleSendStdin = async (text: string) => {
-    if (!runId) return;
-    setWaitingForInput(false);
-    setInputPrompt('');
-    // Echo the typed text in the console (Python stdin pipe does not echo)
-    setExecutionResult(prev => prev
-      ? { ...prev, stdout: prev.stdout + text + '\n' }
-      : prev);
-    try {
-      await fetch(`/api/run/${runId}/stdin`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ text })
-      });
-    } catch { /* process may have already ended */ }
+    setIsConsoleOpen(true);
+    setRunNonce(n => n + 1);
   };
 
   // Collapse the editor selection so the AI tutor badge disappears
@@ -775,40 +686,18 @@ function AppContent() {
     setAiSelection(null);
   };
 
-  // Detener la ejecución en curso conservando la salida ya mostrada
-  const handleStopRun = async () => {
-    if (runId) {
-      try {
-        await fetch(`/api/run/${runId}/stop`, {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' })
-        });
-      } catch { /* el proceso puede haber terminado ya */ }
-    }
-    runAbortRef.current?.abort();
+  // Detener la ejecución — envía stop al WebSocket de XtermConsole
+  const handleStopRun = () => {
+    setStopNonce(n => n + 1);
     setIsRunning(false);
-    setRunId(null);
-    setWaitingForInput(false);
-    setInputPrompt('');
-    // NO se llama a setExecutionResult(null): la salida permanece visible
+    // Leave terminal output visible (do not clear lastExitResult)
   };
 
-  // Clear the console; if a run is active, stop it first so "Ejecutar" is re-enabled
-  const handleClearConsole = async () => {
-    if (isRunning && runId) {
-      try {
-        await fetch(`/api/run/${runId}/stop`, {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' })
-        });
-      } catch { /* process may have already ended */ }
-    }
-    runAbortRef.current?.abort();
+  // Limpiar consola; si hay ejecución activa la detiene primero
+  const handleClearConsole = () => {
+    setStopNonce(n => n + 1);
     setIsRunning(false);
-    setRunId(null);
-    setWaitingForInput(false);
-    setInputPrompt('');
-    setExecutionResult(null);
+    setLastExitResult(null);
   };
 
   // Open dataset preview modal and fetch preview data from the backend
@@ -851,6 +740,12 @@ function AppContent() {
     }
   };
 
+  // Extract the last Python traceback from the PTY terminal buffer for the AI tutor.
+  const extractTraceback = (buffer: string): string => {
+    const idx = buffer.lastIndexOf('Traceback (most recent call last)');
+    return idx !== -1 ? buffer.slice(idx).replace(/\x1b\[[0-9;]*m/g, '') : '';
+  };
+
   // Helper: Capture a snapshot of the current IDE state for the AI tutor
   const getEditorContext = (): IdeContext => {
     const view = editorRef.current;
@@ -875,11 +770,11 @@ function AppContent() {
       selection,
       fileName: currentFile?.filename,
       projectName: currentProject?.name,
-      execution: executionResult
+      execution: lastExitResult
         ? {
-            stdout: executionResult.stdout,
-            stderr: executionResult.stderr,
-            exitCode: executionResult.exitCode,
+            stdout: lastExitResult.ptyBuffer,
+            stderr: extractTraceback(lastExitResult.ptyBuffer),
+            exitCode: lastExitResult.exitCode,
           }
         : undefined,
     };
@@ -1074,6 +969,7 @@ function AppContent() {
         onLogout={handleLogout}
         isOpenOnMobile={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
+        isCollapsedOnDesktop={sidebarCollapsed}
         activeTheme={activeTheme}
         onOpenPackageManager={() => setShowPackageManager(true)}
         packageUpdateCount={packageUpdates.dismissed ? 0 : packageUpdates.outdated.length}
@@ -1111,6 +1007,15 @@ function AppContent() {
               id="sidebar-toggle-mobile"
             >
               <Menu className="h-5 w-5" />
+            </button>
+            <button
+              onClick={() => setSidebarCollapsed(v => !v)}
+              className="hidden lg:flex p-1.5 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors shrink-0"
+              id="sidebar-toggle-desktop"
+              title={sidebarCollapsed ? 'Mostrar panel' : 'Ocultar panel'}
+              aria-label={sidebarCollapsed ? 'Mostrar panel' : 'Ocultar panel'}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
             </button>
             <div className="flex items-center gap-2 shrink-0">
               <div className="bg-indigo-600 p-1.5 rounded-lg text-white hidden sm:block">
@@ -1744,7 +1649,7 @@ function AppContent() {
         )}
 
         {/* Floating Toggle button if console output completed and closed */}
-        {!isConsoleOpen && executionResult && (
+        {!isConsoleOpen && lastExitResult && (
           <button
             onClick={() => setIsConsoleOpen(true)}
             className="absolute bottom-4 right-4 z-20 h-10 w-10 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border border-indigo-400/40"
@@ -1763,7 +1668,15 @@ function AppContent() {
           onToggleExpand={() => setIsAIExpanded(v => !v)}
           activeTheme={activeTheme}
           code={code}
-          executionResult={executionResult}
+          executionResult={lastExitResult ? {
+            success: lastExitResult.success,
+            stdout: lastExitResult.ptyBuffer,
+            stderr: extractTraceback(lastExitResult.ptyBuffer),
+            exitCode: lastExitResult.exitCode,
+            duration: lastExitResult.duration,
+            timestamp: new Date().toISOString(),
+            generatedFiles: lastExitResult.generatedFiles,
+          } : null}
           language={userSettings.language}
           userId={user.id}
           aiReady={aiReady}
@@ -1776,20 +1689,23 @@ function AppContent() {
           onClearSelection={handleClearAiSelection}
         />
 
-        {/* 3. Sliding lower Console Sheet panel */}
-        <ConsoleSheet
-          result={executionResult}
+        {/* 3. Sliding lower Console Sheet panel (WebSocket PTY terminal) */}
+        <XtermConsole
           isOpen={isConsoleOpen}
           onClose={() => setIsConsoleOpen(false)}
           onClear={handleClearConsole}
           isExpanded={isConsoleExpanded}
           onToggleExpand={() => setIsConsoleExpanded(!isConsoleExpanded)}
-          isRunning={isRunning}
           projectId={currentProject?.id ?? ''}
+          fileId={currentFile?.id ?? ''}
+          runCode={code}
           token={localStorage.getItem('py_ide_token') ?? ''}
-          waitingForInput={waitingForInput}
-          inputPrompt={inputPrompt}
-          onSendInput={handleSendStdin}
+          runNonce={runNonce}
+          stopNonce={stopNonce}
+          activeTheme={activeTheme}
+          aiReady={aiReady}
+          onRunStateChange={setIsRunning}
+          onExitResult={setLastExitResult}
           onExplainError={aiReady ? () => triggerAiCommand(tl('aiExplainErrorPrompt')) : undefined}
         />
 
