@@ -1,3 +1,4 @@
+import './lib/methodOverride'; // Tuneliza PUT/DELETE/PATCH sobre POST (WAF override)
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';

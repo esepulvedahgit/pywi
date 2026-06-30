@@ -977,6 +977,19 @@ const db = readDB();
 // Basic JSON APIs with Express
 app.use(express.json());
 
+// Un WAF/proxy delante puede bloquear PUT/DELETE/PATCH. Permitir tunelizar
+// el método real sobre POST vía X-HTTP-Method-Override. Las rutas mantienen
+// requireAuth + verificación de propiedad: NO relaja la autorización.
+app.use((req, _res, next) => {
+  if (req.method === 'POST') {
+    const o = req.headers['x-http-method-override'];
+    if (typeof o === 'string' && /^(DELETE|PATCH|PUT)$/i.test(o)) {
+      req.method = o.toUpperCase();
+    }
+  }
+  next();
+});
+
 // Rate limiters
 // Resolve the real client IP for rate-limiting without setting 'trust proxy' globally.
 // Security: X-Forwarded-For is only trusted when the TCP connection itself comes from a
