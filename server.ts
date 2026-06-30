@@ -130,10 +130,15 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
     return res.status(401).json({ error: 'Token inválido o expirado' });
   }
 
-  // Invalidate tokens issued before the last password change
+  // Verify user still exists in DB (handles post-wipe / deleted-account tokens)
   const database = readDB();
   const user = database.users.find(u => u.id === payload.userId);
-  if (user?.passwordChangedAt && payload.iat < user.passwordChangedAt) {
+  if (!user) {
+    return res.status(401).json({ error: 'Sesión inválida. Inicia sesión de nuevo.' });
+  }
+
+  // Invalidate tokens issued before the last password change
+  if (user.passwordChangedAt && payload.iat < user.passwordChangedAt) {
     return res.status(401).json({ error: 'Sesión invalidada. Inicia sesión de nuevo.' });
   }
 
@@ -398,21 +403,7 @@ interface ContainerMetrics {
   memUsed: number;
   memTotal: number;
   cpuPercent: number;
-  // NVIDIA GPU (amd64)
-  gpuAvailable: boolean;
-  gpuPercent: number;
-  gpuMemUsed: number;
-  gpuMemTotal: number;
-  // Rockchip NPU (arm64 — RK3588S)
-  npuAvailable: boolean;
-  npuPercent: number;      // promedio de los 3 núcleos
-  npuCoreLoads: number[];  // carga individual por núcleo [Core0, Core1, Core2]
-  // Host architecture — lets the frontend know which accelerator to expect
-  arch: string;            // 'x64' | 'arm64'
 }
-
-// Detected once at startup — determines which accelerator to probe
-const HOST_ARCH = os.arch(); // 'x64' on amd64, 'arm64' on arm64/aarch64
 
 let lastCpuStat = { user: 0, nice: 0, system: 0, idle: 0, iowait: 0 };
 let lastCpuTime = Date.now();
@@ -493,94 +484,10 @@ function readCgroupCpu(): number {
   return Math.min(100, (loadAvg * 100) / cpuCount);
 }
 
-function readGpuMetrics(): { available: boolean; percent: number; memUsed: number; memTotal: number } {
-  try {
-    const output = execSync('nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits', {
-      encoding: 'utf-8',
-      timeout: 2000,
-      stdio: ['pipe', 'pipe', 'ignore']
-    });
-
-    const line = output.trim().split('\n')[0];
-    const [gpuStr, memUsedStr, memTotalStr] = line.split(',').map(s => s.trim());
-
-    const gpuPercent = parseFloat(gpuStr);
-    const memUsed = parseInt(memUsedStr, 10) * 1024 * 1024; // Convert MB to bytes
-    const memTotal = parseInt(memTotalStr, 10) * 1024 * 1024;
-
-    return { available: true, percent: gpuPercent, memUsed, memTotal };
-  } catch (e) {
-    return { available: false, percent: 0, memUsed: 0, memTotal: 0 };
-  }
-}
-
-// Read Rockchip RK3588S NPU load — arm64 only.
-// Tries devfreq sysfs first (no root required), falls back to debugfs.
-// Format of debugfs source: "NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,"
-function readNpuMetrics(): { available: boolean; percent: number; coreLoads: number[] } {
-  try {
-    let loadStr = '';
-
-    // Primary: /sys/class/devfreq/<npu-node>/load — readable without root
-    try {
-      const devfreqBase = '/sys/class/devfreq';
-      const entries = fs.readdirSync(devfreqBase);
-      const npuEntry = entries.find(e => e.toLowerCase().includes('npu'));
-      if (npuEntry) {
-        loadStr = fs.readFileSync(`${devfreqBase}/${npuEntry}/load`, 'utf-8').trim();
-      }
-    } catch { /* not available — try debugfs */ }
-
-    // Fallback: /sys/kernel/debug/rknpu/load (requires cap_add DAC_READ_SEARCH or root)
-    if (!loadStr) {
-      loadStr = fs.readFileSync('/sys/kernel/debug/rknpu/load', 'utf-8').trim();
-    }
-
-    // Format A — devfreq sysfs: "100@1000000000Hz" (aggregate load @ frequency)
-    const devfreqMatch = loadStr.match(/^(\d+)@/);
-    if (devfreqMatch) {
-      const percent = Math.min(100, parseInt(devfreqMatch[1], 10));
-      return { available: true, percent, coreLoads: [] };
-    }
-
-    // Format B — debugfs: "NPU load:  Core0:  0%, Core1:  0%, Core2:  0%,"
-    const matches = [...loadStr.matchAll(/Core\d+:\s*(\d+)%/g)];
-    if (matches.length === 0) return { available: false, percent: 0, coreLoads: [] };
-
-    const coreLoads = matches.map(m => parseInt(m[1], 10));
-    const percent = coreLoads.reduce((a, b) => a + b, 0) / coreLoads.length;
-
-    return { available: true, percent, coreLoads };
-  } catch {
-    return { available: false, percent: 0, coreLoads: [] };
-  }
-}
-
 async function getMetrics(): Promise<ContainerMetrics> {
   const { used: memUsed, total: memTotal } = readCgroupMemory();
   const cpuPercent = readCgroupCpu();
-
-  // Only probe the accelerator that matches the host architecture
-  const gpu = HOST_ARCH === 'arm64'
-    ? { available: false, percent: 0, memUsed: 0, memTotal: 0 }
-    : readGpuMetrics();
-  const npu = HOST_ARCH === 'arm64'
-    ? readNpuMetrics()
-    : { available: false, percent: 0, coreLoads: [] };
-
-  return {
-    memUsed,
-    memTotal,
-    cpuPercent,
-    gpuAvailable: gpu.available,
-    gpuPercent: gpu.percent,
-    gpuMemUsed: gpu.memUsed,
-    gpuMemTotal: gpu.memTotal,
-    npuAvailable: npu.available,
-    npuPercent: npu.percent,
-    npuCoreLoads: npu.coreLoads,
-    arch: HOST_ARCH,
-  };
+  return { memUsed, memTotal, cpuPercent };
 }
 
 // Multer setup for dataset and project uploads
@@ -659,7 +566,7 @@ interface SimpleDB {
     filename: string;
     filepath: string;
     folder?: string;
-    type: 'script' | 'dataset';
+    type: 'script' | 'dataset' | 'doc';
     size: number;
     updatedAt: string;
   }>;
@@ -1071,27 +978,51 @@ const db = readDB();
 app.use(express.json());
 
 // Rate limiters
-const authStrictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
+// Resolve the real client IP for rate-limiting without setting 'trust proxy' globally.
+// Security: X-Forwarded-For is only trusted when the TCP connection itself comes from a
+// private/loopback address — meaning it passed through a local reverse proxy (nginx, etc.).
+// If the socket comes from a public IP, XFF is ignored (spoofable), and we use the socket
+// IP directly. This prevents rate-limit bypass via forged XFF headers on direct connections.
+function rateLimitKey(req: express.Request): string {
+  const socketIp = req.socket?.remoteAddress ?? '';
+  // RFC 1918 private ranges + loopback + IPv6 equivalents + Docker bridge (172.16-31.x)
+  const isPrivate = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|::ffff:127\.|::ffff:10\.|::ffff:172\.(1[6-9]|2\d|3[01])\.|::ffff:192\.168\.)/.test(socketIp);
+  if (isPrivate) {
+    const xff = req.headers['x-forwarded-for'];
+    if (typeof xff === 'string' && xff.length > 0) return xff.split(',')[0].trim();
+    if (Array.isArray(xff) && xff.length > 0) return xff[0];
+  }
+  return socketIp || req.ip || 'unknown';
+}
+
+// Shared base options — avoids repeating keyGenerator/validate on every limiter.
+// validate:false silences the ERR_ERL_UNEXPECTED_X_FORWARDED_FOR / ERR_ERL_PERMISSIVE_TRUST_PROXY
+// warnings that express-rate-limit v8 throws when X-Forwarded-For is present without trust proxy.
+const baseLimiterOpts = {
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  validate: false,
+} as const;
+
+const authStrictLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
   message: { error: 'Demasiados intentos. Inténtalo de nuevo en 15 minutos.' }
 });
 
 const runLimiter = rateLimit({
+  ...baseLimiterOpts,
   windowMs: 60 * 1000, // 1 minute
   max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { error: 'Límite de ejecuciones alcanzado. Inténtalo de nuevo en un minuto.' }
 });
 
 const aiLimiter = rateLimit({
+  ...baseLimiterOpts,
   windowMs: 60 * 1000, // 1 minute
   max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
   message: { error: 'Límite de consultas IA alcanzado. Inténtalo de nuevo en un minuto.' }
 });
 
@@ -1213,6 +1144,18 @@ app.get('/api/pip/restore-status', requireAuth, (req, res) => {
   });
 });
 
+// Helper: persist a package removal for a user in db.json
+function removePackageForUser(userId: string, packageName: string) {
+  const db = readDB();
+  const user = db.users.find(u => u.id === userId);
+  if (user && Array.isArray(user.packages)) {
+    user.packages = user.packages.filter(
+      p => p.toLowerCase() !== packageName.toLowerCase()
+    );
+    writeDB(db);
+  }
+}
+
 // API: Install a new package via pip
 app.post('/api/pip/install', requireAuth, (req, res) => {
   const userId = (req as any).userId;
@@ -1237,17 +1180,6 @@ app.post('/api/pip/install', requireAuth, (req, res) => {
         user.packages.push(pkgBaseName);
         writeDB(db);
       }
-    }
-  };
-
-  const removePackageForUser = (userId: string, packageName: string) => {
-    const db = readDB();
-    const user = db.users.find(u => u.id === userId);
-    if (user && Array.isArray(user.packages)) {
-      user.packages = user.packages.filter(
-        p => p.toLowerCase() !== packageName.toLowerCase()
-      );
-      writeDB(db);
     }
   };
 
@@ -1621,10 +1553,12 @@ app.get('/api/ai/config', requireAuth, (req, res) => {
   });
 });
 
-// PUT /api/ai/config — save AI config; auto-validates connection if config is complete
+// PUT /api/ai/config — save AI config and auto-validate by calling the provider.
+// 'enabled' and 'validated' are set to true only when the provider call succeeds.
+// Use POST /api/ai/test for an ephemeral probe without persisting.
 app.put('/api/ai/config', requireAuth, async (req, res) => {
   const userId = (req as any).userId;
-  const { provider, model, apiKey, baseUrl, enabled } = req.body;
+  const { provider, model, apiKey, baseUrl } = req.body;
 
   const validProviders = ['openai', 'deepseek', 'gemini', 'custom'];
   if (!validProviders.includes(provider)) {
@@ -1643,12 +1577,18 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
   // Never trust the masked placeholder '••••••' as a real key value.
   const incomingKey = (apiKey && apiKey !== '••••••') ? apiKey.trim() : '';
   const existingEncryptedKey = existing?.apiKey || '';
-  const keyToStore = incomingKey
-    ? encryptApiKey(incomingKey)   // new key supplied — encrypt it
-    : existingEncryptedKey;        // keep existing (already encrypted or empty)
 
-  // Auto-validate whenever the config is complete (key + model), regardless of the 'enabled' field.
-  // 'enabled' is now derived from the validation result — no manual toggle needed.
+  let keyToStore: string;
+  try {
+    keyToStore = incomingKey
+      ? encryptApiKey(incomingKey)  // new key supplied — encrypt it
+      : existingEncryptedKey;       // keep existing (already encrypted or empty)
+  } catch (encErr: any) {
+    console.error('[SEC] encryptApiKey failed:', encErr);
+    return res.status(500).json({ error: 'Error interno al cifrar la API key' });
+  }
+
+  // Auto-validate: call the provider to confirm the key+model are working.
   let validated = false;
   let validationError = '';
   if (keyToStore && model.trim()) {
@@ -1661,7 +1601,7 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
         );
         validated = true;
       } catch (err: any) {
-        validationError = err.message || 'Error al validar la conexión';
+        validationError = err.message || 'Error al validar la conexión con el proveedor IA';
       }
     } else {
       validationError = 'No se pudo descifrar la API key. Vuelve a introducirla.';
@@ -1673,10 +1613,18 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
     model: model.trim(),
     apiKey: keyToStore,
     baseUrl: baseUrl?.trim() || undefined,
-    enabled: validated,   // enabled is always in sync with validated — no manual toggle
+    enabled: validated,   // enabled is in sync with validated — no manual toggle
     validated,
   };
-  writeDB(database);
+
+  try {
+    writeDB(database);
+  } catch (dbErr: any) {
+    console.error('[DB] writeDB failed in PUT /api/ai/config:', dbErr);
+    return res.status(500).json({ error: 'Error al guardar la configuración en disco' });
+  }
+
+  // Always return 200: the config was persisted. Include validation outcome.
   res.json({ success: true, validated, ...(validationError ? { error: validationError } : {}) });
 });
 
@@ -1721,7 +1669,12 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
 
   try {
     await callAIProvider(cfgForCall as any, [{ role: 'user', content: 'Reply with: OK' }]);
-    // Intentionally NOT writing to DB — only Guardar (PUT /api/ai/config) persists validated.
+    // Persist validated=true so the tutor button activates without needing to re-save.
+    if (user.aiConfig) {
+      user.aiConfig.validated = true;
+      user.aiConfig.enabled = true;
+      writeDB(database);
+    }
     res.json({ success: true, message: `Conexión exitosa con ${provider}` });
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Error al conectar con el proveedor IA' });
@@ -2422,6 +2375,13 @@ app.get('/api/projects/:projectId/files', requireAuth, (req, res) => {
 });
 
 // API: Create a new file in a project
+/** Classify a filename into one of the three storage types. */
+function classifyFileType(filename: string): 'script' | 'dataset' | 'doc' {
+  if (filename.endsWith('.py')) return 'script';
+  if (filename.endsWith('.md')) return 'doc';
+  return 'dataset';
+}
+
 app.post('/api/projects/:projectId/files', requireAuth, (req, res) => {
   const { projectId } = req.params;
   const userId = (req as any).userId;
@@ -2431,10 +2391,10 @@ app.post('/api/projects/:projectId/files', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Nombre de archivo es requerido' });
   }
 
-  const validExtensions = ['.py', '.csv', '.txt', '.xlsx', '.xls', '.json', '.parquet', '.log'];
+  const validExtensions = ['.py', '.md', '.csv', '.txt', '.xlsx', '.xls', '.json', '.parquet', '.log'];
   const isValidExt = validExtensions.some(ext => filename.endsWith(ext));
   if (!isValidExt) {
-    return res.status(400).json({ error: 'Extensión de archivo inválida. Permitido: .py, .csv, .txt, .xlsx, .xls, .json, .parquet, .log' });
+    return res.status(400).json({ error: 'Extensión de archivo inválida. Permitido: .py, .md, .csv, .txt, .xlsx, .xls, .json, .parquet, .log' });
   }
 
   // folder allows one level of nesting (e.g. "models" or "models/utils") — no traversal
@@ -2448,7 +2408,6 @@ app.post('/api/projects/:projectId/files', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Acceso denegado' });
   }
 
-  const isScript = filename.endsWith('.py');
   let projPath: string;
   let targetDir: string;
   let targetPath: string;
@@ -2473,7 +2432,7 @@ app.post('/api/projects/:projectId/files', requireAuth, (req, res) => {
     filename,
     filepath: path.join(userId, projectId, folder || '', filename),
     ...(folder ? { folder } : {}),
-    type: isScript ? 'script' : 'dataset',
+    type: classifyFileType(filename),
     size: Buffer.byteLength(fileContent),
     updatedAt: new Date().toISOString()
   };
@@ -2518,7 +2477,7 @@ app.patch('/api/projects/:projectId/files/:fileId/rename', requireAuth, (req, re
   if (!newFilename) {
     return res.status(400).json({ error: 'newFilename es requerido' });
   }
-  if (!newFilename.endsWith('.py') || newFilename.includes('/') || newFilename.includes('..')) {
+  if ((!newFilename.endsWith('.py') && !newFilename.endsWith('.md')) || newFilename.includes('/') || newFilename.includes('..')) {
     return res.status(400).json({ error: 'Nombre de archivo inválido' });
   }
 
@@ -2594,10 +2553,12 @@ app.patch('/api/projects/:projectId/folders/rename', requireAuth, (req, res) => 
 });
 
 // API: Delete folder and all its contents (cascade)
+// folderPath is passed as a query param (not body) so proxies don't strip it:
+//   DELETE /api/projects/:id/folders?path=<folderName>
 app.delete('/api/projects/:projectId/folders', requireAuth, (req, res) => {
   const { projectId } = req.params;
   const currentUserId = (req as any).userId;
-  const { folderPath } = req.body;
+  const folderPath = req.query.path as string | undefined;
 
   if (!folderPath) {
     return res.status(400).json({ error: 'folderPath es requerido' });
@@ -2687,7 +2648,16 @@ app.put('/api/projects/:projectId/files/:fileId/content', requireAuth, (req, res
     return res.status(400).json({ error: 'Ruta de archivo inválida' });
   }
 
-  fs.writeFileSync(actualPath, content);
+  try {
+    fs.writeFileSync(actualPath, content);
+  } catch (writeErr: unknown) {
+    const isEnospc = writeErr instanceof Error && (writeErr as NodeJS.ErrnoException).code === 'ENOSPC';
+    return res.status(507).json({
+      error: isEnospc
+        ? 'No se pudo guardar el archivo: espacio en disco insuficiente.'
+        : `No se pudo guardar el archivo: error de E/S (${writeErr instanceof Error ? writeErr.message : writeErr}).`,
+    });
+  }
 
   // Update DB metadata
   fileRecord.size = Buffer.byteLength(content);
@@ -2705,6 +2675,7 @@ app.delete('/api/projects/:projectId/files/:fileId', requireAuth, (req, res) => 
   const database = readDB();
   const project = database.projects.find(p => p.id === projectId);
   if (!project || project.userId !== userId) {
+    console.warn('[DELETE 403] file', { projectId, owner: project?.userId, token: userId });
     return res.status(403).json({ error: 'Acceso denegado' });
   }
 
@@ -2756,8 +2727,7 @@ app.post('/api/projects/:projectId/upload/:userId', requireAuth, (req, res) => {
     const database = readDB();
 
     const filename = req.file.filename;
-    const isScript = filename.endsWith('.py');
-    const fileType: 'script' | 'dataset' = isScript ? 'script' : 'dataset';
+    const fileType = classifyFileType(filename);
 
     let fileRecord = database.files.find(f => f.projectId === projectId && f.filename === filename && f.folder === uploadFolder);
 
@@ -2969,6 +2939,9 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
   if (!fileRecord) {
     return res.status(404).json({ error: 'Archivo ejecutable no encontrado' });
   }
+  if (!fileRecord.filename.endsWith('.py')) {
+    return res.status(400).json({ error: 'Solo se pueden ejecutar archivos .py' });
+  }
 
   let projectDir: string;
   let filepath: string;
@@ -2989,10 +2962,19 @@ app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, 
 
   // If editor is sending updated script code before run, save it first
   if (runCode !== undefined) {
-    fs.writeFileSync(filepath, runCode);
-    fileRecord.size = Buffer.byteLength(runCode);
-    fileRecord.updatedAt = new Date().toISOString();
-    writeDB(database);
+    try {
+      fs.writeFileSync(filepath, runCode);
+      fileRecord.size = Buffer.byteLength(runCode);
+      fileRecord.updatedAt = new Date().toISOString();
+      writeDB(database);
+    } catch (writeErr: unknown) {
+      const isEnospc = writeErr instanceof Error && (writeErr as NodeJS.ErrnoException).code === 'ENOSPC';
+      return res.status(507).json({
+        error: isEnospc
+          ? 'No se pudo guardar el script: espacio en disco insuficiente.'
+          : `No se pudo guardar el script: error de E/S (${writeErr instanceof Error ? writeErr.message : writeErr}).`,
+      });
+    }
   }
 
   const startTime = Date.now();
@@ -3146,6 +3128,7 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       if (!project || project.userId !== userId) { deny('Acceso denegado'); return; }
       const fileRecord = database.files.find((f: any) => f.id === fileId && f.projectId === projectId);
       if (!fileRecord) { deny('Archivo no encontrado'); return; }
+      if (!fileRecord.filename.endsWith('.py')) { deny('Solo se pueden ejecutar archivos .py'); return; }
 
       // ── Path resolution ───────────────────────────────────────────────────────
       let projectDir: string;
@@ -3164,10 +3147,19 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
         if (Buffer.byteLength(runCode) > MAX_CODE_SIZE) {
           deny('El código supera el tamaño máximo permitido (512 KB).'); return;
         }
-        fs.writeFileSync(filepath, runCode, 'utf8');
-        fileRecord.size = Buffer.byteLength(runCode);
-        fileRecord.updatedAt = new Date().toISOString();
-        writeDB(database);
+        try {
+          fs.writeFileSync(filepath, runCode, 'utf8');
+          fileRecord.size = Buffer.byteLength(runCode);
+          fileRecord.updatedAt = new Date().toISOString();
+          writeDB(database);
+        } catch (writeErr: unknown) {
+          const isEnospc = writeErr instanceof Error && (writeErr as NodeJS.ErrnoException).code === 'ENOSPC';
+          deny(isEnospc
+            ? 'No se pudo guardar el script: espacio en disco insuficiente.'
+            : `No se pudo guardar el script: error de E/S (${writeErr instanceof Error ? writeErr.message : writeErr}).`
+          );
+          return;
+        }
       }
 
       const startTime = Date.now();
@@ -3227,7 +3219,7 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       }
 
       // Security: code_inspector.py pre-execution check (fail-closed)
-      const inspectorPath = path.join(process.cwd(), '.claude', 'scripts', 'security', 'code_inspector.py');
+      const inspectorPath = path.join(process.cwd(), 'scripts', 'security', 'code_inspector.py');
       if (!fs.existsSync(inspectorPath)) {
         deny('Inspector de seguridad no disponible. Contacta al administrador.'); return;
       }

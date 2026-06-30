@@ -76,13 +76,14 @@ export default function SettingsModal({
 
   // AI config state
   const [aiConfig, setAiConfig] = useState<AIConfig>({
-    provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false
+    provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false, validated: false
   });
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiSaving, setAiSaving] = useState(false);
   const [aiSavedOk, setAiSavedOk] = useState(false);
   const [aiTesting, setAiTesting] = useState(false);
-  const [aiMessage, setAiMessage] = useState('');
+  const [aiMessage, setAiMessage] = useState('');   // test result message
+  const [aiSaveMessage, setAiSaveMessage] = useState(''); // save result message
 
   const modelPlaceholders: Record<string, string> = {
     openai: 'gpt-4o-mini',
@@ -338,7 +339,7 @@ export default function SettingsModal({
 
   const handleSaveAIConfig = async () => {
     setAiSaving(true);
-    setAiMessage('');
+    setAiSaveMessage('');
     try {
       const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/ai/config', {
@@ -352,14 +353,14 @@ export default function SettingsModal({
           model: aiConfig.model,
           apiKey: aiApiKey || '••••••',
           baseUrl: aiConfig.baseUrl,
-          // 'enabled' is no longer sent — server derives it from validation result
+          // 'enabled' is not sent — server derives it from the validation result
         })
       });
       if (res.ok) {
         const saved = await res.json().catch(() => ({})) as any;
         setAiSavedOk(true);
         setAiApiKey('');
-        // refresh to get hasKey + validated status
+        // Refresh to get hasKey + validated status
         const token2 = localStorage.getItem('py_ide_token');
         const r2 = await fetch('/api/ai/config', { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} });
         if (r2.ok) {
@@ -367,21 +368,23 @@ export default function SettingsModal({
           setAiConfig(freshCfg);
           onAiConfigSaved?.(freshCfg);
         }
-        // Show validation result in the modal
+        // Show validation outcome: validated → activated; error field → validation failed but saved
         if (saved.validated) {
-          setAiMessage('✓ ' + t('aiValidatedOk'));
+          setAiSaveMessage('✓ ' + t('aiValidatedOk'));
         } else if (saved.error) {
-          setAiMessage('✗ ' + saved.error);
+          setAiSaveMessage('✗ ' + saved.error);
+        } else {
+          setAiSaveMessage('✓ ' + t('saved'));
         }
-        setTimeout(() => { setAiSavedOk(false); setAiMessage(''); }, 5000);
+        setTimeout(() => { setAiSavedOk(false); setAiSaveMessage(''); }, 5000);
       } else {
         const d = await res.json().catch(() => ({})) as any;
-        setAiMessage('✗ ' + (d.error || t('error')));
-        setTimeout(() => setAiMessage(''), 4000);
+        setAiSaveMessage('✗ ' + (d.error || t('error')));
+        setTimeout(() => setAiSaveMessage(''), 4000);
       }
     } catch {
-      setAiMessage(t('connectionError'));
-      setTimeout(() => setAiMessage(''), 3000);
+      setAiSaveMessage('✗ ' + t('connectionError2'));
+      setTimeout(() => setAiSaveMessage(''), 3000);
     } finally {
       setAiSaving(false);
     }
@@ -492,7 +495,6 @@ export default function SettingsModal({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        onClick={onClose}
         className={c.overlay}
       >
         <motion.div
@@ -1009,15 +1011,26 @@ export default function SettingsModal({
               </motion.button>
             )}
             {activeTab === 'ai' && (
-              <motion.button
-                onClick={handleSaveAIConfig}
-                disabled={aiSaving || aiSavedOk}
-                animate={aiSavedOk ? { scale: [1, 1.08, 1], backgroundColor: ['#4f46e5', '#16a34a', '#16a34a'] } : {}}
-                transition={{ duration: 0.35 }}
-                className={c.button}
-              >
-                {aiSaving ? t('aiSave') + '...' : aiSavedOk ? '✓ ' + t('saved') : t('aiSave')}
-              </motion.button>
+              <>
+                {aiSaveMessage && (
+                  <span className={`text-xs self-center ${
+                    aiSaveMessage.startsWith('✓') ? 'text-emerald-400' :
+                    aiSaveMessage.startsWith('⚠') ? 'text-amber-400' :
+                    'text-rose-400'
+                  }`}>
+                    {aiSaveMessage}
+                  </span>
+                )}
+                <motion.button
+                  onClick={handleSaveAIConfig}
+                  disabled={aiSaving || aiSavedOk}
+                  animate={aiSavedOk ? { scale: [1, 1.08, 1], backgroundColor: ['#4f46e5', '#16a34a', '#16a34a'] } : {}}
+                  transition={{ duration: 0.35 }}
+                  className={c.button}
+                >
+                  {aiSaving ? t('aiSave') + '...' : aiSavedOk ? '✓ ' + t('saved') : t('aiSave')}
+                </motion.button>
+              </>
             )}
             <button onClick={onClose} className={c.buttonSecondary}>
               {t('cancel')}
