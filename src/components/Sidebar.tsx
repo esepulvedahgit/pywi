@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
   Folder,
@@ -45,6 +45,7 @@ interface SidebarProps {
   onLogout: () => void;
   isOpenOnMobile: boolean;
   onCloseMobile: () => void;
+  isCollapsedOnDesktop?: boolean;
   activeTheme?: 'light' | 'vibrant-dark' | 'midnight-obsidian';
   onOpenPackageManager?: () => void;
   packageUpdateCount?: number;
@@ -55,73 +56,473 @@ const getThemeSidebarClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsi
   switch (theme) {
     case 'vibrant-dark':
       return {
-        aside: 'bg-slate-900 border-r border-slate-800 text-slate-300',
-        header: 'bg-slate-950 border-b border-slate-850 shadow-none',
+        aside: 'bg-slate-900 border-r border-slate-700 text-slate-300',
+        header: 'bg-slate-950 border-b border-slate-800 shadow-none',
         headerText: 'text-slate-100',
-        subText: 'text-slate-500',
+        subText: 'text-slate-400',
         logoutHover: 'text-slate-400 hover:text-red-400 hover:bg-slate-800',
-        activeProjBox: 'border-b border-slate-850 bg-slate-900/60',
-        dropdown: 'bg-slate-950 border border-slate-800 text-slate-300 focus:ring-indigo-505',
-        buttonSec: 'border border-slate-800 hover:bg-slate-800 text-indigo-400 bg-slate-950 shadow-none',
-        buttonDel: 'border border-red-955 text-red-500 hover:bg-red-950/20 bg-slate-955 shadow-none',
-        input: 'bg-slate-950 border border-slate-800 text-slate-150 placeholder-slate-650',
-        scriptForm: 'bg-slate-955/40 border border-slate-800',
-        scriptActive: 'bg-indigo-955/40 text-indigo-300 font-bold border-l-2 border-indigo-500 shadow-none',
+        activeProjBox: 'border-b border-slate-800 bg-slate-900/60',
+        dropdown: 'bg-slate-950 border border-slate-700 text-slate-300 focus:ring-indigo-500',
+        buttonSec: 'border border-slate-700 hover:bg-slate-800 text-indigo-400 bg-slate-950 shadow-none',
+        buttonDel: 'border border-red-900 text-red-500 hover:bg-red-950/20 bg-slate-950 shadow-none',
+        input: 'bg-slate-950 border border-slate-700 text-slate-200 placeholder-slate-600',
+        scriptForm: 'bg-slate-950/40 border border-slate-700',
+        scriptActive: 'bg-indigo-950/40 text-indigo-300 font-bold border-l-2 border-indigo-500 shadow-none',
         scriptInactive: 'hover:bg-slate-800/60 text-slate-400 hover:text-slate-200 border-l-2 border-transparent',
-        datasetInactive: 'hover:bg-slate-800/50 text-slate-400 hover:text-slate-150',
-        uploadBox: 'border-slate-800 hover:border-slate-700 hover:bg-slate-800/10 text-slate-500',
+        datasetInactive: 'hover:bg-slate-800/50 text-slate-400 hover:text-slate-200',
+        uploadBox: 'border-slate-700 hover:border-slate-600 hover:bg-slate-800/10 text-slate-500',
         progressText: 'text-slate-400',
-        resPanel: 'border-t border-slate-805 bg-slate-950/50',
+        resPanel: 'border-t border-slate-800 bg-slate-950/50',
         resLabel: 'text-slate-500',
         barBg: 'bg-slate-800'
       };
     case 'midnight-obsidian':
       return {
-        aside: 'bg-neutral-950 border-r border-neutral-900 text-neutral-300',
-        header: 'bg-black border-b border-neutral-900 shadow-none',
+        aside: 'bg-neutral-950 border-r border-neutral-800 text-neutral-300',
+        header: 'bg-black border-b border-neutral-800 shadow-none',
         headerText: 'text-neutral-100',
         subText: 'text-neutral-500',
-        logoutHover: 'text-neutral-450 hover:text-red-500 hover:bg-neutral-900',
-        activeProjBox: 'border-b border-neutral-900 bg-black',
-        dropdown: 'bg-neutral-950 border border-neutral-900 text-neutral-300 focus:ring-indigo-505',
-        buttonSec: 'border border-neutral-900 hover:bg-neutral-900 text-indigo-500 bg-black shadow-none',
-        buttonDel: 'border border-red-955 text-red-500 hover:bg-red-950/20 bg-black shadow-none',
-        input: 'bg-[#080808] border border-neutral-900 text-neutral-100 placeholder-neutral-600',
-        scriptForm: 'bg-black border border-neutral-900',
+        logoutHover: 'text-neutral-400 hover:text-red-500 hover:bg-neutral-900',
+        activeProjBox: 'border-b border-neutral-800 bg-black',
+        dropdown: 'bg-neutral-950 border border-neutral-800 text-neutral-300 focus:ring-indigo-500',
+        buttonSec: 'border border-neutral-800 hover:bg-neutral-900 text-indigo-500 bg-black shadow-none',
+        buttonDel: 'border border-red-900 text-red-500 hover:bg-red-950/20 bg-black shadow-none',
+        input: 'bg-[#080808] border border-neutral-800 text-neutral-100 placeholder-neutral-600',
+        scriptForm: 'bg-black border border-neutral-800',
         scriptActive: 'bg-neutral-900 text-white font-bold border-l-2 border-indigo-600 shadow-none',
         scriptInactive: 'hover:bg-neutral-900/60 text-neutral-400 hover:text-neutral-200 border-l-2 border-transparent',
-        datasetInactive: 'hover:bg-neutral-900/55 text-neutral-400 hover:text-neutral-100',
-        uploadBox: 'border-neutral-900 hover:border-neutral-800 hover:bg-neutral-905/40 text-neutral-500',
-        progressText: 'text-neutral-550',
-        resPanel: 'border-t border-neutral-900 bg-black',
-        resLabel: 'text-neutral-550',
+        datasetInactive: 'hover:bg-neutral-900/50 text-neutral-400 hover:text-neutral-100',
+        uploadBox: 'border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900/40 text-neutral-500',
+        progressText: 'text-neutral-500',
+        resPanel: 'border-t border-neutral-800 bg-black',
+        resLabel: 'text-neutral-500',
         barBg: 'bg-neutral-900'
       };
     case 'light':
     default:
       return {
-        aside: 'bg-slate-50 border-r border-slate-200 text-slate-700',
-        header: 'bg-white border-b border-slate-200 shadow-xs',
+        aside: 'bg-slate-50 border-r border-slate-300 text-slate-700',
+        header: 'bg-white border-b border-slate-300 shadow-sm',
         headerText: 'text-slate-800',
-        subText: 'text-slate-400',
-        logoutHover: 'text-slate-400 hover:text-red-500 hover:bg-slate-100 border border-transparent hover:border-slate-200',
-        activeProjBox: 'border-b border-slate-200 bg-white',
-        dropdown: 'bg-slate-50 border-slate-200 text-slate-700 focus:ring-indigo-500',
-        buttonSec: 'border border-slate-200 hover:bg-slate-50 hover:text-indigo-600 text-indigo-500 bg-white shadow-xs',
-        buttonDel: 'border border-red-200/50 text-red-500 hover:bg-red-50 bg-white shadow-xs',
-        input: 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400',
-        scriptForm: 'bg-white border-slate-200/80',
+        subText: 'text-slate-500',
+        logoutHover: 'text-slate-500 hover:text-red-500 hover:bg-slate-100 border border-transparent hover:border-slate-200',
+        activeProjBox: 'border-b border-slate-300 bg-white',
+        dropdown: 'bg-white border-slate-300 text-slate-700 focus:ring-indigo-500',
+        buttonSec: 'border border-slate-300 hover:bg-slate-50 hover:text-indigo-600 text-indigo-500 bg-white shadow-xs',
+        buttonDel: 'border border-red-200 text-red-500 hover:bg-red-50 bg-white shadow-xs',
+        input: 'bg-white border-slate-300 text-slate-800 placeholder-slate-400',
+        scriptForm: 'bg-slate-50 border-slate-300',
         scriptActive: 'bg-indigo-50 text-indigo-700 font-bold border-l-2 border-indigo-600 shadow-xs',
-        scriptInactive: 'hover:bg-slate-200/50 text-slate-650 hover:text-slate-900 border-l-2 border-transparent',
-        datasetInactive: 'hover:bg-slate-200/50 text-slate-600 hover:text-slate-950',
-        uploadBox: 'border-slate-300 hover:border-slate-400 hover:bg-slate-200/20 text-slate-500',
+        scriptInactive: 'hover:bg-slate-100 text-slate-600 hover:text-slate-900 border-l-2 border-transparent',
+        datasetInactive: 'hover:bg-slate-100 text-slate-600 hover:text-slate-900',
+        uploadBox: 'border-slate-300 hover:border-slate-400 hover:bg-slate-100/50 text-slate-500',
         progressText: 'text-slate-500',
-        resPanel: 'border-t border-slate-200 bg-slate-100/90',
-        resLabel: 'text-slate-400',
+        resPanel: 'border-t border-slate-300 bg-slate-100',
+        resLabel: 'text-slate-500',
         barBg: 'bg-slate-200'
       };
   }
 };
+
+// ---------------------------------------------------------------------------
+// "Mis documentos" — dedicated section for markdown (.md) docs with its own
+// collapsible folder tree. Kept separate from the Scripts (.py) tree: folders
+// are derived from doc files + session-created empty folders (same ephemeral
+// semantics the Scripts tree already has). Enforces max 2 levels / 6 folders
+// per level in the UI, and blocks folder-name collisions across sections.
+// ---------------------------------------------------------------------------
+const MAX_FOLDERS_PER_LEVEL = 6;
+
+interface DocsSectionProps {
+  files: FileItem[];
+  currentFileId: string | null;
+  activeTheme: 'light' | 'vibrant-dark' | 'midnight-obsidian';
+  allFolders: string[];
+  onSelectFile: (fileId: string) => void;
+  onCreateFile: (filename: string) => void;
+  onCreateFileInFolder: (filename: string, folder: string) => void;
+  onCreateFolder: (folderName: string) => void;
+  onRenameFile: (fileId: string, newFilename: string) => void;
+  onRenameFolder: (oldPath: string, newPath: string) => void;
+  onDeleteFile: (fileId: string) => void;
+  onDeleteFolder: (folderPath: string) => void;
+  onUpload: (file: File, folder?: string) => void | Promise<void>;
+}
+
+function DocsSection({
+  files,
+  currentFileId,
+  activeTheme,
+  allFolders,
+  onSelectFile,
+  onCreateFile,
+  onCreateFileInFolder,
+  onCreateFolder,
+  onRenameFile,
+  onRenameFolder,
+  onDeleteFile,
+  onDeleteFolder,
+  onUpload,
+}: DocsSectionProps) {
+  const t = useT();
+  const s = getThemeSidebarClasses(activeTheme);
+
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [sessionFolders, setSessionFolders] = useState<Set<string>>(new Set());
+  const [showNewFileInput, setShowNewFileInput] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
+  const [showNewFolderInput, setShowNewFolderInput] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const docUploadRef = useRef<HTMLInputElement>(null);
+  const [uploadProgress, setUploadProgress] = useState(false);
+
+  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    setUploadProgress(true);
+    await onUpload(file, activeFolder ?? undefined);
+    setUploadProgress(false);
+    e.target.value = '';
+  };
+
+  const docFiles = files.filter(f => f.type === 'doc');
+  const treeFolders = [...new Set([
+    ...docFiles.filter(f => f.folder).map(f => f.folder!),
+    ...sessionFolders,
+  ])];
+  const rootFolders = [...new Set(treeFolders.map(f => f.split('/')[0]))];
+  const subFoldersOf = (folder: string) =>
+    [...new Set(treeFolders.filter(p => p.startsWith(`${folder}/`)))];
+
+  // Folder creation gating: root/level-1 capped at 6, level-2 can't nest deeper.
+  const atDepthLimit = !!activeFolder && activeFolder.includes('/');
+  const atCountLimit = activeFolder
+    ? !activeFolder.includes('/') && subFoldersOf(activeFolder).length >= MAX_FOLDERS_PER_LEVEL
+    : rootFolders.length >= MAX_FOLDERS_PER_LEVEL;
+  const folderCreateBlocked = atDepthLimit || atCountLimit;
+  const folderBtnTitle = atDepthLimit
+    ? t('folderDepthReached')
+    : atCountLimit
+      ? t('folderLimitReached')
+      : activeFolder
+        ? t('newDocFolderInFolderTooltip', { folder: activeFolder })
+        : t('newDocFolderTooltip');
+
+  const toggleFolder = (folder: string) => {
+    setCollapsedFolders(prev => {
+      const next = new Set(prev);
+      next.has(folder) ? next.delete(folder) : next.add(folder);
+      return next;
+    });
+  };
+
+  const handleCreateFileSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    let name = newFileName.trim();
+    if (!name) return;
+    if (!name.includes('.')) name += '.md';
+    if (activeFolder) onCreateFileInFolder(name, activeFolder);
+    else onCreateFile(name);
+    setNewFileName('');
+    setShowNewFileInput(false);
+  };
+
+  const handleCreateFolderSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newFolderName.trim();
+    if (!name) return;
+    const fullPath = activeFolder ? `${activeFolder}/${name}` : name;
+    const existing = new Set([...allFolders, ...treeFolders]);
+    if (existing.has(fullPath)) { alert(t('folderNameTaken')); return; }
+    onCreateFolder(fullPath);
+    setSessionFolders(prev => new Set(prev).add(fullPath));
+    setNewFolderName('');
+    setShowNewFolderInput(false);
+  };
+
+  const handleRenameSubmit = (e: React.FormEvent, type: 'file' | 'folder', id: string, originalName: string) => {
+    e.preventDefault();
+    const val = renameValue.trim();
+    if (!val || val === originalName) { setRenamingId(null); return; }
+    if (type === 'file') {
+      const name = val.includes('.') ? val : val + '.md';
+      onRenameFile(id, name);
+    } else {
+      const parentPrefix = id.includes('/') ? id.substring(0, id.lastIndexOf('/') + 1) : '';
+      const newPath = parentPrefix + val;
+      onRenameFolder(id, newPath);
+      setSessionFolders(prev => {
+        const next = new Set<string>();
+        prev.forEach(p => {
+          if (p === id) next.add(newPath);
+          else if (p.startsWith(`${id}/`)) next.add(newPath + p.slice(id.length));
+          else next.add(p);
+        });
+        return next;
+      });
+    }
+    setRenamingId(null);
+    setRenameValue('');
+  };
+
+  const removeFolder = (folderPath: string) => {
+    onDeleteFolder(folderPath);
+    setSessionFolders(prev => {
+      const next = new Set<string>();
+      prev.forEach(p => {
+        if (p !== folderPath && !p.startsWith(`${folderPath}/`)) next.add(p);
+      });
+      return next;
+    });
+    setConfirmDeleteFolder(null);
+    if (activeFolder === folderPath || activeFolder?.startsWith(`${folderPath}/`)) setActiveFolder(null);
+  };
+
+  const renderFile = (f: FileItem, folderContext: string | null) => (
+    <div key={f.id} id={`doc-item-${f.id}`}>
+      {renamingId === f.id ? (
+        <form onSubmit={(e) => handleRenameSubmit(e, 'file', f.id, f.filename)}
+          className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+          <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+            onBlur={(e) => handleRenameSubmit(e as any, 'file', f.id, f.filename)}
+            className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+          <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+        </form>
+      ) : (
+        <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer select-none transition-all ${currentFileId === f.id ? s.scriptActive : s.scriptInactive}`}
+          onClick={() => { onSelectFile(f.id); setActiveFolder(folderContext); }}>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <FileText className={`h-3 w-3 shrink-0 transition-colors ${currentFileId === f.id ? 'text-indigo-500' : 'text-slate-400'}`} />
+            <span className="font-mono truncate">{f.filename}</span>
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
+              className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
+              <Pencil className="h-2.5 w-2.5" />
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
+              className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
+              <Trash2 className="h-2.5 w-2.5" />
+            </button>
+          </div>
+        </div>
+      )}
+      {confirmDeleteId === f.id && (
+        <div className={`mx-1 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+          <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteFileConfirm', { name: f.filename })}</span>
+          <div className="flex gap-1 shrink-0">
+            <button onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
+              className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors">{t('confirmDeleteFolderYes')}</button>
+            <button onClick={() => setConfirmDeleteId(null)}
+              className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>{t('confirmDeleteFolderNo')}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Header: label + new folder + new document buttons */}
+      <div className="flex items-center justify-between mb-1">
+        <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5`}>
+          <FileText className="h-3.5 w-3.5 text-amber-500" /> {t('docsSectionLabel')}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => docUploadRef.current?.click()}
+            className="p-2 text-amber-500 hover:bg-slate-200/80 rounded transition-colors"
+            title={activeFolder ? t('uploadDocInFolderTooltip', { folder: activeFolder }) : t('uploadDocTooltip')}>
+            <Upload className="h-4 w-4" />
+          </button>
+          <input ref={docUploadRef} type="file" accept=".md" onChange={handleDocUpload} className="hidden" />
+          <button type="button" disabled={folderCreateBlocked}
+            onClick={() => { if (!folderCreateBlocked) { setShowNewFolderInput(v => !v); setShowNewFileInput(false); } }}
+            className={`p-2 rounded transition-colors ${folderCreateBlocked ? 'text-slate-300 opacity-40 cursor-not-allowed' : 'text-amber-500 hover:bg-slate-200/80'}`}
+            title={folderBtnTitle}>
+            <FolderPlus className="h-4 w-4" />
+          </button>
+          <button type="button"
+            onClick={() => { setShowNewFileInput(v => !v); setShowNewFolderInput(false); }}
+            className="p-2 text-indigo-500 hover:bg-slate-200/80 rounded transition-colors"
+            title={activeFolder ? t('newDocInFolderTooltip', { folder: activeFolder }) : t('newDocTooltip')}>
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {uploadProgress && (
+        <div className={`flex items-center gap-1.5 mb-2 px-2 py-1 rounded text-[10px] ${activeTheme === 'light' ? 'bg-amber-50 text-amber-600' : 'bg-amber-950/40 text-amber-300'}`}>
+          <div className="h-3 w-3 border border-amber-500 border-t-transparent rounded-full animate-spin" />
+          {t('uploadingDoc')}
+        </div>
+      )}
+
+      {/* Active folder context badge */}
+      {activeFolder && (
+        <div className="flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+          <Folder className="h-3 w-3 text-amber-500 shrink-0" />
+          <span className="text-[10px] text-amber-600 font-mono truncate flex-1">{activeFolder}/</span>
+          <button onClick={() => setActiveFolder(null)} className="text-amber-500 hover:text-amber-700 shrink-0">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
+      {showNewFileInput && (
+        <form onSubmit={handleCreateFileSubmit} className={`mb-2 p-1.5 ${s.scriptForm} rounded-lg border`}>
+          <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? t('inFolder', { folder: activeFolder }) : t('inRoot')}</p>
+          <input type="text" required placeholder={t('newDocInputPlaceholder')} autoFocus
+            value={newFileName} onChange={(e) => setNewFileName(e.target.value)}
+            className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
+          <div className="flex justify-end gap-1 mt-1">
+            <button type="button" onClick={() => { setShowNewFileInput(false); setNewFileName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+            <button type="submit" className="px-1.5 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
+          </div>
+        </form>
+      )}
+
+      {showNewFolderInput && !folderCreateBlocked && (
+        <form onSubmit={handleCreateFolderSubmit} className={`mb-2 p-1.5 ${s.scriptForm} rounded-lg border`}>
+          <p className={`text-[9px] ${s.subText} mb-1`}>{activeFolder ? t('inFolder', { folder: activeFolder }) : t('inRoot')}</p>
+          <input type="text" required placeholder={t('newDocFolderInputPlaceholder')} autoFocus
+            value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)}
+            className={`w-full p-1 ${s.input} rounded text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono`} />
+          <div className="flex justify-end gap-1 mt-1">
+            <button type="button" onClick={() => { setShowNewFolderInput(false); setNewFolderName(''); }} className={`px-1 py-0.5 text-[9px] ${s.subText}`}>{t('exitBtn')}</button>
+            <button type="submit" className="px-1.5 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-[9px] font-medium">{t('createBtn')}</button>
+          </div>
+        </form>
+      )}
+
+      <div className="space-y-0.5" id="docs-list">
+        {/* Root-level docs (no folder) */}
+        {docFiles.filter(f => !f.folder).map(f => renderFile(f, null))}
+
+        {/* Folders — top level */}
+        {rootFolders.map(folder => {
+          const isCollapsed = collapsedFolders.has(folder);
+          const isActive = activeFolder === folder;
+          const subfolders = subFoldersOf(folder);
+          return (
+            <div key={folder}>
+              {renamingId === folder ? (
+                <form onSubmit={(e) => handleRenameSubmit(e, 'folder', folder, folder.split('/').pop()!)}
+                  className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                  <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                    onBlur={(e) => handleRenameSubmit(e as any, 'folder', folder, folder.split('/').pop()!)}
+                    className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                  <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                </form>
+              ) : (
+                <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs select-none transition-all cursor-pointer ${isActive ? 'bg-amber-500/10 border border-amber-500/30' : s.scriptInactive}`}
+                  onClick={() => { setActiveFolder(isActive ? null : folder); toggleFolder(folder); }}>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                    <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    <span className="font-mono truncate font-medium">{folder}/</span>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button onClick={(e) => { e.stopPropagation(); setRenamingId(folder); setRenameValue(folder.split('/').pop()!); }}
+                      className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameFolderTooltip')}>
+                      <Pencil className="h-2.5 w-2.5" />
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteFolder(folder); }}
+                      className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
+                      <Trash2 className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {confirmDeleteFolder === folder && (
+                <div className={`ml-2 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                  <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteFolderWithContent', { name: folder })}</span>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => removeFolder(folder)}
+                      className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">{t('confirmDeleteFolderYes')}</button>
+                    <button onClick={() => setConfirmDeleteFolder(null)}
+                      className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>{t('confirmDeleteFolderNo')}</button>
+                  </div>
+                </div>
+              )}
+
+              {!isCollapsed && (
+                <div className="ml-4 space-y-0.5">
+                  {docFiles.filter(f => f.folder === folder).map(f => renderFile(f, folder))}
+
+                  {/* Subfolders (level 2) */}
+                  {subfolders.map(subPath => {
+                    const isSubActive = activeFolder === subPath;
+                    const isSubCollapsed = collapsedFolders.has(subPath);
+                    return (
+                      <div key={subPath}>
+                        {renamingId === subPath ? (
+                          <form onSubmit={(e) => handleRenameSubmit(e, 'folder', subPath, subPath.split('/').pop()!)}
+                            className={`flex items-center gap-1 p-1 ${s.scriptForm} rounded-lg border`}>
+                            <input autoFocus value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                              onBlur={(e) => handleRenameSubmit(e as any, 'folder', subPath, subPath.split('/').pop()!)}
+                              className={`flex-1 p-0.5 ${s.input} rounded text-[11px] font-mono focus:outline-none`} />
+                            <button type="submit" className="text-[9px] text-indigo-400 shrink-0">✓</button>
+                          </form>
+                        ) : (
+                          <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs select-none transition-all cursor-pointer ${isSubActive ? 'bg-amber-500/10 border border-amber-500/30' : s.scriptInactive}`}
+                            onClick={() => { setActiveFolder(isSubActive ? null : subPath); toggleFolder(subPath); }}>
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isSubCollapsed ? '' : 'rotate-90'}`} />
+                              <Folder className="h-3 w-3 shrink-0 text-amber-400" />
+                              <span className="font-mono truncate text-[10px]">{subPath.split('/')[1]}/</span>
+                            </div>
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <button onClick={(e) => { e.stopPropagation(); setRenamingId(subPath); setRenameValue(subPath.split('/').pop()!); }}
+                                className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
+                                <Pencil className="h-2.5 w-2.5" />
+                              </button>
+                              <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteFolder(subPath); }}
+                                className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteSubfolderTooltip')}>
+                                <Trash2 className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {confirmDeleteFolder === subPath && (
+                          <div className={`ml-2 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                            <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteFolderConfirmText', { name: subPath.split('/').pop()! })}</span>
+                            <div className="flex gap-1 shrink-0">
+                              <button onClick={() => removeFolder(subPath)}
+                                className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">{t('confirmDeleteFolderYes')}</button>
+                              <button onClick={() => setConfirmDeleteFolder(null)}
+                                className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>{t('confirmDeleteFolderNo')}</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {!isSubCollapsed && (
+                          <div className="ml-4 space-y-0.5">
+                            {docFiles.filter(f => f.folder === subPath).map(f => renderFile(f, subPath))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {docFiles.length === 0 && rootFolders.length === 0 && (
+          <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('noDocs')}</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function Sidebar({
   user,
@@ -149,11 +550,13 @@ export default function Sidebar({
   activeTheme = 'light',
   onOpenPackageManager,
   packageUpdateCount = 0,
-  onPreviewDataset
+  onPreviewDataset,
+  isCollapsedOnDesktop = false
 }: SidebarProps) {
   const t = useT();
   const [newProjName, setNewProjName] = useState('');
   const [showNewProjInput, setShowNewProjInput] = useState(false);
+  const scriptUploadRef = useRef<HTMLInputElement>(null);
   const [newFileName, setNewFileName] = useState('');
   const [showNewFileInput, setShowNewFileInput] = useState(false);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
@@ -162,6 +565,10 @@ export default function Sidebar({
   const [newSubFolderFor, setNewSubFolderFor] = useState<{ parent: string; name: string } | null>(null);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  // Empty script folders created this session (mirrors the doc tree's own
+  // session set) so the Scripts tree renders only .py folders and never leaks
+  // folders created in the "Mis documentos" section.
+  const [scriptSessionFolders, setScriptSessionFolders] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
@@ -174,17 +581,16 @@ export default function Sidebar({
     memUsed: 0,
     memTotal: 1,
     cpuPercent: 0,
-    gpuAvailable: false,
-    gpuPercent: 0,
-    gpuMemUsed: 0,
-    gpuMemTotal: 1,
-    npuAvailable: false,
-    npuPercent: 0,
-    npuCoreLoads: [] as number[],
-    arch: 'x64',  // default until first /api/metrics response
   });
 
   const s = getThemeSidebarClasses(activeTheme);
+
+  // Script folders derived from .py files + session-created empty folders,
+  // so this tree stays independent from the "Mis documentos" folder tree.
+  const scriptTreeFolders = [...new Set([
+    ...files.filter(f => f.type === 'script' && f.folder).map(f => f.folder!),
+    ...scriptSessionFolders,
+  ])];
 
   // Fetch metrics every 5 seconds
   useEffect(() => {
@@ -236,7 +642,10 @@ export default function Sidebar({
     const name = newFolderName.trim();
     if (!name) return;
     const fullName = activeFolder ? `${activeFolder}/${name}` : name;
+    const existing = new Set([...folders, ...scriptTreeFolders]);
+    if (existing.has(fullName)) { alert(t('folderNameTaken')); return; }
     onCreateFolder(fullName);
+    setScriptSessionFolders(prev => new Set(prev).add(fullName));
     setNewFolderName('');
     setShowNewFolderInput(false);
   };
@@ -250,10 +659,29 @@ export default function Sidebar({
       onRenameFile(id, name);
     } else {
       const parentPrefix = id.includes('/') ? id.substring(0, id.lastIndexOf('/') + 1) : '';
-      onRenameFolder(id, parentPrefix + val);
+      const newPath = parentPrefix + val;
+      onRenameFolder(id, newPath);
+      setScriptSessionFolders(prev => {
+        const next = new Set<string>();
+        prev.forEach(p => {
+          if (p === id) next.add(newPath);
+          else if (p.startsWith(`${id}/`)) next.add(newPath + p.slice(id.length));
+          else next.add(p);
+        });
+        return next;
+      });
     }
     setRenamingId(null);
     setRenameValue('');
+  };
+
+  const removeScriptFolder = (folderPath: string) => {
+    onDeleteFolder(folderPath);
+    setScriptSessionFolders(prev => {
+      const next = new Set<string>();
+      prev.forEach(p => { if (p !== folderPath && !p.startsWith(`${folderPath}/`)) next.add(p); });
+      return next;
+    });
   };
 
   const handleCreateFileInFolderSubmit = (e: React.FormEvent) => {
@@ -273,6 +701,7 @@ export default function Sidebar({
     if (!name) return;
     const fullPath = `${newSubFolderFor.parent}/${name}`;
     onCreateFolder(fullPath);
+    setScriptSessionFolders(prev => new Set(prev).add(fullPath));
     setNewSubFolderFor(null);
   };
 
@@ -356,8 +785,12 @@ export default function Sidebar({
 
       {/* Primary Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-30 w-[280px] ${s.aside} flex flex-col transition-transform duration-300 transform lg:static lg:translate-x-0 ${
+        className={`fixed top-0 bottom-0 left-0 z-30 w-[280px] ${s.aside} flex flex-col transition-all duration-300 transform lg:static lg:translate-x-0 ${
           isOpenOnMobile ? 'translate-x-0' : '-translate-x-full'
+        } ${
+          isCollapsedOnDesktop
+            ? 'lg:w-0 lg:min-w-0 lg:overflow-hidden lg:opacity-0 lg:pointer-events-none'
+            : 'lg:w-[280px] lg:opacity-100'
         }`}
         id="project-sidebar"
       >
@@ -434,7 +867,7 @@ export default function Sidebar({
                 placeholder={t('projectName') + '...'}
                 value={newProjName}
                 onChange={(e) => setNewProjName(e.target.value)}
-                className={`w-full px-2 py-1 ${s.input} rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-505`}
+                className={`w-full px-2 py-1 ${s.input} rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500`}
                 id="input-new-project-name"
               />
               <div className="flex justify-end gap-1.5 mt-1.5">
@@ -465,21 +898,24 @@ export default function Sidebar({
               <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1`}>
                 <FileCode className="h-3.5 w-3.5 text-indigo-500" /> {t('scriptsSectionLabel')}
               </span>
-              <div className="flex items-center gap-1">
-                <label className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors cursor-pointer relative"
+              <div className="flex items-center gap-1.5">
+                {/* Upload button — triggers a hidden file input to avoid transparent overlay
+                    capturing taps meant for the adjacent New-folder / New-file buttons (iOS bug) */}
+                <button type="button" onClick={() => scriptUploadRef.current?.click()}
+                  className="p-2 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors"
                   title={activeFolder ? t('uploadPyInFolderTooltip', { folder: activeFolder }) : t('uploadPyTooltip')}>
-                  <Upload className="h-3.5 w-3.5" />
-                  <input type="file" accept=".py" onChange={handleScriptUpload} className="absolute inset-0 opacity-0 w-full cursor-pointer" />
-                </label>
-                <button onClick={() => { setShowNewFolderInput(!showNewFolderInput); setShowNewFileInput(false); }}
-                  className="p-0.5 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors"
-                  title={activeFolder ? t('newFolderInFolderTooltip', { folder: activeFolder }) : t('newFolderTooltip')}>
-                  <FolderPlus className="h-3.5 w-3.5" />
+                  <Upload className="h-4 w-4" />
                 </button>
-                <button onClick={() => { setShowNewFileInput(!showNewFileInput); setShowNewFolderInput(false); }}
-                  className="p-0.5 text-indigo-500 hover:bg-slate-200/80 rounded transition-colors"
+                <input ref={scriptUploadRef} type="file" accept=".py" onChange={handleScriptUpload} className="hidden" />
+                <button type="button" onClick={() => { setShowNewFolderInput(!showNewFolderInput); setShowNewFileInput(false); }}
+                  className="p-2 text-indigo-400 hover:bg-slate-200/80 rounded transition-colors"
+                  title={activeFolder ? t('newFolderInFolderTooltip', { folder: activeFolder }) : t('newFolderTooltip')}>
+                  <FolderPlus className="h-4 w-4" />
+                </button>
+                <button type="button" onClick={() => { setShowNewFileInput(!showNewFileInput); setShowNewFolderInput(false); }}
+                  className="p-2 text-indigo-500 hover:bg-slate-200/80 rounded transition-colors"
                   title={activeFolder ? t('newScriptInFolderTooltip', { folder: activeFolder }) : t('newScriptTooltip')}>
-                  <Plus className="h-3.5 w-3.5" />
+                  <Plus className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -496,7 +932,7 @@ export default function Sidebar({
             )}
 
             {scriptUploadProgress && (
-              <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded bg-indigo-50 text-indigo-600 text-[10px]">
+              <div className={`flex items-center gap-1.5 mb-2 px-2 py-1 rounded text-[10px] ${activeTheme === 'light' ? 'bg-indigo-50 text-indigo-600' : 'bg-indigo-950/40 text-indigo-300'}`}>
                 <div className="h-3 w-3 border border-indigo-500 border-t-transparent rounded-full animate-spin" />
                 {t('uploadingScript')}
               </div>
@@ -529,7 +965,7 @@ export default function Sidebar({
             )}
 
             <div className="space-y-0.5" id="scripts-list">
-              {/* Root-level scripts (no folder) */}
+              {/* Root-level scripts and docs (no folder) */}
               {files.filter(f => f.type === 'script' && !f.folder).map((f) => (
                 <div key={f.id} id={`file-item-${f.id}`}>
                   {renamingId === f.id ? (
@@ -546,7 +982,10 @@ export default function Sidebar({
                       onClick={() => { onSelectFile(f.id); setActiveFolder(null); }}
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
+                        {f.filename.endsWith('.md')
+                          ? <FileText className={`h-3 w-3 shrink-0 transition-colors ${currentFileId === f.id ? 'text-indigo-500' : 'text-slate-400'}`} />
+                          : <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${currentFileId === f.id ? 'rotate-90 text-indigo-600' : ''}`} />
+                        }
                         <span className="font-mono truncate">{f.filename}</span>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
@@ -563,8 +1002,8 @@ export default function Sidebar({
                   )}
                   {/* Inline delete confirmation — avoids window.confirm() issues */}
                   {confirmDeleteId === f.id && (
-                    <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-red-300">{t('deleteFileConfirm', { name: f.filename })}</span>
+                    <div className={`mx-1 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                      <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteFileConfirm', { name: f.filename })}</span>
                       <div className="flex gap-1 shrink-0">
                         <button
                           onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
@@ -574,7 +1013,7 @@ export default function Sidebar({
                         </button>
                         <button
                           onClick={() => setConfirmDeleteId(null)}
-                          className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors"
+                          className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
                         >
                           {t('confirmDeleteFolderNo')}
                         </button>
@@ -585,14 +1024,8 @@ export default function Sidebar({
               ))}
 
               {/* Folders — top-level only */}
-              {[...new Set([
-                ...folders.filter(f => !f.includes('/')),
-                ...files.filter(f => f.type === 'script' && f.folder && !f.folder.includes('/')).map(f => f.folder!)
-              ])].map(folder => {
-                const subfolders = [...new Set([
-                  ...folders.filter(p => p.startsWith(`${folder}/`)),
-                  ...files.filter(f => f.type === 'script' && f.folder?.startsWith(`${folder}/`)).map(f => f.folder!)
-                ])];
+              {[...new Set(scriptTreeFolders.map(f => f.split('/')[0]))].map(folder => {
+                const subfolders = [...new Set(scriptTreeFolders.filter(p => p.startsWith(`${folder}/`)))];
                 const isCollapsed = collapsedFolders.has(folder);
                 const isActive = activeFolder === folder;
 
@@ -611,8 +1044,8 @@ export default function Sidebar({
                       <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs select-none transition-all cursor-pointer ${isActive ? 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-400' : s.scriptInactive}`}
                         onClick={() => { setActiveFolder(isActive ? null : folder); toggleFolder(folder); }}>
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'} ${isActive ? 'text-indigo-400' : 'text-slate-400'}`} />
-                          <Folder className={`h-3.5 w-3.5 shrink-0 ${isActive ? 'text-indigo-400' : 'text-amber-500'}`} />
+                          <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                          <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" />
                           <span className="font-mono truncate font-medium">{folder}/</span>
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
@@ -630,15 +1063,15 @@ export default function Sidebar({
 
                     {/* Folder delete confirmation */}
                     {confirmDeleteFolder === folder && (
-                      <div className="ml-2 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-red-300">
+                      <div className={`ml-2 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                        <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>
                           {t('deleteFolderWithContent', { name: folder })}
                         </span>
                         <div className="flex gap-1 shrink-0">
-                          <button onClick={() => { onDeleteFolder(folder); setConfirmDeleteFolder(null); setActiveFolder(null); }}
+                          <button onClick={() => { removeScriptFolder(folder); setConfirmDeleteFolder(null); setActiveFolder(null); }}
                             className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">{t('confirmDeleteFolderYes')}</button>
                           <button onClick={() => setConfirmDeleteFolder(null)}
-                            className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">{t('confirmDeleteFolderNo')}</button>
+                            className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>{t('confirmDeleteFolderNo')}</button>
                         </div>
                       </div>
                     )}
@@ -700,15 +1133,15 @@ export default function Sidebar({
                               </div>
                             )}
                             {confirmDeleteId === f.id && (
-                              <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                                <span className="text-[10px] text-red-300">{t('deleteFileConfirm', { name: f.filename })}</span>
+                              <div className={`mx-1 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                                <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteFileConfirm', { name: f.filename })}</span>
                                 <div className="flex gap-1 shrink-0">
                                   <button onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
                                     className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors">
                                     {t('confirmDeleteFolderYes')}
                                   </button>
                                   <button onClick={() => setConfirmDeleteId(null)}
-                                    className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors">
+                                    className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>
                                     {t('confirmDeleteFolderNo')}
                                   </button>
                                 </div>
@@ -734,8 +1167,8 @@ export default function Sidebar({
                                 <div className={`flex items-center justify-between p-1.5 rounded-lg text-xs select-none transition-all cursor-pointer ${isSubActive ? 'bg-indigo-500/10 border border-indigo-500/30 text-indigo-400' : s.scriptInactive}`}
                                   onClick={() => { setActiveFolder(isSubActive ? null : subPath); toggleFolder(subPath); }}>
                                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                    <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${collapsedFolders.has(subPath) ? '' : 'rotate-90'} ${isSubActive ? 'text-indigo-400' : 'text-slate-400'}`} />
-                                    <Folder className={`h-3 w-3 shrink-0 ${isSubActive ? 'text-indigo-400' : 'text-amber-400'}`} />
+                                    <ChevronRight className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${collapsedFolders.has(subPath) ? '' : 'rotate-90'}`} />
+                                    <Folder className="h-3 w-3 shrink-0 text-amber-400" />
                                     <span className="font-mono truncate text-[10px]">{subPath.split('/')[1]}/</span>
                                   </div>
                                   <div className="flex items-center gap-0.5 shrink-0">
@@ -752,15 +1185,15 @@ export default function Sidebar({
                               )}
 
                               {confirmDeleteFolder === subPath && (
-                                <div className="ml-2 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                                  <span className="text-[10px] text-red-300">
+                                <div className={`ml-2 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                                  <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>
                                     {t('deleteFolderConfirmText', { name: subPath.split('/').pop()! })}
                                   </span>
                                   <div className="flex gap-1 shrink-0">
-                                    <button onClick={() => { onDeleteFolder(subPath); setConfirmDeleteFolder(null); if (activeFolder === subPath) setActiveFolder(null); }}
+                                    <button onClick={() => { removeScriptFolder(subPath); setConfirmDeleteFolder(null); if (activeFolder === subPath) setActiveFolder(null); }}
                                       className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded">{t('confirmDeleteFolderYes')}</button>
                                     <button onClick={() => setConfirmDeleteFolder(null)}
-                                      className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded">{t('confirmDeleteFolderNo')}</button>
+                                      className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>{t('confirmDeleteFolderNo')}</button>
                                   </div>
                                 </div>
                               )}
@@ -805,15 +1238,15 @@ export default function Sidebar({
                                         </div>
                                       )}
                                       {confirmDeleteId === f.id && (
-                                        <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                                          <span className="text-[10px] text-red-300">{t('deleteFileConfirm', { name: f.filename })}</span>
+                                        <div className={`mx-1 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                                          <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteFileConfirm', { name: f.filename })}</span>
                                           <div className="flex gap-1 shrink-0">
                                             <button onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
                                               className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors">
                                               {t('confirmDeleteFolderYes')}
                                             </button>
                                             <button onClick={() => setConfirmDeleteId(null)}
-                                              className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors">
+                                              className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>
                                               {t('confirmDeleteFolderNo')}
                                             </button>
                                           </div>
@@ -832,7 +1265,7 @@ export default function Sidebar({
                 );
               })}
 
-              {files.filter(f => f.type === 'script').length === 0 && folders.length === 0 && (
+              {files.filter(f => f.type === 'script').length === 0 && scriptTreeFolders.length === 0 && (
                 <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('noScripts')}</p>
               )}
             </div>
@@ -883,8 +1316,8 @@ export default function Sidebar({
 
                   {/* Inline delete confirmation — avoids window.confirm() issues */}
                   {confirmDeleteId === f.id && (
-                    <div className="mx-1 mb-1 px-2 py-1.5 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-red-300">{t('deleteDatasetConfirm', { name: f.filename })}</span>
+                    <div className={`mx-1 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                      <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('deleteDatasetConfirm', { name: f.filename })}</span>
                       <div className="flex gap-1 shrink-0">
                         <button
                           onClick={() => { onDeleteFile(f.id); setConfirmDeleteId(null); }}
@@ -894,7 +1327,7 @@ export default function Sidebar({
                         </button>
                         <button
                           onClick={() => setConfirmDeleteId(null)}
-                          className="px-2 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[9px] font-bold rounded transition-colors"
+                          className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
                         >
                           {t('confirmDeleteFolderNo')}
                         </button>
@@ -950,6 +1383,23 @@ export default function Sidebar({
               )}
             </div>
           </div>
+
+          {/* Mis documentos (.md) section */}
+          <DocsSection
+            files={files}
+            currentFileId={currentFileId}
+            activeTheme={activeTheme}
+            allFolders={folders}
+            onSelectFile={onSelectFile}
+            onCreateFile={onCreateFile}
+            onCreateFileInFolder={onCreateFileInFolder}
+            onCreateFolder={onCreateFolder}
+            onRenameFile={onRenameFile}
+            onRenameFolder={onRenameFolder}
+            onDeleteFile={onDeleteFile}
+            onDeleteFolder={onDeleteFolder}
+            onUpload={onUploadScript}
+          />
 
           {/* Entorno Python & Pip libraries section */}
           <div className="pt-2 border-t border-slate-200/50 dark:border-slate-800/40 animate-fadeIn">
@@ -1021,51 +1471,6 @@ export default function Sidebar({
                 ></div>
               </div>
             </div>
-            {/* GPU slot — shown on amd64 (x64) whether available or not */}
-            {metrics.arch !== 'arm64' && (
-              <div className={`space-y-1 ${!metrics.gpuAvailable ? 'opacity-40' : ''}`}>
-                <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
-                  <span>GPU</span>
-                  <span>
-                    {metrics.gpuAvailable
-                      ? `${metrics.gpuPercent.toFixed(1)}% • ${(metrics.gpuMemUsed / 1e9).toFixed(1)}GB / ${(metrics.gpuMemTotal / 1e9).toFixed(1)}GB`
-                      : t('gpuUnavailable')}
-                  </span>
-                </div>
-                <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
-                  <div
-                    className="bg-purple-500 h-full rounded-full transition-all duration-300"
-                    style={{ width: metrics.gpuAvailable ? `${metrics.gpuPercent.toFixed(0)}%` : '0%' }}
-                  ></div>
-                </div>
-              </div>
-            )}
-            {/* NPU slot — shown on arm64 whether available or not */}
-            {metrics.arch === 'arm64' && (
-              <div className={`space-y-1 ${!metrics.npuAvailable ? 'opacity-40' : ''}`}>
-                <div className={`flex justify-between text-[10px] ${s.resLabel} font-medium`}>
-                  <span>NPU</span>
-                  <span>
-                    {metrics.npuAvailable
-                      ? <>
-                          {metrics.npuPercent.toFixed(1)}%
-                          {metrics.npuCoreLoads.length > 0 && (
-                            <span className="ml-1 opacity-50">
-                              {metrics.npuCoreLoads.map((c, i) => `C${i} ${c}%`).join(' · ')}
-                            </span>
-                          )}
-                        </>
-                      : t('npuUnavailable')}
-                  </span>
-                </div>
-                <div className={`w-full ${s.barBg} h-1 rounded-full overflow-hidden`}>
-                  <div
-                    className="bg-cyan-500 h-full rounded-full transition-all duration-300"
-                    style={{ width: metrics.npuAvailable ? `${Math.min(100, metrics.npuPercent).toFixed(0)}%` : '0%' }}
-                  ></div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </aside>

@@ -155,7 +155,7 @@ export default function ConsoleSheet({
 
     const onMove = (ev: PointerEvent) => {
       const delta = startY - ev.clientY;
-      const newH = Math.max(80, Math.min(window.innerHeight * 0.95, startHeight + delta));
+      const newH = Math.max(80, Math.min((window.visualViewport?.height ?? window.innerHeight) * 0.95, startHeight + delta));
       setCustomHeight(newH);
     };
 
@@ -180,9 +180,11 @@ export default function ConsoleSheet({
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        style={customHeight ? { height: `${customHeight}px` } : undefined}
-        className={`fixed bottom-0 left-0 right-0 z-40 bg-slate-950 border-t border-slate-700/80 shadow-2xl flex flex-col font-sans select-none ${
-          !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[40vh] sm:h-[45vh]') : ''
+        style={customHeight
+          ? { height: `${customHeight}px`, bottom: 'var(--keyboard-inset, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
+          : { bottom: 'var(--keyboard-inset, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        className={`fixed left-0 right-0 z-40 bg-slate-950 border-t border-slate-700/80 shadow-2xl flex flex-col font-sans select-none ${
+          !customHeight ? (isExpanded ? 'h-[calc(var(--app-height,100dvh)*0.9)]' : 'h-[calc(var(--app-height,100dvh)*0.4)] sm:h-[calc(var(--app-height,100dvh)*0.45)]') : ''
         }`}
         id="console-bottom-sheet"
       >

@@ -142,6 +142,11 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
     return res.status(401).json({ error: 'Sesión invalidada. Inicia sesión de nuevo.' });
   }
 
+  // Invalidate tokens issued before the session was locked / logged out
+  if (user.sessionLockedAt && payload.iat < user.sessionLockedAt) {
+    return res.status(401).json({ error: 'Sesión bloqueada. Inicia sesión de nuevo.' });
+  }
+
   (req as any).userId = payload.userId;
   next();
 };
@@ -557,6 +562,7 @@ interface SimpleDB {
       lastChecked: string | null;
     };
     passwordChangedAt?: number; // unix timestamp; tokens issued before this are invalid
+    sessionLockedAt?: number; // unix timestamp; tokens issued before this are invalid (lock/logout)
     aiConfig?: AIConfig;
   }>;
   projects: Array<{ id: string; userId: string; name: string; createdAt: string }>;
@@ -1494,6 +1500,33 @@ app.post('/api/auth/login', authStrictLimiter, async (req, res) => {
   }
 });
 
+// API: Lock session — invalidates the current token server-side until re-auth.
+// The client shows the lock screen; this ensures the retained token can't be reused.
+app.post('/api/auth/lock', requireAuth, (req, res) => {
+  const userId = (req as any).userId as string;
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(401).json({ error: 'Sesión inválida. Inicia sesión de nuevo.' });
+  }
+  user.sessionLockedAt = Math.floor(Date.now() / 1000);
+  writeDB(database);
+  res.status(200).json({ ok: true });
+});
+
+// API: Logout — invalidates the current token server-side (client also clears storage).
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  const userId = (req as any).userId as string;
+  const database = readDB();
+  const user = database.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(401).json({ error: 'Sesión inválida. Inicia sesión de nuevo.' });
+  }
+  user.sessionLockedAt = Math.floor(Date.now() / 1000);
+  writeDB(database);
+  res.status(200).json({ ok: true });
+});
+
 // API: Get user settings
 app.get('/api/users/:userId/settings', requireAuth, (req, res) => {
   const { userId } = req.params;
@@ -1758,13 +1791,28 @@ The user will see a visual diff with **Apply** / **Reject** buttons. No change i
 };
 
 // ── IDE context snapshot type (sent by client alongside messages) ──────────────
+interface DatasetContextPayload {
+  filename?: string;
+  shape?: [number, number] | number[];
+  columns?: string[];
+  dtypes?: Record<string, string>;
+  sample?: string[][];
+}
+
 interface IdeContextPayload {
   code?: string;
   selection?: { text: string; fromLine: number; toLine: number };
   fileName?: string;
   projectName?: string;
   execution?: { stdout?: string; stderr?: string; exitCode?: number | null };
+  datasets?: DatasetContextPayload[];
 }
+
+// Size caps for the datasets block, to bound tokens/cost.
+const AI_DS_MAX_COUNT = 4;      // at most N previewed datasets
+const AI_DS_MAX_ROWS = 15;      // sample rows per dataset
+const AI_DS_MAX_CELL = 40;      // chars per cell
+const AI_DS_MAX_BLOCK = 4000;   // total chars for the whole datasets section
 
 /** Build a context block from an IDE snapshot for injection into the system prompt. */
 function buildIdeContextBlock(ctx: IdeContextPayload, lang: 'es' | 'en'): string {
@@ -1801,6 +1849,44 @@ function buildIdeContextBlock(ctx: IdeContextPayload, lang: 'es' | 'en'): string
   if (ctx.execution?.stderr) {
     const label = lang === 'en' ? 'Last error (stderr)' : 'Último error (stderr)';
     parts.push(`${h(label)}\n\`\`\`\n${ctx.execution.stderr.slice(0, 1200)}\n\`\`\``);
+  }
+
+  if (Array.isArray(ctx.datasets) && ctx.datasets.length) {
+    const cell = (v: unknown) => {
+      const s = String(v ?? '');
+      return s.length > AI_DS_MAX_CELL ? s.slice(0, AI_DS_MAX_CELL) + '…' : s;
+    };
+    const dsParts: string[] = [];
+    for (const ds of ctx.datasets.slice(0, AI_DS_MAX_COUNT)) {
+      if (!ds || !ds.filename) continue;
+      const cols = Array.isArray(ds.columns) ? ds.columns : [];
+      const rows = Array.isArray(ds.shape) ? ds.shape[0] : undefined;
+      const ncols = Array.isArray(ds.shape) ? ds.shape[1] : cols.length;
+      const shapeLabel = lang === 'en'
+        ? `${rows ?? '?'} rows × ${ncols ?? '?'} cols`
+        : `${rows ?? '?'} filas × ${ncols ?? '?'} columnas`;
+      const dtypes = ds.dtypes || {};
+      const colLine = cols.map(c => `${c} (${dtypes[c] ?? '?'})`).join(', ');
+      const sample = (Array.isArray(ds.sample) ? ds.sample : []).slice(0, AI_DS_MAX_ROWS);
+      const colsLabel = lang === 'en' ? 'Columns (dtype)' : 'Columnas (dtype)';
+      const sampleLabel = lang === 'en'
+        ? `Sample (first ${sample.length} rows)`
+        : `Muestra (primeras ${sample.length} filas)`;
+      const lines = [`Dataset: ${ds.filename} (${shapeLabel})`, `${colsLabel}: ${colLine}`];
+      if (cols.length && sample.length) {
+        lines.push(sampleLabel + ':');
+        lines.push(`| ${cols.map(cell).join(' | ')} |`);
+        lines.push(`| ${cols.map(() => '---').join(' | ')} |`);
+        for (const row of sample) {
+          lines.push(`| ${cols.map((_, i) => cell(row?.[i])).join(' | ')} |`);
+        }
+      }
+      dsParts.push(lines.join('\n'));
+    }
+    if (dsParts.length) {
+      const label = lang === 'en' ? 'Datasets previewed by the user' : 'Datasets previsualizados por el usuario';
+      parts.push(`${h(label)}\n${dsParts.join('\n\n').slice(0, AI_DS_MAX_BLOCK)}`);
+    }
   }
 
   return parts.join('\n');
@@ -3135,6 +3221,10 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       if (userRecord?.passwordChangedAt && payload.iat < userRecord.passwordChangedAt) {
         deny('Sesión invalidada. Inicia sesión de nuevo.'); return;
       }
+      // Invalidate tokens issued before the session was locked / logged out
+      if (userRecord?.sessionLockedAt && payload.iat < userRecord.sessionLockedAt) {
+        deny('Sesión bloqueada. Inicia sesión de nuevo.'); return;
+      }
 
       // ── Ownership check ───────────────────────────────────────────────────────
       const project = database.projects.find((p: any) => p.id === projectId);
@@ -3239,8 +3329,14 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       const inspectorPython = pythonPath; // already resolved above — no second getVenvPythonPath()
       const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], { encoding: 'utf8', timeout: 10000 });
       if (inspectResult.status !== 0) {
-        const violation = inspectResult.stdout?.trim() || inspectResult.stderr?.trim() || 'Código rechazado por el inspector de seguridad';
-        deny(violation); return;
+        // Solo reenviamos mensajes estructurados del inspector; nunca su stderr/traceback.
+        const out = inspectResult.stdout?.trim() ?? '';
+        if (out.startsWith('SECURITY_VIOLATION:')) {
+          deny(out.replace(/^SECURITY_VIOLATION:\s*/, '')); return;
+        }
+        // Fallo inesperado (INSPECTOR_ERROR, crash, timeout…): log server-side, mensaje genérico al cliente.
+        if (inspectResult.stderr?.trim()) console.error('[inspector] fallo inesperado:', inspectResult.stderr.trim());
+        deny('Código rechazado por el inspector de seguridad'); return;
       }
 
       // Minimal allowlist env — no server secrets

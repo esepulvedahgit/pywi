@@ -109,7 +109,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
           <img
             src="/images/logo_pywi.png"
             alt="PyWI Logo"
-            className="h-24 w-24 drop-shadow-lg"
+            className="h-16 w-16 drop-shadow-lg"
           />
         </div>
         <h2 className="mt-2 text-center text-2xl font-bold tracking-tight text-slate-800">

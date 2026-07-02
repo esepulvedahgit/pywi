@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Architecture:**
 - **Backend**: Node.js/Express server (server.ts) handles Python execution, virtual environment setup, project/file management, and database operations
-- **Frontend**: React 19 + Vite with CodeMirror 6 for Python editing, responsive UI with Tailwind CSS
+- **Frontend**: React 19 + Vite with CodeMirror 6 for Python editing, responsive UI with Tailwind CSS v4 (configured via CSS `@import "tailwindcss"`, no `tailwind.config` file)
 - **Data**: File-based storage (data/ directory) containing user projects, virtual environment configs, and execution history
 - **Python Runtime**: Projects run in isolated virtual environments (.venv) with configurable package dependencies
 
@@ -23,11 +23,15 @@ npm run lint             # Type-check with TypeScript (tsc --noEmit)
 npm run clean            # Remove build artifacts
 ```
 
-**Environment Variables** (.env.local):
-- `GEMINI_API_KEY` — Required for Gemini API integration
+**Environment Variables** (.env / .env.local — see `.env.example`):
+- `JWT_SECRET` — Required; server **exits at startup if missing** (server.ts:20)
+- `ENCRYPTION_KEY` — Required; server **exits if missing** (server.ts:32). Encrypts per-user AI API keys (AES-256-GCM) stored in db.json — AI provider keys are NOT env vars
 - `APP_URL` — defaults to http://localhost:3000
+- `IMAGE_NAME` — Docker image tag for docker-compose (amd64/arm64)
 
-**Docker**: `docker-compose up` runs the app on port 3000 with live-reload. Mounts source code and persists data/ directory.
+**Docker**: `docker-compose up` runs the app on port 3000 with live-reload. Mounts source code and persists data/ directory. Production uses a **named volume `pywi_data:/app/data`** (not a bind mount) behind nginx → WAF (TLS on 443).
+
+**Deployment gotcha (WAF blocks non-GET/POST methods):** Prod sits behind a **Sophos WAF** whose "Common Threats Filter → Application attacks" category blocks `PUT`/`DELETE`/`PATCH`, returning a **bodyless 403** before the request reaches Node. Symptom: create works, but delete/rename (PATCH)/AI-save (PUT) fail with a generic `(403)` — no `Acceso denegado` JSON means it's the WAF, not the app (all app 403s are JSON). **Resolved at the WAF** (that category adjusted); no app-side change. If it recurs, fix it in the WAF (skip the offending method rule) rather than weakening app auth.
 
 ## Architecture & Key Patterns
 
@@ -100,12 +104,13 @@ ExecutionResult: { success, stdout, stderr, exitCode, duration, timestamp }
 **Adding a new UI component:**
 1. Create file in src/components/ComponentName.tsx
 2. Import & place in App.tsx or another parent
-3. Styles use Tailwind utility classes (configured in tailwind.config.ts)
+3. Styles use Tailwind v4 utility classes; base import is `@import "tailwindcss"` in src/index.css (no config file — theme/tokens live in CSS)
 4. Pass data via props; use useState for local UI state only (global state in App.tsx)
 
 **Updating theme colors:**
 - Theme CSS is inline in App.tsx (search for `dark` class application and theme color definitions)
-- Tailwind overrides in tailwind.config.ts (extend colors if adding new palette)
+- Global CSS + viewport/mobile handling (visualViewport, scroll lock, CSS vars) lives in src/index.css
+- Tailwind v4 has no `tailwind.config.ts`; customize via CSS (`@theme` / custom properties in src/index.css)
 
 ## Known Limitations & Gaps
 

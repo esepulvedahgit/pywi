@@ -362,34 +362,15 @@ export default function AIAssistant({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiCommand, isOpen, aiReady, isThinking]);
 
-  // Auto-presentation: when the panel opens with an empty chat and a valid config,
-  // ask the model to introduce itself before the user types anything.
+  // Auto-presentation: show a static greeting (no network call, no tokens) when the
+  // panel opens with an empty chat and a validated config.
   useEffect(() => {
-    if (!isOpen || !aiReady || messages.length > 0 || isThinking || introRequestedRef.current) return;
+    if (!isOpen || !aiReady || messages.length > 0 || introRequestedRef.current) return;
     introRequestedRef.current = true;
-    setIsThinking(true);
-    const token = localStorage.getItem('py_ide_token');
-    fetch('/api/ai/intro', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.reply) {
-          const introMsg: ChatMessage = { role: 'assistant', content: data.reply };
-          cachedIntroRef.current = introMsg; // cache for instant restore on clear
-          setMessages([introMsg]);
-          if (data.usage) setSessionUsage(prev => ({
-            promptTokens:     prev.promptTokens     + (data.usage.promptTokens     ?? 0),
-            completionTokens: prev.completionTokens + (data.usage.completionTokens ?? 0),
-            totalTokens:      prev.totalTokens      + (data.usage.totalTokens      ?? 0),
-          }));
-          if (data.model) setCurrentModel(data.model);
-        }
-      })
-      .catch(() => {/* intro is best-effort; silence errors */})
-      .finally(() => setIsThinking(false));
-  }, [isOpen, aiReady, messages.length]);
+    const introMsg: ChatMessage = { role: 'assistant', content: t('aiIntroGreeting') };
+    cachedIntroRef.current = introMsg; // cache for instant restore on clear
+    setMessages([introMsg]);
+  }, [isOpen, aiReady, messages.length, t]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -575,7 +556,7 @@ export default function AIAssistant({
     const startY = e.clientY;
     const startH = panelRef.current?.offsetHeight ?? 400;
     const onMove = (ev: PointerEvent) => {
-      const newH = Math.max(120, Math.min(window.innerHeight * 0.95, startH + (startY - ev.clientY)));
+      const newH = Math.max(120, Math.min((window.visualViewport?.height ?? window.innerHeight) * 0.95, startH + (startY - ev.clientY)));
       setCustomHeight(newH);
     };
     const cleanup = () => {
@@ -662,13 +643,13 @@ export default function AIAssistant({
   // Background and border colours split so each mode applies borders differently
   const panelBg     = isLight ? 'bg-slate-50'  : isObsidian ? 'bg-black'    : 'bg-slate-950';
   const panelBorder = isLight ? 'border-slate-200' : isObsidian ? 'border-neutral-900' : 'border-slate-700/80';
-  const headerBg    = isLight ? 'bg-white border-b border-slate-200'   : isObsidian ? 'bg-[#080808] border-b border-neutral-900' : 'bg-slate-900 border-b border-slate-800';
+  const headerBg    = isLight ? 'bg-white border-b border-slate-300 shadow-sm'   : isObsidian ? 'bg-[#080808] border-b border-neutral-800' : 'bg-slate-900 border-b border-slate-700';
   const headerText  = isLight ? 'text-slate-700' : 'text-slate-200';
   const contentBg   = isLight ? 'bg-slate-50'  : isObsidian ? 'bg-black'    : 'bg-[#0b0f19]';
   const inputBg     = isLight ? 'bg-white border border-slate-300 text-slate-800 focus:border-indigo-400' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100 focus:border-indigo-500' : 'bg-slate-800/60 border border-slate-700 text-slate-100 focus:border-indigo-500';
-  const inputAreaBg = isLight ? 'bg-white border-t border-slate-200'   : isObsidian ? 'bg-[#080808] border-t border-neutral-900' : 'bg-slate-900 border-t border-slate-800';
+  const inputAreaBg = isLight ? 'bg-white border-t border-slate-300'   : isObsidian ? 'bg-[#080808] border-t border-neutral-800' : 'bg-slate-900 border-t border-slate-700';
   const userBubble  = 'bg-indigo-600 text-white';
-  const aiBubble    = isLight ? 'bg-white border border-slate-200 text-slate-800' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100' : 'bg-slate-800/70 border border-slate-700/50 text-slate-200';
+  const aiBubble    = isLight ? 'bg-white border border-slate-300 text-slate-800' : isObsidian ? 'bg-neutral-900 border border-neutral-800 text-neutral-100' : 'bg-slate-800/70 border border-slate-700/50 text-slate-200';
   const chipStyle   = isLight ? 'bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200' : 'bg-slate-800/60 hover:bg-indigo-950/40 text-slate-400 hover:text-indigo-300 border border-slate-700/50 hover:border-indigo-700/50';
   const iconBtn     = isLight ? 'p-1 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded transition-colors' : 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors';
 
@@ -690,6 +671,13 @@ export default function AIAssistant({
           <h3 className={`font-semibold text-xs tracking-tight uppercase ${headerText}`}>
             {t('aiPanelTitle')}
           </h3>
+          <span
+            className={`h-2 w-2 rounded-full shrink-0 ${aiReady
+              ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]'
+              : 'bg-rose-500'}`}
+            title={aiReady ? t('aiStatusActive') : t('aiStatusInactive')}
+            aria-label={aiReady ? t('aiStatusActive') : t('aiStatusInactive')}
+          />
         </div>
         <div className="flex items-center gap-1">
           {/* Token usage indicator — shows after first message */}
@@ -771,18 +759,32 @@ export default function AIAssistant({
           </div>
         )}
 
-        {messages.map((msg, msgIdx) => (
+        {messages.map((msg, msgIdx) => {
+          const isAssistant = msg.role === 'assistant';
+          // Texto visible: para el asistente, sin los bloques <diff_proposal>.
+          const proseText = isAssistant ? stripDiffProposals(msg.content) : msg.content;
+          const hasProse = proseText.trim().length > 0;
+          const hasProposals = isAssistant && !!msg.proposals?.length;
+
+          // Placeholder de streaming aún vacío (ni prosa ni propuestas): sin burbuja
+          // fantasma encima del indicador "Pensando…".
+          if (isAssistant && !hasProse && !hasProposals) return null;
+
+          return (
           <div key={msgIdx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${
-              msg.role === 'user' ? userBubble + ' rounded-br-sm' : aiBubble + ' rounded-bl-sm'
-            }`}>
-              {msg.role === 'assistant'
-                ? <div className="space-y-1">{renderMarkdown(stripDiffProposals(msg.content), isLight)}</div>
-                : <span className="whitespace-pre-wrap">{msg.content}</span>
-              }
-            </div>
-            {/* Diff proposal cards below assistant messages */}
-            {msg.role === 'assistant' && msg.proposals && msg.proposals.map((proposal, pIdx) => (
+            {/* Burbuja de texto: usuario siempre; asistente solo si hay prosa visible */}
+            {(!isAssistant || hasProse) && (
+              <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed shadow-sm ${
+                msg.role === 'user' ? userBubble + ' rounded-br-sm' : aiBubble + ' rounded-bl-sm'
+              }`}>
+                {isAssistant
+                  ? <div className="space-y-1">{renderMarkdown(proseText, isLight)}</div>
+                  : <span className="whitespace-pre-wrap">{msg.content}</span>
+                }
+              </div>
+            )}
+            {/* Tarjetas de propuesta: siempre que existan, independientes de la prosa */}
+            {hasProposals && msg.proposals!.map((proposal, pIdx) => (
               <div key={pIdx} className="w-full max-w-[92%]">
                 <DiffProposalCard
                   proposal={proposal}
@@ -804,7 +806,8 @@ export default function AIAssistant({
               </div>
             ))}
           </div>
-        ))}
+          );
+        })}
 
         {isThinking && (
           <div className="flex justify-start">
@@ -927,9 +930,11 @@ export default function AIAssistant({
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-          style={customHeight ? { height: `${customHeight}px` } : undefined}
-          className={`fixed bottom-0 left-0 right-0 z-[41] shadow-2xl flex flex-col font-sans select-none border-t ${panelBorder} ${panelBg} ${
-            !customHeight ? (isExpanded ? 'h-[90vh]' : 'h-[50vh] sm:h-[55vh]') : ''
+          style={customHeight
+            ? { height: `${customHeight}px`, bottom: 'var(--keyboard-inset, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
+            : { bottom: 'var(--keyboard-inset, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+          className={`fixed left-0 right-0 z-[41] shadow-2xl flex flex-col font-sans select-none border-t ${panelBorder} ${panelBg} ${
+            !customHeight ? (isExpanded ? 'h-[calc(var(--app-height,100dvh)*0.9)]' : 'h-[calc(var(--app-height,100dvh)*0.5)] sm:h-[calc(var(--app-height,100dvh)*0.55)]') : ''
           }`}
           id="ai-assistant-panel"
           onAnimationComplete={() => messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })}

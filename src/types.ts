@@ -24,7 +24,7 @@ export interface FileItem {
   filename: string;
   filepath: string; // relative to workspace root
   folder?: string;  // subfolder within project (scripts only)
-  type: 'script' | 'dataset'; // script is .py, dataset is csv/txt/etc.
+  type: 'script' | 'dataset' | 'doc'; // script is .py, doc is .md, dataset is csv/txt/etc.
   size: number; // in bytes
   updatedAt: string;
 }
@@ -72,6 +72,16 @@ export interface IdeSelection {
   to: number;
 }
 
+// Compact summary of a previewed dataset, derived from the /preview endpoint,
+// attached to the IDE context so the AI tutor can reason about real data.
+export interface DatasetContext {
+  filename: string;
+  shape: [number, number];        // [rows, cols] as returned by /preview
+  columns: string[];
+  dtypes: Record<string, string>;
+  sample: string[][];             // first ~15 rows (trimmed from head[])
+}
+
 export interface IdeContext {
   code: string;           // full file content (will be line-numbered on server)
   selection?: IdeSelection;
@@ -82,6 +92,7 @@ export interface IdeContext {
     stderr: string;
     exitCode: number | null;
   };
+  datasets?: DatasetContext[]; // datasets the user previewed this session
 }
 
 // A proposed code change from the AI tutor

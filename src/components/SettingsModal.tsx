@@ -429,8 +429,8 @@ export default function SettingsModal({
         header: 'bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-200',
         title: 'text-slate-800 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded transition-colors',
-        tabBar: 'flex border-b border-slate-200 bg-slate-50',
-        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2',
+        tabBar: 'flex border-b border-slate-200 bg-slate-50 overflow-x-auto scrollbar-thin',
+        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
         tabActive: 'text-indigo-600 border-indigo-500',
         tabInactive: 'text-slate-400 border-transparent hover:text-slate-600',
         content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-white',
@@ -451,8 +451,8 @@ export default function SettingsModal({
         header: 'bg-[#080808] px-6 py-4 flex items-center justify-between border-b border-neutral-900',
         title: 'text-neutral-100 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-neutral-900 text-neutral-400 hover:text-neutral-100 rounded transition-colors',
-        tabBar: 'flex border-b border-neutral-900 bg-[#080808]',
-        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2',
+        tabBar: 'flex border-b border-neutral-900 bg-[#080808] overflow-x-auto scrollbar-thin',
+        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
         tabActive: 'text-indigo-400 border-indigo-500',
         tabInactive: 'text-neutral-500 border-transparent hover:text-neutral-300',
         content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-black',
@@ -472,8 +472,8 @@ export default function SettingsModal({
       header: 'bg-slate-900 px-6 py-4 flex items-center justify-between border-b border-slate-800',
       title: 'text-slate-100 font-semibold flex items-center gap-2',
       closeBtn: 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors',
-      tabBar: 'flex border-b border-slate-800 bg-slate-900',
-      tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2',
+      tabBar: 'flex border-b border-slate-800 bg-slate-900 overflow-x-auto scrollbar-thin',
+      tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
       tabActive: 'text-indigo-400 border-indigo-500',
       tabInactive: 'text-slate-500 border-transparent hover:text-slate-300',
       content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-[#0b0f19]',
@@ -886,8 +886,8 @@ export default function SettingsModal({
                 {/* Status indicator — replaces the manual "enable" checkbox */}
                 <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium ${
                   aiConfig.validated
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                    : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/40'
+                    : 'bg-slate-500/10 text-slate-400 border border-slate-500/40'
                 }`}>
                   <span>{aiConfig.validated ? '●' : '○'}</span>
                   <span>{aiConfig.validated ? t('aiStatusActive') : t('aiStatusInactive')}</span>

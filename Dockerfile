@@ -1,60 +1,75 @@
-FROM node:20-bookworm
+# ============================================================
+# Stage 1 — deps: instala node_modules con build-essential
+# (node-pty requiere compilación nativa via node-gyp).
+# Este stage se descarta al final; build-essential NO llega
+# a la imagen runtime.
+# ============================================================
+FROM node:20-bookworm-slim AS deps
 
-# Set the working directory inside the container
 WORKDIR /app
 
-# Install system dependencies, Python 3, pip, and venv
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
-    python3-pip \
-    python3-venv \
     build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+# devDependencies incluidas: vite y esbuild compilan el frontend
+# aquí en build-time; dist/ se copia al stage runtime más abajo.
+RUN npm install
+
+# Copiar código y compilar en build-time para no depender de Vite
+# en el arranque del contenedor (evita ENOENT en .vite-temp en arm64).
+COPY . .
+RUN npm run build
+
+# ============================================================
+# Stage 2 — runtime: imagen final AUTÓNOMA (self-contained).
+# Contiene código + node_modules + .venv. El despliegue usa
+# docker compose con volumen nombrado para /app/data.
+# ============================================================
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+
+# Solo runtime: python para crear el venv, gosu para bajar
+# privilegios. Sin build-essential ni python3-pip.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package configuration files and install Node dependencies
-COPY package*.json ./
-RUN npm install
+# node_modules compilado desde el stage deps.
+# --chown fija ownership en la misma instrucción COPY, evitando
+# el antiguo `RUN chown -R /app` que duplicaba toda la capa.
+COPY --chown=node:node --from=deps /app/node_modules ./node_modules
 
-# Copy Python requirements file and pre-configure the virtual environment
-COPY requirements.txt ./
+# Crear el .venv como usuario node para que sea escribible en
+# runtime (PackageManager instala paquetes desde la UI).
+# Evita un `chown -R .venv` posterior que duplicaría ~2 GB.
+COPY --chown=node:node requirements.txt ./
+RUN chown node:node /app
+USER node
 RUN python3 -m venv .venv && \
     .venv/bin/pip install --no-cache-dir --upgrade pip && \
     .venv/bin/pip install --no-cache-dir -r requirements.txt
+USER root
 
-# Install RKNN runtime for arm64 (Rockchip RK3588S — driver v0.9.8 compatible)
-# Skipped on amd64. RKNN_VER must match the host RKNPU driver version family.
-# Check driver version: sudo cat /sys/kernel/debug/rknpu/version
-# Update RKNN_VER if the driver is upgraded on the host.
-ARG TARGETARCH=amd64
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      RKNN_VER=2.3.0 && \
-      RKNN_BASE="https://github.com/airockchip/rknn-toolkit2/raw/v${RKNN_VER}" && \
-      apt-get update && apt-get install -y --no-install-recommends wget && \
-      rm -rf /var/lib/apt/lists/* && \
-      wget -q "${RKNN_BASE}/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so" \
-           -O /usr/lib/librknnrt.so && \
-      chmod 755 /usr/lib/librknnrt.so && \
-      ldconfig && \
-      wget -q "${RKNN_BASE}/rknn_toolkit_lite2/packages/arm64/rknn_toolkit_lite2-${RKNN_VER}-cp311-cp311-linux_aarch64.whl" \
-           -O /tmp/rknnlite.whl && \
-      .venv/bin/pip install --no-cache-dir /tmp/rknnlite.whl && \
-      rm /tmp/rknnlite.whl; \
-    fi
+# Código fuente de la app — propiedad de node en una sola capa.
+# .dockerignore excluye node_modules/.venv/dist/.claude/docs
+# para no pisar lo ya construido arriba y reducir el contexto.
+COPY --chown=node:node . .
+# dist/ compilado en el stage deps (no está en .dockerignore de host).
+COPY --chown=node:node --from=deps /app/dist ./dist
 
-# Copy the rest of the application source code
-COPY . .
-
-# node:20-bookworm already ships a 'node' user with UID/GID 1000 — reuse it.
-RUN chown -R node:node /app
-
-# Entrypoint runs as root, fixes bind-mount ownership, then drops to node user.
-# This solves EACCES when ./data is created on the host by root.
+# Entrypoint corre como root, corrige ownership de data/,
+# luego baja a usuario node vía gosu.
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Expose the application port
 EXPOSE 3000
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["sh", "-c", "npm run build && npm start"]
+# dist/ ya compilado en el stage deps — arrancar directamente el servidor.
+CMD ["npm", "start"]

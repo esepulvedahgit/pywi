@@ -2,6 +2,7 @@ node_modules
 .venv
 dist
 build
+data
 .git
 .gitignore
 .env
@@ -10,3 +11,7 @@ build
 Dockerfile
 docker-compose.yml
 README.md
+# Archivos de desarrollo que no forman parte de la imagen
+.claude
+docs
+*.md

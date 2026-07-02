@@ -26,8 +26,14 @@ import { EditorView, keymap } from '@codemirror/view';
 import { indentUnit } from '@codemirror/language';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
+import { markdown } from '@codemirror/lang-markdown';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
-import { User, Project, FileItem, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DiffProposal } from './types';
+/** Choose a CodeMirror language extension based on file extension. */
+const langFor = (filename: string) => filename.endsWith('.md') ? markdown() : python();
+
+import { User, Project, FileItem, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DatasetContext, DiffProposal } from './types';
 import { LanguageProvider, useLang, useT } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
@@ -57,7 +63,8 @@ function AppContent() {
     const saved = localStorage.getItem('py_ide_user');
     return saved ? JSON.parse(saved) : null;
   });
-  const [isLocked, setIsLocked] = useState(false);
+  // Persistimos el bloqueo para que sobreviva a un refresco del navegador
+  const [isLocked, setIsLocked] = useState(() => localStorage.getItem('py_ide_locked') === '1');
   const [adminExists, setAdminExists] = useState<boolean>(true);
 
   // Publica el viewport VISIBLE como variables CSS para que el root y los paneles fijos
@@ -153,6 +160,7 @@ function AppContent() {
   const [currentFile, setCurrentFile] = useState<FileItem | null>(null);
   const [code, setCode] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+  const [mdView, setMdView] = useState<'edit' | 'preview'>('edit');
 
   // Execution console state
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -169,6 +177,8 @@ function AppContent() {
   const [previewData, setPreviewData] = useState<any | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // Cache of dataset schemas previewed this session, keyed by filename — fed to the AI tutor
+  const datasetPreviewsRef = useRef<Map<string, DatasetContext>>(new Map());
 
   // Environment restoration state
   const [envRestore, setEnvRestore] = useState<EnvRestoreState | null>(null);
@@ -284,20 +294,32 @@ function AppContent() {
     }
   }, [currentProject]);
 
-  // Fetch file content when active file changes
+  // Fetch file content when active file changes; reset markdown view to edit mode
   useEffect(() => {
     if (currentProject && currentFile && user) {
       fetchFileContent(currentProject.id, currentFile.id);
     }
+    setMdView('edit');
   }, [currentFile]);
 
   // Bloqueo de sesión por inactividad (10 min)
   useEffect(() => {
     if (!user || isLocked) return;
 
+    const lockSession = () => {
+      // Invalida el token en el servidor: el token retenido no podrá reutilizarse
+      // mientras esté bloqueado (aunque falle la red, el candado UI se activa igual).
+      fetch('/api/auth/lock', { method: 'POST', headers: authHeaders() }).catch(() => {});
+      localStorage.setItem('py_ide_locked', '1');
+      // Defensa en profundidad: el token queda invalidado en servidor (sessionLockedAt);
+      // el desbloqueo re-autentica con email+contraseña, no con el token guardado.
+      localStorage.removeItem('py_ide_token');
+      setIsLocked(true);
+    };
+
     const resetTimer = () => {
       if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
-      inactivityTimer.current = setTimeout(() => setIsLocked(true), INACTIVITY_LIMIT_MS);
+      inactivityTimer.current = setTimeout(lockSession, INACTIVITY_LIMIT_MS);
     };
 
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'wheel'] as const;
@@ -315,7 +337,8 @@ function AppContent() {
     if (!user) return;
     try {
       const res = await fetch(`/api/users/${user.id}/projects`, { headers: authHeaders() });
-      if (res.status === 401) { handleLogout(); return; }
+      // Estando bloqueado el token está invalidado; un 401 es esperado, no cerramos sesión
+      if (res.status === 401 || res.status === 403) { if (isLocked) return; handleLogout(); return; }
       const data = await res.json();
       if (Array.isArray(data)) {
         setProjects(data);
@@ -333,6 +356,8 @@ function AppContent() {
 
   // API Call: Fetch files for active project
   const fetchFiles = async (projectId: string) => {
+    // Reset the AI dataset cache — schemas are project-scoped and must not leak across projects
+    datasetPreviewsRef.current.clear();
     try {
       const res = await fetch(`/api/projects/${projectId}/files`, { headers: authHeaders() });
       const data = await res.json();
@@ -409,9 +434,12 @@ function AppContent() {
           setCurrentFile(null);
           setCode('');
         }
+      } else {
+        const data = await res.json().catch(() => ({})) as any;
+        alert(data.error || 'Error al eliminar proyecto');
       }
-    } catch (err) {
-      console.error('Error deleting project:', err);
+    } catch (err: any) {
+      alert('Error al eliminar proyecto: ' + err.message);
     }
   };
 
@@ -443,14 +471,18 @@ function AppContent() {
         body: JSON.stringify({
           userId: user.id,
           filename,
-          content: filename.endsWith('.py') ? `# Script: ${filename}\nprint("Hola ${filename}!")` : '',
-          type: filename.endsWith('.py') ? 'script' : 'dataset'
+          content: filename.endsWith('.py')
+            ? `# Script: ${filename}\nprint("Hola ${filename}!")`
+            : filename.endsWith('.md')
+              ? `# ${filename.replace(/\.md$/, '')}\n`
+              : '',
+          type: filename.endsWith('.py') ? 'script' : filename.endsWith('.md') ? 'doc' : 'dataset'
         })
       });
       const data = await res.json();
       if (res.ok) {
         setFiles(prev => [...prev, data]);
-        if (data.type === 'script') {
+        if (data.type === 'script' || data.type === 'doc') {
           setCurrentFile(data);
         }
       } else {
@@ -467,19 +499,20 @@ function AppContent() {
     try {
       const res = await fetch(`/api/projects/${currentProject.id}/files/${fileId}`, {
         method: 'DELETE',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId: user.id })
+        headers: authHeaders(),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         alert(data.error || `Error al eliminar archivo (${res.status})`);
         return;
       }
+      const deleted = files.find(f => f.id === fileId);
+      if (deleted) datasetPreviewsRef.current.delete(deleted.filename);
       const remaining = files.filter(f => f.id !== fileId);
       setFiles(remaining);
       if (currentFile?.id === fileId) {
-        const scripts = remaining.filter(f => f.type === 'script');
-        setCurrentFile(scripts.length > 0 ? scripts[0] : remaining[0] || null);
+        const editables = remaining.filter(f => f.type === 'script' || f.type === 'doc');
+        setCurrentFile(editables.length > 0 ? editables[0] : null);
       }
     } catch (err: any) {
       alert(`Error de conexión al eliminar: ${err.message}`);
@@ -570,8 +603,12 @@ function AppContent() {
         body: JSON.stringify({
           userId: user.id,
           filename,
-          content: `# ${filename}\n`,
-          type: 'script',
+          content: filename.endsWith('.py')
+            ? `# Script: ${filename}\nprint("Hola ${filename}!")`
+            : filename.endsWith('.md')
+              ? `# ${filename.replace(/\.md$/, '')}\n`
+              : '',
+          type: filename.endsWith('.py') ? 'script' : filename.endsWith('.md') ? 'doc' : 'dataset',
           folder
         })
       });
@@ -641,29 +678,28 @@ function AppContent() {
   const handleDeleteFolder = async (folderPath: string) => {
     if (!user || !currentProject) return;
     try {
-      const res = await fetch(`/api/projects/${currentProject.id}/folders`, {
-        method: 'DELETE',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ userId: user.id, folderPath })
-      });
+      const res = await fetch(
+        `/api/projects/${currentProject.id}/folders?path=${encodeURIComponent(folderPath)}`,
+        { method: 'DELETE', headers: authHeaders() }
+      );
       if (res.ok) {
         setFolders(prev => prev.filter(f => f !== folderPath && !f.startsWith(folderPath + '/')));
         setFiles(prev => {
           const removed = prev.filter(f => f.folder === folderPath || f.folder?.startsWith(folderPath + '/'));
           if (currentFile && removed.some(f => f.id === currentFile.id)) {
             const remaining = prev.filter(f => f.folder !== folderPath && !f.folder?.startsWith(folderPath + '/'));
-            const nextScript = remaining.find(f => f.type === 'script');
-            setCurrentFile(nextScript ?? null);
-            if (!nextScript) setCode('');
+            const nextEditable = remaining.find(f => f.type === 'script' || f.type === 'doc');
+            setCurrentFile(nextEditable ?? null);
+            if (!nextEditable) setCode('');
           }
           return prev.filter(f => f.folder !== folderPath && !f.folder?.startsWith(folderPath + '/'));
         });
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({})) as any;
         alert(data.error || tl('errorDeleteFolder'));
       }
-    } catch (err) {
-      console.error('Error deleting folder:', err);
+    } catch (err: any) {
+      alert(tl('errorDeleteFolder') + ': ' + err.message);
     }
   };
 
@@ -716,6 +752,16 @@ function AppContent() {
         setPreviewError(data.error ?? tl('dataPreviewError'));
       } else {
         setPreviewData(data);
+        // Cache a compact schema so the AI tutor can reason about this dataset
+        if (Array.isArray(data?.columns)) {
+          datasetPreviewsRef.current.set(file.filename, {
+            filename: file.filename,
+            shape: Array.isArray(data.shape) ? data.shape : [0, data.columns.length],
+            columns: data.columns,
+            dtypes: data.dtypes ?? {},
+            sample: Array.isArray(data.head) ? data.head.slice(0, 15) : [],
+          });
+        }
       }
     } catch (err: any) {
       setPreviewError(err.message ?? tl('dataPreviewError'));
@@ -742,19 +788,24 @@ function AppContent() {
   // Strip ANSI escape sequences (SGR + cursor-movement) from PTY output before sending to AI.
   const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 
-  // Extract the last Python traceback from the PTY terminal buffer for the AI tutor.
-  const extractTraceback = (buffer: string): string => {
+  // Extract the last Python error from the PTY terminal buffer for the AI tutor.
+  // Runtime exceptions carry a "Traceback (...)" header; compile-time errors
+  // (SyntaxError/IndentationError/TabError) do NOT, so we match their block too.
+  const extractError = (raw: string): string => {
+    const buffer = stripAnsi(raw);
     const idx = buffer.lastIndexOf('Traceback (most recent call last)');
-    return idx !== -1 ? stripAnsi(buffer.slice(idx)) : '';
+    if (idx !== -1) return buffer.slice(idx);
+    const m = buffer.match(/(^|\n)(\s*File ".*?", line \d+[\s\S]*?(?:SyntaxError|IndentationError|TabError):.*)/);
+    return m ? m[2] : '';
   };
 
   // Convert an ExitResult (from XtermConsole) to the ExecutionResult shape the AI tutor expects.
-  // Defined once to avoid running stripAnsi/extractTraceback twice per render.
+  // Defined once to avoid running stripAnsi/extractError twice per render.
   const aiExecutionResult = lastExitResult
     ? {
         success: lastExitResult.success,
         stdout: stripAnsi(lastExitResult.ptyBuffer),
-        stderr: extractTraceback(lastExitResult.ptyBuffer),
+        stderr: extractError(lastExitResult.ptyBuffer),
         exitCode: lastExitResult.exitCode,
         duration: lastExitResult.duration,
         timestamp: new Date().toISOString(),
@@ -789,6 +840,7 @@ function AppContent() {
       execution: aiExecutionResult
         ? { stdout: aiExecutionResult.stdout, stderr: aiExecutionResult.stderr, exitCode: aiExecutionResult.exitCode }
         : undefined,
+      datasets: datasetPreviewsRef.current.size ? Array.from(datasetPreviewsRef.current.values()) : undefined,
     };
   };
 
@@ -830,16 +882,20 @@ function AppContent() {
   };
 
   // Log of session switcher
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Invalida el token en el servidor antes de borrarlo del cliente (logout real).
+    // Si falla la red, cerramos sesión localmente de todas formas.
+    try { await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }); } catch { /* noop */ }
     setUser(null);
     localStorage.removeItem('py_ide_user');
     localStorage.removeItem('py_ide_last_proj');
     localStorage.removeItem('py_ide_token');
+    localStorage.removeItem('py_ide_locked');
   };
 
   // AI ready: config must have a key, a model, and a validated connection.
   // 'enabled' is now derived from validated on the server side — no manual toggle.
-  const aiReady = aiConfig.hasKey && !!aiConfig.model && aiConfig.validated;
+  const aiReady = aiConfig.hasKey && !!aiConfig.model && aiConfig.enabled;
 
   const handleAiButtonClick = () => {
     if (aiReady) {
@@ -866,61 +922,64 @@ function AppContent() {
         return {
           wrapper: 'theme-vibrant-dark h-screen w-full bg-slate-950 flex font-sans overflow-hidden text-slate-100',
           workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-slate-900 overflow-hidden',
-          header: 'h-14 bg-slate-950 border-b border-slate-800/80 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-10 text-slate-100',
+          header: 'h-14 bg-slate-950 border-b border-slate-700 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-20 text-slate-100',
           headerTitle: 'text-slate-100',
-          headerSub: 'text-slate-450 uppercase font-bold tracking-wider',
-          projectBadge: 'bg-slate-900 border border-slate-800 text-slate-350',
+          headerSub: 'text-slate-400 uppercase font-bold tracking-wider',
+          projectBadge: 'bg-slate-900 border border-slate-700 text-slate-300',
           projectSubtext: 'text-slate-400',
-          fileNameText: 'font-mono text-slate-250 truncate',
-          btnSec: 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:text-white',
-          presetPanel: 'bg-slate-950 border-b border-slate-850 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
+          fileNameText: 'font-mono text-slate-200 truncate',
+          btnSec: 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700 hover:text-white',
+          presetPanel: 'bg-slate-950 border-b border-slate-800 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
           presetTitle: 'text-slate-400',
-          presetBtn: 'bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-indigo-400 border-slate-800/80',
+          presetBtn: 'bg-slate-900 hover:bg-indigo-950/40 text-slate-300 hover:text-indigo-400 border-slate-700',
           editorCanvas: 'flex-1 overflow-hidden relative bg-[#090d16] flex flex-col p-2 sm:p-4',
-          indicatorBox: 'bg-slate-950/95 border border-slate-850',
-          userAvatar: 'bg-slate-800 border border-slate-705 text-slate-200'
+          indicatorBox: 'bg-slate-950/95 border border-slate-800',
+          userAvatar: 'bg-slate-800 border border-slate-700 text-slate-200'
         };
       case 'midnight-obsidian':
         return {
           wrapper: 'theme-obsidian h-screen w-full bg-black flex font-sans overflow-hidden text-neutral-100',
           workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-[#080808] overflow-hidden',
-          header: 'h-14 bg-black border-b border-neutral-900 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-10 text-neutral-100',
+          header: 'h-14 bg-black border-b border-neutral-800 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-none z-20 text-neutral-100',
           headerTitle: 'text-neutral-100',
           headerSub: 'text-neutral-500 uppercase font-bold tracking-wider',
-          projectBadge: 'bg-black border border-neutral-900 text-neutral-400',
+          projectBadge: 'bg-black border border-neutral-800 text-neutral-400',
           projectSubtext: 'text-neutral-500',
           fileNameText: 'font-mono text-neutral-200 truncate',
-          btnSec: 'bg-neutral-955 hover:bg-neutral-900 text-neutral-300 border-neutral-900 hover:text-white',
-          presetPanel: 'bg-neutral-955 border-b border-neutral-900 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
+          btnSec: 'bg-neutral-950 hover:bg-neutral-900 text-neutral-300 border-neutral-800 hover:text-white',
+          presetPanel: 'bg-neutral-950 border-b border-neutral-900 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
           presetTitle: 'text-neutral-400',
-          presetBtn: 'bg-neutral-955 hover:bg-neutral-900 text-neutral-300 hover:text-white border-neutral-900',
+          presetBtn: 'bg-neutral-950 hover:bg-neutral-900 text-neutral-300 hover:text-white border-neutral-900',
           editorCanvas: 'flex-1 overflow-hidden relative bg-black flex flex-col p-2 sm:p-4',
           indicatorBox: 'bg-black/95 border border-neutral-900',
-          userAvatar: 'bg-neutral-900 border border-neutral-800 text-neutral-355'
+          userAvatar: 'bg-neutral-900 border border-neutral-800 text-neutral-300'
         };
       case 'light':
       default:
         return {
           wrapper: 'theme-light h-screen w-full bg-slate-100 flex font-sans overflow-hidden text-slate-900',
-          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-white overflow-hidden',
-          header: 'h-14 bg-white border-b border-slate-300 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-sm z-10 text-slate-900',
+          workspace: 'flex-1 flex flex-col min-w-0 relative h-full bg-slate-50 overflow-hidden',
+          header: 'h-14 bg-white border-b border-slate-300 px-3 sm:px-6 flex items-center justify-between select-none shrink-0 shadow-sm z-20 text-slate-900',
           headerTitle: 'text-slate-900',
           headerSub: 'text-[9px] text-slate-500 font-bold uppercase tracking-wider',
-          projectBadge: 'bg-slate-100 border border-slate-300 text-slate-700',
+          projectBadge: 'bg-white border border-slate-300 text-slate-700 shadow-xs',
           projectSubtext: 'text-slate-600',
           fileNameText: 'font-mono text-slate-800 truncate',
-          btnSec: 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 hover:text-slate-900 shadow-sm',
+          btnSec: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 hover:text-slate-900 shadow-sm',
           presetPanel: 'bg-white border-b border-slate-300 p-2 px-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3 select-none shrink-0',
           presetTitle: 'text-xs text-slate-600 font-bold uppercase tracking-wider',
-          presetBtn: 'bg-slate-100 hover:bg-indigo-100 text-slate-700 hover:text-indigo-700 border border-slate-300 shadow-sm',
-          editorCanvas: 'flex-1 overflow-hidden relative bg-white flex flex-col p-2 sm:p-4',
-          indicatorBox: 'bg-slate-100 border border-slate-300 text-slate-600',
+          presetBtn: 'bg-slate-50 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-300 shadow-xs',
+          editorCanvas: 'flex-1 overflow-hidden relative bg-slate-50 flex flex-col p-2 sm:p-4',
+          indicatorBox: 'bg-white border border-slate-300 text-slate-600 shadow-xs',
           userAvatar: 'bg-indigo-100 border border-indigo-300 text-indigo-800'
         };
     }
   };
 
   const handleLoginSuccess = (data: any) => {
+    // Limpia un candado obsoleto: un login fresco no debe heredar el bloqueo previo.
+    localStorage.removeItem('py_ide_locked');
+    setIsLocked(false);
     setUser(data);
     setPackageUpdates({ outdated: [], lastChecked: null, dismissed: false });
     if (data.restoreNeeded) {
@@ -964,7 +1023,7 @@ function AppContent() {
         onDeleteProject={handleDeleteProject}
         onSelectFile={(id) => {
           const found = files.find(f => f.id === id);
-          if (found && found.type === 'script') {
+          if (found && (found.type === 'script' || found.type === 'doc')) {
             setCurrentFile(found);
           }
         }}
@@ -1047,14 +1106,32 @@ function AppContent() {
               <span className={`truncate ${t.projectSubtext} font-medium max-w-[60px] lg:max-w-[120px]`}>
                 {currentProject ? currentProject.name : tl('noProjectLabel')}
               </span>
-              <span className="text-slate-300 shrink-0">/</span>
+              <span className="text-slate-400 shrink-0">/</span>
               <span className={`truncate max-w-[70px] lg:max-w-[120px] ${t.fileNameText}`}>
                 {currentFile ? currentFile.filename : tl('noFileLabel')}
               </span>
             </div>
 
+            {/* Markdown edit/preview toggle — only when a .md file is open */}
+            {currentFile?.filename.endsWith('.md') && (
+              <div className={`hidden lg:flex items-center gap-0.5 ml-1 rounded p-0.5 shrink-0 ${activeTheme === 'light' ? 'bg-slate-200' : 'bg-slate-800'}`}>
+                <button
+                  onClick={() => setMdView('edit')}
+                  className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${mdView === 'edit' ? `${activeTheme === 'light' ? 'bg-white' : 'bg-slate-700'} text-indigo-600 shadow-sm` : `text-slate-500 ${activeTheme === 'light' ? 'hover:text-slate-700' : 'hover:text-slate-300'}`}`}
+                >
+                  Editar
+                </button>
+                <button
+                  onClick={() => setMdView('preview')}
+                  className={`px-2 py-0.5 text-[11px] font-medium rounded transition-colors ${mdView === 'preview' ? `${activeTheme === 'light' ? 'bg-white' : 'bg-slate-700'} text-indigo-600 shadow-sm` : `text-slate-500 ${activeTheme === 'light' ? 'hover:text-slate-700' : 'hover:text-slate-300'}`}`}
+                >
+                  Vista
+                </button>
+              </div>
+            )}
+
             {/* Mobile Compact File badge */}
-            <div className="flex items-center gap-1.5 lg:hidden min-w-0 bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/80 rounded px-2 py-0.5 select-none shrink">
+            <div className={`flex items-center gap-1.5 lg:hidden min-w-0 rounded px-2 py-0.5 select-none shrink border ${activeTheme === 'light' ? 'bg-white border-slate-300' : 'bg-slate-900/60 border-slate-700'}`}>
               <FileCode className="h-3 w-3 text-indigo-500 shrink-0" />
               <span className={`font-mono text-[11px] font-bold truncate max-w-[80px] sm:max-w-[150px] ${
                 activeTheme === 'light' ? 'text-slate-800' : 'text-slate-200'
@@ -1062,6 +1139,13 @@ function AppContent() {
                 {currentFile ? currentFile.filename : tl('noFileLabel')}
               </span>
             </div>
+            {/* Mobile md toggle */}
+            {currentFile?.filename.endsWith('.md') && (
+              <div className={`flex lg:hidden items-center gap-0.5 rounded p-0.5 shrink-0 ${activeTheme === 'light' ? 'bg-slate-200' : 'bg-slate-800'}`}>
+                <button onClick={() => setMdView('edit')} className={`px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors ${mdView === 'edit' ? `${activeTheme === 'light' ? 'bg-white' : 'bg-slate-700'} text-indigo-600 shadow-sm` : 'text-slate-500'}`}>Editar</button>
+                <button onClick={() => setMdView('preview')} className={`px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors ${mdView === 'preview' ? `${activeTheme === 'light' ? 'bg-white' : 'bg-slate-700'} text-indigo-600 shadow-sm` : 'text-slate-500'}`}>Vista</button>
+              </div>
+            )}
           </div>
 
           {/* Compile, Run & responsive options dropdown */}
@@ -1069,7 +1153,7 @@ function AppContent() {
             {/* Desktop Only Service Status */}
             <div className="flex items-center gap-1.5 text-xs text-slate-500 mr-1 hidden xl:flex shrink-0">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-              <span className="font-medium text-slate-605">{tl('serviceActive')}</span>
+              <span className="font-medium text-slate-600">{tl('serviceActive')}</span>
             </div>
 
             {/* Desktop Only raw download button */}
@@ -1084,27 +1168,29 @@ function AppContent() {
               </button>
             )}
 
-            {/* Beautiful Run button: highly responsive (compact text on mobile, full label on tablets/desktops) */}
-            <button
-              onClick={handleRunCode}
-              disabled={isRunning || !currentFile}
-              className="flex items-center gap-1.5 sm:gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 shrink-0"
-              id="btn-run-python-code"
-            >
-              {isRunning ? (
-                <>
-                  <div className="h-3 w-3 sm:h-3.5 sm:w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
-                  <span className="hidden xs:inline">{tl('running')}</span>
-                  <span className="xs:hidden">...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current shrink-0" />
-                  <span>{tl('run')}</span>
-                  <span className="hidden xs:inline">{tl('runScript')}</span>
-                </>
-              )}
-            </button>
+            {/* Beautiful Run button: only shown for .py scripts */}
+            {(!currentFile || currentFile.filename.endsWith('.py')) && (
+              <button
+                onClick={handleRunCode}
+                disabled={isRunning || !currentFile}
+                className="flex items-center gap-1.5 sm:gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 shrink-0"
+                id="btn-run-python-code"
+              >
+                {isRunning ? (
+                  <>
+                    <div className="h-3 w-3 sm:h-3.5 sm:w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span className="hidden xs:inline">{tl('running')}</span>
+                    <span className="xs:hidden">...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current shrink-0" />
+                    <span>{tl('run')}</span>
+                    <span className="hidden xs:inline">{tl('runScript')}</span>
+                  </>
+                )}
+              </button>
+            )}
 
             {/* Stop button: only visible while a script is running */}
             {isRunning && (
@@ -1133,7 +1219,7 @@ function AppContent() {
                 title={tl('themeTooltip')}
                 id="btn-trigger-theme-selector-desktop"
               >
-                <Palette className="h-3.5 w-3.5 text-indigo-505 shrink-0" />
+                <Palette className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
                 <span className="hidden lg:inline">{tl('themeBtn')}</span>
               </button>
 
@@ -1144,13 +1230,13 @@ function AppContent() {
                     className="fixed inset-0 z-30" 
                     id="theme-menu-backdrop-desktop" 
                   />
-                  <div 
+                  <div
                     className={`absolute right-0 mt-2 w-52 rounded-xl border p-2 shadow-xl z-40 animate-fadeIn ${
                       activeTheme === 'light'
-                        ? 'bg-white border-slate-200 text-slate-850'
+                        ? 'bg-white border-slate-300 text-slate-800'
                         : activeTheme === 'vibrant-dark'
-                        ? 'bg-slate-950 border-slate-850 text-slate-100'
-                        : 'bg-black border-neutral-850 text-neutral-100'
+                        ? 'bg-slate-950 border-slate-800 text-slate-100'
+                        : 'bg-black border-neutral-800 text-neutral-100'
                     }`}
                     id="theme-selection-popover-desktop"
                   >
@@ -1164,9 +1250,9 @@ function AppContent() {
                           setShowThemeMenu(false);
                         }}
                         className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${
-                          activeTheme === 'light' 
-                            ? 'bg-indigo-50/70 text-indigo-700' 
-                            : 'hover:bg-slate-100 text-slate-700 dark:hover:bg-slate-900 text-slate-300'
+                          activeTheme === 'light'
+                            ? 'bg-indigo-50/70 text-indigo-700'
+                            : 'hover:bg-slate-800 text-slate-300'
                         }`}
                         id="theme-opt-light"
                       >
@@ -1183,14 +1269,14 @@ function AppContent() {
                           setShowThemeMenu(false);
                         }}
                         className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${
-                          activeTheme === 'vibrant-dark' 
-                            ? 'bg-indigo-950/40 text-indigo-300' 
-                            : 'hover:bg-slate-100 text-slate-700 dark:hover:bg-[#131b2e] text-slate-300'
+                          activeTheme === 'vibrant-dark'
+                            ? 'bg-indigo-950/40 text-indigo-300'
+                            : activeTheme === 'light' ? 'hover:bg-slate-100 text-slate-700' : 'hover:bg-neutral-900 text-neutral-300'
                         }`}
                         id="theme-opt-vibrant-dark"
                       >
                         <div className="flex items-center gap-2">
-                          <div className="w-3.5 h-3.5 rounded-full border border-indigo-500/20 bg-slate-900" />
+                          <div className="w-3.5 h-3.5 rounded-full border border-indigo-500/20 bg-slate-600" />
                           <span>Vibrant Slate (Dark)</span>
                         </div>
                         {activeTheme === 'vibrant-dark' && <div className="w-1.5 h-1.5 rounded-full bg-indigo-400" />}
@@ -1202,9 +1288,9 @@ function AppContent() {
                           setShowThemeMenu(false);
                         }}
                         className={`w-full text-left px-2.5 py-2 rounded-lg text-xs font-bold flex items-center justify-between transition-colors ${
-                          activeTheme === 'midnight-obsidian' 
-                            ? 'bg-neutral-900 text-white border-l border-neutral-400' 
-                            : 'hover:bg-slate-100 text-slate-700 dark:hover:bg-neutral-900 text-slate-305'
+                          activeTheme === 'midnight-obsidian'
+                            ? 'bg-neutral-900 text-white border-l border-neutral-400'
+                            : activeTheme === 'light' ? 'hover:bg-slate-100 text-slate-700' : 'hover:bg-slate-800 text-slate-300'
                         }`}
                         id="theme-opt-midnight-obsidian"
                       >
@@ -1265,10 +1351,10 @@ function AppContent() {
                   <div 
                     className={`absolute right-0 mt-2 w-56 rounded-xl border p-3 shadow-xl z-40 animate-fadeIn ${
                       activeTheme === 'light'
-                        ? 'bg-white border-slate-200 text-slate-850'
+                        ? 'bg-white border-slate-300 text-slate-800'
                         : activeTheme === 'vibrant-dark'
-                        ? 'bg-slate-950 border-slate-850 text-slate-105'
-                        : 'bg-black border-neutral-850 text-neutral-100'
+                        ? 'bg-slate-950 border-slate-800 text-slate-100'
+                        : 'bg-black border-neutral-800 text-neutral-100'
                     }`}
                     id="mobile-options-popover"
                   >
@@ -1572,12 +1658,17 @@ function AppContent() {
                     </div>
                   </div>
                 )}
+                {currentFile?.filename.endsWith('.md') && mdView === 'preview' ? (
+                  <div className={`markdown-preview flex-1 overflow-y-auto p-6 h-full${activeTheme === 'light' ? ' markdown-light' : ' markdown-dark'}`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{code}</ReactMarkdown>
+                  </div>
+                ) : (
                 <CodeMirror
                   value={code}
                   height="100%"
-                  theme={activeTheme === 'light' ? 'light' : 'dark'}
+                  theme="dark"
                   extensions={[
-                    python(),
+                    langFor(currentFile?.filename ?? ''),
                     EditorView.lineWrapping,
                     indentUnit.of(' '.repeat(userSettings.indentation)),
                     keymap.of([{
@@ -1618,9 +1709,16 @@ function AppContent() {
                   onCreateEditor={(view) => {
                     editorRef.current = view;
                   }}
-                  className="h-full rounded-xl overflow-hidden shadow-lg font-mono text-[13px] sm:text-[14px] border border-slate-800/80"
+                  className={`h-full rounded-xl overflow-hidden font-mono text-[13px] sm:text-[14px] border ${
+                    activeTheme === 'light'
+                      ? 'border-slate-300 shadow-md'
+                      : activeTheme === 'vibrant-dark'
+                      ? 'border-slate-700/60 shadow-lg'
+                      : 'border-neutral-800 shadow-lg'
+                  }`}
                   id="react-codemirror-editor"
                 />
+                )}
               </div>
             </div>
           ) : (
@@ -1734,7 +1832,11 @@ function AppContent() {
           <LockScreen
             user={user}
             activeTheme={activeTheme}
-            onUnlock={() => setIsLocked(false)}
+            onUnlock={() => {
+              localStorage.removeItem('py_ide_locked');
+              setIsLocked(false);
+              fetchProjects(); // el token cambió tras re-autenticar; recargar datos
+            }}
             onLogout={handleLogout}
           />
         )}

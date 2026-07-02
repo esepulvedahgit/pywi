@@ -17,15 +17,14 @@ const BASE_DARK_ANSI = {
 };
 
 const XTERM_THEMES = {
+  // Light IDE theme still gets a dark terminal (VS Code-style: dark terminal floats in a light editor).
+  // This keeps the already-dark panel chrome (slate-900/950) cohesive with its contents.
   light: {
-    background: '#f8fafc',
-    foreground: '#0f172a',
+    ...BASE_DARK_ANSI,
+    background: '#0b0f19',
+    foreground: '#e2e8f0',
     cursor: '#6366f1',
-    cursorAccent: '#f8fafc',
-    black: '#1e293b',   red: '#dc2626',   green: '#16a34a',   yellow: '#ca8a04',
-    blue: '#2563eb',    magenta: '#9333ea', cyan: '#0891b2',  white: '#f1f5f9',
-    brightBlack: '#475569', brightRed: '#ef4444', brightGreen: '#22c55e', brightYellow: '#eab308',
-    brightBlue: '#60a5fa',  brightMagenta: '#c084fc', brightCyan: '#22d3ee', brightWhite: '#ffffff',
+    cursorAccent: '#0b0f19',
   },
   'vibrant-dark': {
     ...BASE_DARK_ANSI,
@@ -96,7 +95,8 @@ export default function XtermConsole({
   // ── Run state ────────────────────────────────────────────────────────────
   const [isRunning, setIsRunning] = useState(false);
   const [exitResult, setExitResult] = useState<ExitResult | null>(null);
-  // hasTraceback is derived from exitResult in render — no extra useState needed
+  const [hintDismissed, setHintDismissed] = useState(false);
+  // hasError is derived from exitResult in render — no extra useState needed
 
   // ── xterm refs ───────────────────────────────────────────────────────────
   const termRef = useRef<HTMLDivElement>(null);
@@ -107,9 +107,9 @@ export default function XtermConsole({
   // Joined and tail-sliced once at run exit (consumed by the AI tutor).
   const ptyChunksRef = useRef<string[]>([]);
 
-  // ── Initialise xterm once the panel div mounts ───────────────────────────
+  // ── Initialise xterm when the panel opens (the div only exists while isOpen) ─
   useEffect(() => {
-    if (!termRef.current) return;
+    if (!isOpen || !termRef.current) return;
 
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
@@ -141,7 +141,7 @@ export default function XtermConsole({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, []); // only once
+  }, [isOpen]); // re-init each time the panel opens (div only exists while isOpen)
 
   // ── Update xterm theme when activeTheme changes ───────────────────────────
   useEffect(() => {
@@ -180,6 +180,7 @@ export default function XtermConsole({
   const resetRunState = () => {
     ptyChunksRef.current = [];
     setExitResult(null);
+    setHintDismissed(false);
     setViewMode('console');
     const term = xtermRef.current;
     if (term) {
@@ -230,7 +231,9 @@ export default function XtermConsole({
           xtermRef.current?.write(data);
           ptyChunksRef.current.push(data);
         } else if (msg.type === 'denied') {
-          xtermRef.current?.writeln(`\r\n\x1b[31m⛔ ${msg.message ?? 'Acceso denegado'}\x1b[0m`);
+          // Normalizar saltos de línea a \r\n: xterm deja las líneas en cascada con \n crudo.
+          const clean = String(msg.message ?? 'Acceso denegado').replace(/\r?\n/g, '\r\n');
+          xtermRef.current?.writeln(`\r\n\x1b[31m⛔ ${clean}\x1b[0m`);
           stopRunning();
         } else if (msg.type === 'exit') {
           // Join chunks once and tail-slice to cap size
@@ -335,8 +338,15 @@ export default function XtermConsole({
 
   if (!isOpen) return null;
 
-  // Derived — no state needed
-  const hasTraceback = !!exitResult?.ptyBuffer.includes('Traceback (most recent call last)');
+  // Derived — no state needed.
+  // Un SyntaxError de script no imprime "Traceback (...)", así que también
+  // detectamos errores de compilación por su firma al inicio de línea.
+  // Se limpian los códigos ANSI antes de casar (Python 3.13+ colorea el traceback en un TTY).
+  const errorText = exitResult ? exitResult.ptyBuffer.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '') : '';
+  const hasError = !!exitResult && !exitResult.success && (
+    errorText.includes('Traceback (most recent call last)') ||
+    /(^|\n)\s*(SyntaxError|IndentationError|TabError):/.test(errorText)
+  );
 
   const heightStyle = customHeight
     ? { height: `${customHeight}px`, bottom: 'var(--keyboard-inset, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
@@ -348,6 +358,31 @@ export default function XtermConsole({
         : 'h-[calc(var(--app-height,100dvh)*0.4)] sm:h-[calc(var(--app-height,100dvh)*0.45)]')
     : '';
 
+  // Theme-aware frame border — the console fill stays dark in every theme,
+  // but the top edge and header divider reflect the active theme's divider hue.
+  const frameBorder = activeTheme === 'light'
+    ? 'border-slate-300'
+    : activeTheme === 'midnight-obsidian'
+    ? 'border-neutral-800'
+    : 'border-slate-700';
+
+  // Theme-aware chrome — el cuerpo del terminal (xterm) sigue oscuro en todos los
+  // temas (diseño VS Code), pero el chrome (panel, muesca, header, botones) adopta
+  // la paleta del tema, igual que AIAssistant/Sidebar.
+  const isLight    = activeTheme === 'light';
+  const isObsidian = activeTheme === 'midnight-obsidian';
+  const panelBg    = isLight ? 'bg-slate-50'    : isObsidian ? 'bg-black'       : 'bg-slate-950';
+  const notchBg    = isLight ? 'bg-slate-200 hover:bg-slate-300 active:bg-slate-400'
+                             : isObsidian ? 'bg-neutral-900 hover:bg-neutral-800 active:bg-neutral-700'
+                             : 'bg-slate-800 hover:bg-slate-700 active:bg-slate-600';
+  const notchGrip  = isLight ? 'bg-slate-400'   : isObsidian ? 'bg-neutral-700' : 'bg-slate-600';
+  const headerBg   = isLight ? 'bg-white'       : isObsidian ? 'bg-[#080808]'   : 'bg-slate-900';
+  const titleText  = isLight ? 'text-slate-700' : isObsidian ? 'text-neutral-200' : 'text-slate-200';
+  const btnHover   = isLight ? 'hover:bg-slate-100' : isObsidian ? 'hover:bg-neutral-900' : 'hover:bg-slate-800';
+  const btnIdle    = isLight ? 'text-slate-500' : 'text-slate-400';
+  const btnHoverText = isLight ? 'hover:text-slate-800' : isObsidian ? 'hover:text-neutral-100' : 'hover:text-slate-200';
+  const btnSurface = isLight ? 'bg-slate-100 hover:bg-slate-200' : isObsidian ? 'bg-neutral-900 hover:bg-neutral-800' : 'bg-slate-800 hover:bg-slate-700';
+
   return (
     <AnimatePresence>
       <motion.div
@@ -357,22 +392,22 @@ export default function XtermConsole({
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 200 }}
         style={heightStyle}
-        className={`fixed left-0 right-0 z-40 bg-slate-950 border-t border-slate-700/80 shadow-2xl flex flex-col font-sans select-none ${panelHeightClass}`}
+        className={`fixed left-0 right-0 z-40 ${panelBg} border-t ${frameBorder} shadow-2xl flex flex-col font-sans select-none ${panelHeightClass}`}
         id="console-bottom-sheet"
       >
         {/* Resize/drag notch */}
         <div
           onPointerDown={handleResizeStart}
-          className="w-full h-5 bg-slate-800 flex items-center justify-center cursor-row-resize hover:bg-slate-700 select-none active:bg-slate-600 touch-none"
+          className={`w-full h-5 ${notchBg} flex items-center justify-center cursor-row-resize select-none touch-none`}
         >
-          <div className="w-12 h-1.5 bg-slate-600 rounded-full pointer-events-none" />
+          <div className={`w-12 h-1.5 ${notchGrip} rounded-full pointer-events-none`} />
         </div>
 
         {/* Header */}
-        <div className="bg-slate-900 px-4 py-2 flex items-center justify-between border-b border-slate-800">
+        <div className={`${headerBg} px-4 py-2 flex items-center justify-between border-b ${frameBorder}`}>
           <div className="flex items-center gap-2">
             <Terminal className="h-4 w-4 text-indigo-400 shrink-0" />
-            <h3 className="font-semibold text-xs tracking-tight text-slate-200 uppercase">
+            <h3 className={`font-semibold text-xs tracking-tight ${titleText} uppercase`}>
               {t('stdoutConsole')}
             </h3>
             {exitResult && (
@@ -400,8 +435,8 @@ export default function XtermConsole({
               </div>
             )}
 
-            {/* Explain with AI tutor button — shown when traceback detected */}
-            {hasTraceback && !isRunning && aiReady && onExplainError && (
+            {/* Explain with AI tutor button — shown when a Python error is detected */}
+            {hasError && !isRunning && aiReady && onExplainError && (
               <button
                 onClick={onExplainError}
                 className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full bg-indigo-600/80 hover:bg-indigo-500 text-indigo-100 transition-colors shrink-0"
@@ -419,7 +454,7 @@ export default function XtermConsole({
                   className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
                     viewMode === 'plots'
                       ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-800 text-indigo-400 hover:bg-slate-700'
+                      : `${btnSurface} text-indigo-400`
                   }`}
                 >
                   <BarChart2 className="h-3.5 w-3.5" />
@@ -427,7 +462,7 @@ export default function XtermConsole({
                 </button>
                 <button
                   onClick={() => exitResult.generatedFiles.forEach((f, i) => setTimeout(() => handleDownload(f), i * 300))}
-                  className="p-1 rounded transition-colors bg-slate-800 text-slate-400 hover:text-emerald-400 hover:bg-slate-700"
+                  className={`p-1 rounded transition-colors ${btnSurface} ${btnIdle} hover:text-emerald-400`}
                 >
                   <Download className="h-3.5 w-3.5" />
                 </button>
@@ -438,7 +473,7 @@ export default function XtermConsole({
             {(exitResult || isRunning) && (
               <button
                 onClick={handleClear}
-                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                className={`p-1 ${btnHover} ${btnIdle} hover:text-rose-400 rounded transition-colors`}
                 title={t('consoleClearTooltip')}
                 id="btn-clear-console"
               >
@@ -448,7 +483,7 @@ export default function XtermConsole({
 
             <button
               onClick={() => { setCustomHeight(null); onToggleExpand(); }}
-              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors"
+              className={`p-1 ${btnHover} ${btnIdle} ${btnHoverText} rounded transition-colors`}
               id="btn-toggle-expand-console"
             >
               {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
@@ -456,13 +491,33 @@ export default function XtermConsole({
 
             <button
               onClick={onClose}
-              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors"
+              className={`p-1 ${btnHover} ${btnIdle} ${btnHoverText} rounded transition-colors`}
               id="btn-close-console"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
+
+        {/* Subtle tutor hint — shown discreetly when a Python error is detected */}
+        {hasError && !isRunning && aiReady && onExplainError && !hintDismissed && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-indigo-950/40 border-b border-indigo-500/20 text-[11px] text-indigo-300/90">
+            <button
+              onClick={onExplainError}
+              className="flex items-center gap-1.5 flex-1 min-w-0 text-left hover:text-indigo-200 transition-colors"
+            >
+              <Sparkles className="h-3 w-3 shrink-0 text-indigo-400" />
+              <span className="truncate">{t('aiErrorHint')}</span>
+            </button>
+            <button
+              onClick={() => setHintDismissed(true)}
+              className="p-0.5 rounded text-indigo-400/70 hover:text-indigo-200 hover:bg-indigo-500/10 transition-colors shrink-0"
+              title={t('dismissNotification')}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
 
         {/* Content pane — terminal div always mounted, visibility toggled with CSS */}
         <div className="flex-1 overflow-hidden relative">
@@ -478,8 +533,8 @@ export default function XtermConsole({
 
           {/* Idle overlay — shown only in console view when no run has happened yet */}
           {viewMode === 'console' && !isRunning && !exitResult && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 italic gap-2 pointer-events-none">
-              <Terminal className="h-8 w-8 text-slate-700" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 italic gap-2 pointer-events-none">
+              <Terminal className="h-8 w-8 text-slate-600" />
               <span className="text-xs">{t('waiting')}</span>
             </div>
           )}

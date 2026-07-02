@@ -6,9 +6,6 @@ set -e
 # owned by root — without this the node process gets EACCES on first write.
 mkdir -p /app/data/app_data
 chown -R node:node /app/data
-# dist/ is an anonymous volume created as root — make it writable by node
-mkdir -p /app/dist
-chown node:node /app/dist
 
 # Drop privileges: exec the CMD as the node user
 exec gosu node "$@"

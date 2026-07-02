@@ -1,46 +1,40 @@
+# docker-compose.yml — configuración única para producción (amd64 y arm64)
+# Uso:
+#   docker compose up -d          # levanta con la imagen ya cargada
+#   docker compose down           # para
+#   docker compose logs -f        # ver logs en tiempo real
+#
+# Requisitos previos en el host:
+#   1. Imagen cargada:  docker load < python-web-ide-<arch>.tar.gz
+#   2. Archivo .env con JWT_SECRET, ENCRYPTION_KEY, APP_URL e IMAGE_NAME
+#
+# Cambia IMAGE_NAME en .env según la arquitectura:
+#   amd64 → IMAGE_NAME=python-web-ide:amd64
+#   arm64 → IMAGE_NAME=python-web-ide:arm64
+
 services:
   web-ide:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-pywi:local}
     container_name: python-web-ide
     ports:
       - "0.0.0.0:3000:3000"
     volumes:
-      # Bind mount source so cada docker compose up recompila con el código actual
-      - .:/app
-      # Shield container's node_modules, .venv and dist from being overwritten by the host.
-      # dist/ must live inside the container — Vite can't clean files on Windows bind-mounts.
-      - /app/node_modules
-      - /app/.venv
-      - /app/dist
-      # Explicit bind mount for requirements.txt
-      - ./requirements.txt:/app/requirements.txt
-      # Persist user data and databases in the host's data directory
-      - ./data:/app/data
-    command: sh -c "npm run build && npm start"
+      # Volumen nombrado para persistir datos de usuario (DB, proyectos, paquetes)
+      - pywi_data:/app/data
     environment:
       - NODE_ENV=production
       - PORT=3000
-      # Pass environment variables (or fallbacks)
       - APP_URL=${APP_URL:-http://localhost:3000}
       - JWT_SECRET=${JWT_SECRET}
-      # ENCRYPTION_KEY: 64-char hex string (32 bytes) used to AES-256-GCM encrypt AI API keys at rest.
-      # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-      # MUST be set in .env.local or as a host environment variable before starting the container.
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - EXEC_TIMEOUT_MS=${EXEC_TIMEOUT_MS:-180000}
+      - INPUT_IDLE_TIMEOUT_MS=${INPUT_IDLE_TIMEOUT_MS:-600000}
     restart: always
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 8G
           cpus: '2.0'
-        # GPU NVIDIA activa por defecto — funciona en amd64 con Docker Desktop (Windows/Mac)
-        # y en Linux con nvidia-container-toolkit.
-        # En arm64 (Rockchip RK3588S) usa el override que anula esta reserva:
-        #   docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d --build
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+
+volumes:
+  pywi_data:
