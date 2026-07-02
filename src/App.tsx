@@ -227,10 +227,11 @@ function AppContent() {
       const token = localStorage.getItem('py_ide_token');
       const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
       fetch(`/api/users/${user.id}/settings`, { headers })
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(settings => {
+          if (!settings) return; // 401 estando bloqueado, etc. — no pisar el estado con un error
           setUserSettings(settings);
-          setLang(settings.language);
+          if (settings.language === 'es' || settings.language === 'en') setLang(settings.language);
         })
         .catch(err => console.error('Error loading settings:', err));
       fetch('/api/ai/config', { headers })
@@ -311,9 +312,6 @@ function AppContent() {
       // mientras esté bloqueado (aunque falle la red, el candado UI se activa igual).
       fetch('/api/auth/lock', { method: 'POST', headers: authHeaders() }).catch(() => {});
       localStorage.setItem('py_ide_locked', '1');
-      // Defensa en profundidad: el token queda invalidado en servidor (sessionLockedAt);
-      // el desbloqueo re-autentica con email+contraseña, no con el token guardado.
-      localStorage.removeItem('py_ide_token');
       setIsLocked(true);
     };
 
@@ -1921,9 +1919,10 @@ function AppContent() {
 }
 
 export default function App() {
-  const [lang, setLang] = React.useState<'es' | 'en'>(
-    (localStorage.getItem('py_ide_lang') as 'es' | 'en') || 'es'
-  );
+  // Solo 'es'/'en' son válidos — sanea valores corruptos (ej. la cadena "undefined"
+  // persistida por un bug previo) en vez de propagarlos al contexto de idioma.
+  const storedLang = localStorage.getItem('py_ide_lang');
+  const [lang, setLang] = React.useState<'es' | 'en'>(storedLang === 'en' ? 'en' : 'es');
   const handleSetLang = (l: 'es' | 'en') => {
     localStorage.setItem('py_ide_lang', l);
     setLang(l);

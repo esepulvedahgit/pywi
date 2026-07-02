@@ -24,7 +24,9 @@ export function LanguageProvider({
   setLang: (lang: Lang) => void;
 }) {
   const t = (key: string, vars?: Record<string, string | number>): string => {
-    const dict = translations[lang] as Record<string, string>;
+    // Fallback a español si `lang` llega corrupto (ej. localStorage envenenado con
+    // "undefined") — evita que translations[lang] sea undefined y reviente t().
+    const dict = (translations[lang] as Record<string, string> | undefined) ?? translations.es;
     let str = dict[key] || key;
     if (vars) {
       Object.entries(vars).forEach(([k, v]) => {
