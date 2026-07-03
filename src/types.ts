@@ -29,6 +29,15 @@ export interface FileItem {
   updatedAt: string;
 }
 
+// Un artefacto generado por un script, recolectado en la carpeta output/ del proyecto.
+// No se persiste en db.json; se lista escaneando el filesystem vía /output-files.
+export interface OutputFile {
+  name: string;
+  size: number;  // bytes
+  mtime: number; // epoch ms
+  ext: string;   // extensión sin punto, en minúsculas ('png', 'md', 'csv', '')
+}
+
 export interface ExecutionResult {
   success: boolean;
   stdout: string;

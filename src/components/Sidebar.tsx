@@ -19,7 +19,8 @@ import {
   Clipboard,
   Check
 } from 'lucide-react';
-import { Project, FileItem } from '../types';
+import { FileOutput, Download, Eraser } from 'lucide-react';
+import { Project, FileItem, OutputFile } from '../types';
 import { useT } from '../i18n';
 
 interface SidebarProps {
@@ -50,6 +51,9 @@ interface SidebarProps {
   onOpenPackageManager?: () => void;
   packageUpdateCount?: number;
   onPreviewDataset?: (file: FileItem) => void;
+  outputFiles?: OutputFile[];
+  onPreviewOutput?: (file: OutputFile) => void;
+  onClearOutput?: () => void;
 }
 
 const getThemeSidebarClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') => {
@@ -551,6 +555,9 @@ export default function Sidebar({
   onOpenPackageManager,
   packageUpdateCount = 0,
   onPreviewDataset,
+  outputFiles = [],
+  onPreviewOutput,
+  onClearOutput,
   isCollapsedOnDesktop = false
 }: SidebarProps) {
   const t = useT();
@@ -1267,6 +1274,46 @@ export default function Sidebar({
 
               {files.filter(f => f.type === 'script').length === 0 && scriptTreeFolders.length === 0 && (
                 <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('noScripts')}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Script output section — artefactos generados en output/ */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5`}>
+                <FileOutput className="h-3.5 w-3.5 text-violet-500" /> {t('scriptOutputSection')}
+              </span>
+              {outputFiles.length > 0 && (
+                <button
+                  onClick={() => onClearOutput?.()}
+                  title={t('clearOutput')}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] text-slate-400 hover:text-red-400 rounded transition-colors"
+                >
+                  <Eraser className="h-3 w-3" /> {t('clearOutput')}
+                </button>
+              )}
+            </div>
+            <p className={`text-[9px] ${s.subText} mb-2 pl-0.5`}>{t('scriptOutputHint')}</p>
+
+            <div className="space-y-1 mb-3" id="output-files-list">
+              {outputFiles.map((f) => (
+                <div
+                  key={f.name}
+                  className={`group flex items-center justify-between p-1.5 rounded-lg text-xs cursor-pointer transition-all ${s.datasetInactive}`}
+                  onClick={() => onPreviewOutput?.(f)}
+                  title={f.name}
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <FileText className="h-3.5 w-3.5 text-violet-400 shrink-0" />
+                    <span className="font-mono truncate font-medium">{f.name}</span>
+                    <span className={`text-[9px] ${s.subText} shrink-0 font-mono`}>({formatSize(f.size)})</span>
+                  </div>
+                  <Download className="h-3.5 w-3.5 text-slate-400 opacity-0 group-hover:opacity-100 shrink-0 transition-opacity" />
+                </div>
+              ))}
+              {outputFiles.length === 0 && (
+                <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('noOutputFiles')}</p>
               )}
             </div>
           </div>

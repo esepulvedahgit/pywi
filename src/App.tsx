@@ -33,7 +33,7 @@ import remarkGfm from 'remark-gfm';
 /** Choose a CodeMirror language extension based on file extension. */
 const langFor = (filename: string) => filename.endsWith('.md') ? markdown() : python();
 
-import { User, Project, FileItem, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DatasetContext, DiffProposal } from './types';
+import { User, Project, FileItem, UserSettings, EnvRestoreState, PackageUpdateState, AIConfig, IdeContext, DatasetContext, DiffProposal, OutputFile } from './types';
 import { LanguageProvider, useLang, useT } from './i18n';
 import AuthScreen from './components/AuthScreen';
 import Sidebar from './components/Sidebar';
@@ -45,6 +45,7 @@ import EnvRestoreOverlay from './components/EnvRestoreOverlay';
 import ResetPasswordScreen from './components/ResetPasswordScreen';
 import AIAssistant from './components/AIAssistant';
 import DataPreviewModal from './components/DataPreviewModal';
+import OutputPreviewModal from './components/OutputPreviewModal';
 import LockScreen from './components/LockScreen';
 
 // Helper: construye headers con el JWT del usuario actual
@@ -180,6 +181,10 @@ function AppContent() {
   // Cache of dataset schemas previewed this session, keyed by filename — fed to the AI tutor
   const datasetPreviewsRef = useRef<Map<string, DatasetContext>>(new Map());
 
+  // Script output state — artefactos generados en output/, listados vía filesystem
+  const [outputFiles, setOutputFiles] = useState<OutputFile[]>([]);
+  const [previewOutputFile, setPreviewOutputFile] = useState<OutputFile | null>(null);
+
   // Environment restoration state
   const [envRestore, setEnvRestore] = useState<EnvRestoreState | null>(null);
 
@@ -292,8 +297,18 @@ function AppContent() {
   useEffect(() => {
     if (currentProject) {
       fetchFiles(currentProject.id);
+      fetchOutputFiles(currentProject.id);
+    } else {
+      setOutputFiles([]);
     }
   }, [currentProject]);
+
+  // Refrescar la carpeta de salida cuando termina una ejecución (nuevos artefactos)
+  useEffect(() => {
+    if (lastExitResult && currentProject) {
+      fetchOutputFiles(currentProject.id);
+    }
+  }, [lastExitResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch file content when active file changes; reset markdown view to edit mode
   useEffect(() => {
@@ -375,6 +390,36 @@ function AppContent() {
       }
     } catch (err) {
       console.error('Error fetching files:', err);
+    }
+  };
+
+  // API Call: lista los artefactos generados en output/ del proyecto
+  const fetchOutputFiles = async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/output-files`, { headers: authHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data?.files)) setOutputFiles(data.files);
+    } catch (err) {
+      console.error('Error fetching output files:', err);
+    }
+  };
+
+  // Vacía la carpeta output/ (botón "Limpiar salida")
+  const handleClearOutput = async () => {
+    if (!currentProject) return;
+    if (!window.confirm(tl('clearOutputConfirm'))) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/output-files/clear`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        setOutputFiles([]);
+        setPreviewOutputFile(null);
+      }
+    } catch (err) {
+      console.error('Error clearing output:', err);
     }
   };
 
@@ -1043,6 +1088,18 @@ function AppContent() {
         onOpenPackageManager={() => setShowPackageManager(true)}
         packageUpdateCount={packageUpdates.dismissed ? 0 : packageUpdates.outdated.length}
         onPreviewDataset={handlePreviewDataset}
+        outputFiles={outputFiles}
+        onPreviewOutput={setPreviewOutputFile}
+        onClearOutput={handleClearOutput}
+      />
+
+      {/* Script Output Preview Modal */}
+      <OutputPreviewModal
+        file={previewOutputFile}
+        projectId={currentProject?.id ?? ''}
+        token={localStorage.getItem('py_ide_token') ?? ''}
+        onClose={() => setPreviewOutputFile(null)}
+        activeTheme={activeTheme}
       />
 
       {/* Dataset Preview Modal */}
