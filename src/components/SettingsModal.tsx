@@ -113,8 +113,8 @@ export default function SettingsModal({
     }
 
     fetch('/api/ai/config', { headers })
-      .then(r => r.json())
-      .then((cfg: AIConfig) => { setAiConfig(cfg); setAiApiKey(''); })
+      .then(r => r.ok ? r.json() : null)
+      .then((cfg: AIConfig | null) => { if (cfg) { setAiConfig(cfg); setAiApiKey(''); } })
       .catch(() => {});
   }, [isOpen, userRole]);
 

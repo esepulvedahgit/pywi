@@ -226,24 +226,28 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [envRestore?.inProgress, user]);
 
-  // Load user settings and AI config on login
+  // Load user settings and AI config — al montar/login y también al desbloquear
+  // (un token nuevo puede traer datos que el fetch inicial no pudo obtener por 401).
+  const loadSettingsAndAiConfig = () => {
+    if (!user) return;
+    const token = localStorage.getItem('py_ide_token');
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
+    fetch(`/api/users/${user.id}/settings`, { headers })
+      .then(res => res.ok ? res.json() : null)
+      .then(settings => {
+        if (!settings) return; // 401 estando bloqueado, etc. — no pisar el estado con un error
+        setUserSettings(settings);
+        if (settings.language === 'es' || settings.language === 'en') setLang(settings.language);
+      })
+      .catch(err => console.error('Error loading settings:', err));
+    fetch('/api/ai/config', { headers })
+      .then(res => res.ok ? res.json() : null)
+      .then((cfg: AIConfig | null) => { if (cfg) setAiConfig(cfg); }) // 401 estando bloqueado, etc. — no pisar el estado con un error
+      .catch(() => {});
+  };
+
   useEffect(() => {
-    if (user) {
-      const token = localStorage.getItem('py_ide_token');
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
-      fetch(`/api/users/${user.id}/settings`, { headers })
-        .then(res => res.ok ? res.json() : null)
-        .then(settings => {
-          if (!settings) return; // 401 estando bloqueado, etc. — no pisar el estado con un error
-          setUserSettings(settings);
-          if (settings.language === 'es' || settings.language === 'en') setLang(settings.language);
-        })
-        .catch(err => console.error('Error loading settings:', err));
-      fetch('/api/ai/config', { headers })
-        .then(res => res.json())
-        .then((cfg: AIConfig) => setAiConfig(cfg))
-        .catch(() => {});
-    }
+    loadSettingsAndAiConfig();
   }, [user?.id]);
 
   // Fetch package update state from server
@@ -1891,6 +1895,7 @@ function AppContent() {
               localStorage.removeItem('py_ide_locked');
               setIsLocked(false);
               fetchProjects(); // el token cambió tras re-autenticar; recargar datos
+              loadSettingsAndAiConfig(); // idem para IA/settings, que pudieron fallar (401) mientras estaba bloqueado
             }}
             onLogout={handleLogout}
           />
