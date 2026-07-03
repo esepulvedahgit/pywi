@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { X, Terminal, Clock, Maximize2, Minimize2, Trash2, BarChart2, Download, Sparkles } from 'lucide-react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -107,9 +107,11 @@ export default function XtermConsole({
   // Joined and tail-sliced once at run exit (consumed by the AI tutor).
   const ptyChunksRef = useRef<string[]>([]);
 
-  // ── Initialise xterm when the panel opens (the div only exists while isOpen) ─
+  // ── Initialise xterm ONCE — the div is now always mounted, so the terminal
+  //    instance + its buffer/scrollback survive close/open. Disposed only when
+  //    the component itself unmounts.
   useEffect(() => {
-    if (!isOpen || !termRef.current) return;
+    if (!termRef.current || xtermRef.current) return;
 
     const term = new XTerm({
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
@@ -141,7 +143,8 @@ export default function XtermConsole({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [isOpen]); // re-init each time the panel opens (div only exists while isOpen)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // create once; dispose on true unmount only
 
   // ── Update xterm theme when activeTheme changes ───────────────────────────
   useEffect(() => {
@@ -156,13 +159,17 @@ export default function XtermConsole({
     const fit = () => {
       try {
         fitAddonRef.current?.fit();
+        const term = xtermRef.current;
+        // Force a repaint of the visible rows — the renderer may have been idle
+        // while the panel was slid off-screen, which can leave the canvas blank.
+        if (term) term.refresh(0, term.rows - 1);
         // Notify server of new size
         const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN && xtermRef.current) {
+        if (ws && ws.readyState === WebSocket.OPEN && term) {
           ws.send(JSON.stringify({
             type: 'resize',
-            cols: xtermRef.current.cols,
-            rows: xtermRef.current.rows,
+            cols: term.cols,
+            rows: term.rows,
           }));
         }
       } catch { /* terminal may not be ready yet */ }
@@ -336,7 +343,8 @@ export default function XtermConsole({
     onClear();
   };
 
-  if (!isOpen) return null;
+  // NOTE: no early `return null` — the panel stays mounted so the xterm buffer
+  // survives close/open. When closed it is slid off-screen + made inert below.
 
   // Derived — no state needed.
   // Un SyntaxError de script no imprime "Traceback (...)", así que también
@@ -384,17 +392,17 @@ export default function XtermConsole({
   const btnSurface = isLight ? 'bg-slate-100 hover:bg-slate-200' : isObsidian ? 'bg-neutral-900 hover:bg-neutral-800' : 'bg-slate-800 hover:bg-slate-700';
 
   return (
-    <AnimatePresence>
-      <motion.div
-        ref={panelRef}
-        initial={{ y: '100%' }}
-        animate={{ y: 0 }}
-        exit={{ y: '100%' }}
-        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        style={heightStyle}
-        className={`fixed left-0 right-0 z-40 ${panelBg} border-t ${frameBorder} shadow-2xl flex flex-col font-sans select-none ${panelHeightClass}`}
-        id="console-bottom-sheet"
-      >
+    <motion.div
+      ref={panelRef}
+      initial={{ y: '100%' }}
+      animate={{ y: isOpen ? 0 : '100%' }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      style={heightStyle}
+      aria-hidden={!isOpen}
+      tabIndex={isOpen ? undefined : -1}
+      className={`fixed left-0 right-0 z-40 ${panelBg} border-t ${frameBorder} shadow-2xl flex flex-col font-sans select-none ${panelHeightClass} ${isOpen ? '' : 'pointer-events-none'}`}
+      id="console-bottom-sheet"
+    >
         {/* Resize/drag notch */}
         <div
           onPointerDown={handleResizeStart}
@@ -546,7 +554,6 @@ export default function XtermConsole({
             </div>
           ) : null}
         </div>
-      </motion.div>
-    </AnimatePresence>
+    </motion.div>
   );
 }

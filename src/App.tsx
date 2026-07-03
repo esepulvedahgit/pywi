@@ -20,10 +20,13 @@ import {
   Wand2,
   Square,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Undo2,
+  Redo2
 } from 'lucide-react';
 import { EditorView, keymap } from '@codemirror/view';
 import { indentUnit } from '@codemirror/language';
+import { undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
 import { markdown } from '@codemirror/lang-markdown';
@@ -204,6 +207,9 @@ function AppContent() {
   const editorRef = useRef<EditorView | null>(null);
   // Tracks lines currently selected in the editor (for AI tutor badge)
   const [aiSelection, setAiSelection] = useState<{ fromLine: number; toLine: number } | null>(null);
+  // Tracks whether the CodeMirror history stack has undo/redo steps available
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Poll for environment restoration status
@@ -948,6 +954,20 @@ function AppContent() {
     URL.revokeObjectURL(url);
   };
 
+  // Undo/Redo: operate directly on the CodeMirror history stack via the
+  // existing editorRef. The wrapper's onChange keeps `code` state (and the
+  // debounced autosave) in sync automatically.
+  const handleUndo = () => {
+    if (!editorRef.current) return;
+    undo(editorRef.current);
+    editorRef.current.focus();
+  };
+  const handleRedo = () => {
+    if (!editorRef.current) return;
+    redo(editorRef.current);
+    editorRef.current.focus();
+  };
+
   // Log of session switcher
   const handleLogout = async () => {
     // Invalida el token en el servidor antes de borrarlo del cliente (logout real).
@@ -1235,6 +1255,30 @@ function AppContent() {
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
               <span className="font-medium text-slate-600">{tl('serviceActive')}</span>
             </div>
+
+            {/* Desktop Only Undo/Redo pair */}
+            {currentFile && (
+              <div className="hidden md:flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={handleUndo}
+                  disabled={!canUndo}
+                  className={`p-1.5 ${t.btnSec} rounded-md transition-all shadow-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent`}
+                  title={tl('undoTooltip')}
+                  id="btn-undo"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={handleRedo}
+                  disabled={!canRedo}
+                  className={`p-1.5 ${t.btnSec} rounded-md transition-all shadow-xs disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent`}
+                  title={tl('redoTooltip')}
+                  id="btn-redo"
+                >
+                  <Redo2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
 
             {/* Desktop Only raw download button */}
             {currentFile && (
@@ -1768,6 +1812,10 @@ function AppContent() {
                       '&.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(99,102,241,0.40) !important' },
                     }),
                     EditorView.updateListener.of((update) => {
+                      if (update.docChanged) {
+                        setCanUndo(undoDepth(update.state) > 0);
+                        setCanRedo(redoDepth(update.state) > 0);
+                      }
                       if (!update.selectionSet && !update.docChanged) return;
                       const sel = update.state.selection.main;
                       if (sel.empty) { setAiSelection(null); return; }
@@ -1788,6 +1836,8 @@ function AppContent() {
                   }}
                   onCreateEditor={(view) => {
                     editorRef.current = view;
+                    setCanUndo(undoDepth(view.state) > 0);
+                    setCanRedo(redoDepth(view.state) > 0);
                   }}
                   className={`h-full rounded-xl overflow-hidden font-mono text-[13px] sm:text-[14px] border ${
                     activeTheme === 'light'
@@ -1821,6 +1871,46 @@ function AppContent() {
             </div>
           )}
         </main>
+
+        {/* FABs: Undo/Redo (mobile) — bottom-left, mirroring the AI/Console FABs on the right */}
+        {currentFile && (
+          <>
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo}
+              className={`absolute bottom-4 left-16 z-20 h-10 w-10 rounded-full flex items-center justify-center shadow-lg transition-all border md:hidden ${
+                !canUndo
+                  ? 'bg-slate-700/50 text-slate-500 border-slate-600/30 opacity-50 cursor-not-allowed'
+                  : activeTheme === 'light'
+                  ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 hover:scale-105 active:scale-95 shadow-md'
+                  : activeTheme === 'vibrant-dark'
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600/60 hover:scale-105 active:scale-95'
+                  : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border-neutral-700 hover:scale-105 active:scale-95'
+              }`}
+              title={tl('undoTooltip')}
+              id="floating-btn-undo"
+            >
+              <Undo2 className="h-5 w-5" />
+            </button>
+            <button
+              onClick={handleRedo}
+              disabled={!canRedo}
+              className={`absolute bottom-4 left-4 z-20 h-10 w-10 rounded-full flex items-center justify-center shadow-lg transition-all border md:hidden ${
+                !canRedo
+                  ? 'bg-slate-700/50 text-slate-500 border-slate-600/30 opacity-50 cursor-not-allowed'
+                  : activeTheme === 'light'
+                  ? 'bg-white hover:bg-slate-100 text-slate-700 border-slate-300 hover:scale-105 active:scale-95 shadow-md'
+                  : activeTheme === 'vibrant-dark'
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600/60 hover:scale-105 active:scale-95'
+                  : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-200 border-neutral-700 hover:scale-105 active:scale-95'
+              }`}
+              title={tl('redoTooltip')}
+              id="floating-btn-redo"
+            >
+              <Redo2 className="h-5 w-5" />
+            </button>
+          </>
+        )}
 
         {/* FAB: AI assistant (mobile) — offset right to avoid overlapping console FAB */}
         {!showAIAssistant && (

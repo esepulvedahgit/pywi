@@ -80,6 +80,8 @@ export const en = {
   themesTitle: 'Interface Themes',
   downloadTooltip: 'Download script to your device',
   downloadBtn: 'Download',
+  undoTooltip: 'Undo',
+  redoTooltip: 'Redo',
   themeTooltip: 'Theme Settings',
   themeBtn: 'Theme',
   moreActions: 'More actions',
