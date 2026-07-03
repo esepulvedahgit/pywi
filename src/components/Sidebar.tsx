@@ -17,11 +17,22 @@ import {
   Pencil,
   Eye,
   Clipboard,
-  Check
+  Check,
+  FolderInput
 } from 'lucide-react';
 import { FileOutput, Download, Eraser } from 'lucide-react';
 import { Project, FileItem, OutputFile } from '../types';
 import { useT } from '../i18n';
+import MoveFileModal from './MoveFileModal';
+
+// The set of valid move destinations for a file: project root ('') plus every
+// folder in its tree, excluding the folder it's already in. Used to decide
+// whether the "move" button should render at all (hidden when there's nowhere
+// else to move the file) and to populate the MoveFileModal's folder tree.
+const getMoveTargets = (file: FileItem, folderList: string[]) => {
+  const current = file.folder || '';
+  return ['', ...folderList].filter(f => f !== current);
+};
 
 interface SidebarProps {
   user: { username: string; email: string; id: string };
@@ -41,6 +52,7 @@ interface SidebarProps {
   onCreateFolder: (folderName: string) => void;
   onCreateFileInFolder: (filename: string, folder: string) => void;
   onRenameFile: (fileId: string, newFilename: string) => void;
+  onMoveFile: (fileId: string, targetFolder: string | null) => void;
   onRenameFolder: (oldPath: string, newPath: string) => void;
   onDeleteFolder: (folderPath: string) => void;
   onLogout: () => void;
@@ -151,6 +163,7 @@ interface DocsSectionProps {
   onDeleteFile: (fileId: string) => void;
   onDeleteFolder: (folderPath: string) => void;
   onUpload: (file: File, folder?: string) => void | Promise<void>;
+  onRequestMoveFile: (file: FileItem, folders: string[]) => void;
 }
 
 function DocsSection({
@@ -167,6 +180,7 @@ function DocsSection({
   onDeleteFile,
   onDeleteFolder,
   onUpload,
+  onRequestMoveFile,
 }: DocsSectionProps) {
   const t = useT();
   const s = getThemeSidebarClasses(activeTheme);
@@ -230,6 +244,7 @@ function DocsSection({
     let name = newFileName.trim();
     if (!name) return;
     if (!name.includes('.')) name += '.md';
+    else if (!name.endsWith('.md')) { alert(t('docSectionOnlyMd')); return; }
     if (activeFolder) onCreateFileInFolder(name, activeFolder);
     else onCreateFile(name);
     setNewFileName('');
@@ -309,6 +324,12 @@ function DocsSection({
               className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
               <Pencil className="h-2.5 w-2.5" />
             </button>
+            {getMoveTargets(f, treeFolders).length > 0 && (
+              <button onClick={(e) => { e.stopPropagation(); onRequestMoveFile(f, treeFolders); }}
+                className="p-1 text-slate-300 hover:text-amber-500 rounded transition-colors" title={t('moveTooltip')}>
+                <FolderInput className="h-2.5 w-2.5" />
+              </button>
+            )}
             <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
               className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
               <Trash2 className="h-2.5 w-2.5" />
@@ -546,6 +567,7 @@ export default function Sidebar({
   onCreateFolder,
   onCreateFileInFolder,
   onRenameFile,
+  onMoveFile,
   onRenameFolder,
   onDeleteFolder,
   onLogout,
@@ -581,6 +603,7 @@ export default function Sidebar({
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
   const [copiedDataset, setCopiedDataset] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [movingFile, setMovingFile] = useState<{ file: FileItem; folders: string[] } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(false);
   const [scriptUploadProgress, setScriptUploadProgress] = useState(false);
@@ -635,6 +658,7 @@ export default function Sidebar({
     let name = newFileName.trim();
     if (!name) return;
     if (!name.includes('.')) name += '.py';
+    else if (!name.endsWith('.py')) { alert(t('scriptSectionOnlyPy')); return; }
     if (activeFolder) {
       onCreateFileInFolder(name, activeFolder);
     } else {
@@ -1000,6 +1024,12 @@ export default function Sidebar({
                           className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                           <Pencil className="h-2.5 w-2.5" />
                         </button>
+                        {getMoveTargets(f, scriptTreeFolders).length > 0 && (
+                          <button onClick={(e) => { e.stopPropagation(); setMovingFile({ file: f, folders: scriptTreeFolders }); }}
+                            className="p-1 text-slate-300 hover:text-amber-500 rounded transition-colors" title={t('moveTooltip')}>
+                            <FolderInput className="h-2.5 w-2.5" />
+                          </button>
+                        )}
                         <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                           className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                           <Trash2 className="h-2.5 w-2.5" />
@@ -1132,6 +1162,12 @@ export default function Sidebar({
                                     className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}>
                                     <Pencil className="h-2.5 w-2.5" />
                                   </button>
+                                  {getMoveTargets(f, scriptTreeFolders).length > 0 && (
+                                    <button onClick={(e) => { e.stopPropagation(); setMovingFile({ file: f, folders: scriptTreeFolders }); }}
+                                      className="p-1 text-slate-300 hover:text-amber-500 rounded transition-colors" title={t('moveTooltip')}>
+                                      <FolderInput className="h-2.5 w-2.5" />
+                                    </button>
+                                  )}
                                   <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                                     className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}>
                                     <Trash2 className="h-2.5 w-2.5" />
@@ -1239,6 +1275,10 @@ export default function Sidebar({
                                           <div className="flex items-center gap-0.5 shrink-0">
                                             <button onClick={(e) => { e.stopPropagation(); setRenamingId(f.id); setRenameValue(f.filename); }}
                                               className="p-1 text-slate-300 hover:text-indigo-500 rounded transition-colors" title={t('renameTooltip')}><Pencil className="h-2.5 w-2.5" /></button>
+                                            {getMoveTargets(f, scriptTreeFolders).length > 0 && (
+                                              <button onClick={(e) => { e.stopPropagation(); setMovingFile({ file: f, folders: scriptTreeFolders }); }}
+                                                className="p-1 text-slate-300 hover:text-amber-500 rounded transition-colors" title={t('moveTooltip')}><FolderInput className="h-2.5 w-2.5" /></button>
+                                            )}
                                             <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(f.id); }}
                                               className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors" title={t('deleteTooltip')}><Trash2 className="h-2.5 w-2.5" /></button>
                                           </div>
@@ -1446,6 +1486,7 @@ export default function Sidebar({
             onDeleteFile={onDeleteFile}
             onDeleteFolder={onDeleteFolder}
             onUpload={onUploadScript}
+            onRequestMoveFile={(file, docFolders) => setMovingFile({ file, folders: docFolders })}
           />
 
           {/* Entorno Python & Pip libraries section */}
@@ -1521,6 +1562,18 @@ export default function Sidebar({
           </div>
         </div>
       </aside>
+
+      {/* Move file popup — shows the folder tree for the file's section (scripts or docs) */}
+      <MoveFileModal
+        file={movingFile?.file ?? null}
+        folders={movingFile?.folders ?? []}
+        activeTheme={activeTheme}
+        onClose={() => setMovingFile(null)}
+        onConfirm={(target) => {
+          if (movingFile) onMoveFile(movingFile.file.id, target);
+          setMovingFile(null);
+        }}
+      />
     </>
   );
 }

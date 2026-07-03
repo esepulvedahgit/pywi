@@ -2615,6 +2615,60 @@ app.patch('/api/projects/:projectId/files/:fileId/rename', requireAuth, (req, re
   res.json(fileRecord);
 });
 
+// API: Move a file to another folder (or to project root)
+app.patch('/api/projects/:projectId/files/:fileId/move', requireAuth, (req, res) => {
+  const { projectId, fileId } = req.params;
+  const currentUserId = (req as any).userId;
+  const { folder: targetFolder } = req.body;
+
+  const normalizedFolder = targetFolder ? String(targetFolder) : '';
+  if (normalizedFolder && !/^[a-zA-Z0-9_\-]+(\/[a-zA-Z0-9_\-]+)?$/.test(normalizedFolder)) {
+    return res.status(400).json({ error: 'Nombre de carpeta inválido' });
+  }
+
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
+  if (!project) return res.status(403).json({ error: 'Acceso denegado' });
+
+  const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
+  if (!fileRecord) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+  const currentFolder = fileRecord.folder || '';
+  if (currentFolder === normalizedFolder) {
+    return res.json(fileRecord);
+  }
+
+  // Reject if a file with the same name already exists at the destination
+  const collision = database.files.some(f =>
+    f.projectId === projectId && f.id !== fileId &&
+    (f.folder || '') === normalizedFolder && f.filename === fileRecord.filename
+  );
+  if (collision) {
+    return res.status(409).json({ error: 'Ya existe un archivo con ese nombre en el destino' });
+  }
+
+  const projectDir = path.join(APP_DATA_DIR, currentUserId, projectId);
+  const oldPath = path.join(projectDir, currentFolder, fileRecord.filename);
+  const targetDir = path.join(projectDir, normalizedFolder);
+  const newPath = path.join(targetDir, fileRecord.filename);
+
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    fs.renameSync(oldPath, newPath);
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al mover el archivo en disco' });
+  }
+
+  fileRecord.folder = normalizedFolder || undefined;
+  fileRecord.filepath = path.join(currentUserId, projectId, normalizedFolder, fileRecord.filename);
+  fileRecord.updatedAt = new Date().toISOString();
+  writeDB(database);
+
+  res.json(fileRecord);
+});
+
 // API: Rename folder (updates all file records referencing the old path)
 app.patch('/api/projects/:projectId/folders/rename', requireAuth, (req, res) => {
   const { projectId } = req.params;

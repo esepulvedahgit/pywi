@@ -692,6 +692,26 @@ function AppContent() {
     }
   };
 
+  // Move a file to another folder (or to project root when targetFolder is null)
+  const handleMoveFile = async (fileId: string, targetFolder: string | null) => {
+    if (!user || !currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/files/${fileId}/move`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ userId: user.id, folder: targetFolder || '' })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setFiles(prev => prev.map(f => f.id === fileId ? { ...f, folder: data.folder, filepath: data.filepath } : f));
+      } else {
+        alert(data.error || tl('errorMoveFile'));
+      }
+    } catch (err) {
+      console.error('Error moving file:', err);
+    }
+  };
+
   // Rename a folder (updates all child file records)
   const handleRenameFolder = async (oldPath: string, newPath: string) => {
     if (!user || !currentProject) return;
@@ -1082,6 +1102,7 @@ function AppContent() {
         onCreateFolder={handleCreateFolder}
         onCreateFileInFolder={handleCreateFileInFolder}
         onRenameFile={handleRenameFile}
+        onMoveFile={handleMoveFile}
         onRenameFolder={handleRenameFolder}
         onDeleteFolder={handleDeleteFolder}
         onLogout={handleLogout}
