@@ -80,6 +80,17 @@ html, body {
   .cm-content {
     font-size: 16px !important;
   }
+
+  /* Tamaño visual del código en móvil SIN reactivar el auto-zoom de iOS.
+     .cm-content permanece en 16px arriba (es lo que iOS mide en el host
+     editable); los glifos reales se renderizan más pequeños en las líneas
+     internas. Mayor especificidad (.cm-content .cm-line) gana sobre la regla
+     de 16px. */
+  .cm-content .cm-line,
+  .cm-gutters,
+  .cm-lineNumbers .cm-gutterElement {
+    font-size: 14px !important;
+  }
 }
 
 /* ── Markdown preview renderer ───────────────────────────────────────────────
