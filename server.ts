@@ -13,6 +13,7 @@ import rateLimit from 'express-rate-limit';
 import http from 'http';
 import { WebSocketServer, WebSocket as WS } from 'ws';
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
+import sevenBin from '7zip-bin';
 
 const app = express();
 const PORT = 3000;
@@ -228,6 +229,49 @@ function getOutputDir(userId: string, projectId: string): string {
   return dir;
 }
 
+// Resuelve el binario de 7-Zip para crear/extraer ZIPs cifrados con AES-256.
+// Prioriza el 7za del sistema (Docker: p7zip-full); si no está, usa el binario
+// embebido por el paquete 7zip-bin (dev en Windows/mac).
+function getSevenZipBin(): string {
+  for (const cmd of ['7za', '7z']) {
+    try { execSync(`${cmd} --help`, { stdio: 'ignore' }); return cmd; } catch {}
+  }
+  return sevenBin.path7za;
+}
+const SEVENZIP = getSevenZipBin();
+
+// Espera bloqueante real (sin async) — usada solo en el swap de restauración para
+// dar tiempo a que el SO libere handles antes de reintentar una operación de FS.
+function sleepSync(ms: number): void {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch {}
+}
+// Reintenta una operación de FS que puede fallar de forma transitoria en Windows
+// (EPERM/EBUSY/EACCES) cuando otro handle acaba de cerrarse. Inocuo en Linux: acierta
+// al primer intento.
+function fsRetry<T>(fn: () => T, attempts = 6, delayMs = 100): T {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try { return fn(); } catch (e) { lastErr = e; sleepSync(delayMs); }
+  }
+  throw lastErr;
+}
+
+// Lista recursiva de rutas de FICHERO relativas a `root` (separador '/'). Usada por la
+// restauración, que sincroniza a nivel de fichero (nunca renombra/borra directorios) —
+// necesario en Windows, donde 7-Zip deja handles sobre los directorios que impiden
+// renombrarlos/borrarlos, aunque sus ficheros sí se pueden crear/borrar/sobrescribir.
+function listRelFiles(root: string, rel = '', out: string[] = []): string[] {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const abs = path.join(root, e.name);
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) listRelFiles(abs, r, out);
+    else out.push(r);
+  }
+  return out;
+}
+
 // Ensure base directories exist
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -235,6 +279,16 @@ if (!fs.existsSync(DATA_DIR)) {
 if (!fs.existsSync(APP_DATA_DIR)) {
   fs.mkdirSync(APP_DATA_DIR, { recursive: true });
 }
+
+// Barrer restos de restauraciones (.restore_stage_* / .restore_snap_*) que pudieran
+// haber quedado por un fallo o por un handle de directorio no liberado en Windows.
+try {
+  for (const name of fs.readdirSync(APP_DATA_DIR)) {
+    if (name.startsWith('.restore_stage_') || name.startsWith('.restore_snap_')) {
+      try { fs.rmSync(path.join(APP_DATA_DIR, name), { recursive: true, force: true }); } catch {}
+    }
+  }
+} catch {}
 
 // Check if python3 is available
 let hasPython = false;
@@ -527,6 +581,17 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 30 * 1024 * 1024 } // 30 MB limit
+});
+
+// Multer dedicado para la restauración: el .zip subido se guarda en un archivo
+// temporal del sistema (no en el árbol del usuario) con un límite amplio.
+const RESTORE_MAX_BYTES = Number(process.env.RESTORE_MAX_BYTES) || 1024 * 1024 * 1024; // 1 GB
+const restoreUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename: (_req, _file, cb) => cb(null, `restore_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.zip`)
+  }),
+  limits: { fileSize: RESTORE_MAX_BYTES }
 });
 
 // Types
@@ -1053,6 +1118,22 @@ const aiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30,
   message: { error: 'Límite de consultas IA alcanzado. Inténtalo de nuevo en un minuto.' }
+});
+
+// Backup/restore son operaciones costosas (CPU + IO) y la contraseña es un
+// objetivo de fuerza bruta: límites conservadores por hora.
+const backupLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 10,
+  message: { error: 'Límite de copias de seguridad alcanzado. Inténtalo de nuevo más tarde.' }
+});
+
+const restoreLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 60 * 60 * 1000, // 1 hora
+  max: 10,
+  message: { error: 'Límite de restauraciones alcanzado. Inténtalo de nuevo más tarde.' }
 });
 
 // API: Venv status & stats
@@ -2312,11 +2393,30 @@ app.post('/api/auth/reset-password', authStrictLimiter, async (req, res) => {
   res.json({ success: true, message: 'Contraseña restablecida' });
 });
 
-// API: Download user backup as .tar.gz
-app.get('/api/users/:userId/backup', requireAuth, (req, res) => {
+// Nombre del archivo de metadatos incrustado en cada copia (proyectos + archivos
+// de db.json) para poder reconstruir la base de datos al restaurar.
+const BACKUP_META_FILENAME = 'backup-meta.json';
+// Longitud mínima de la contraseña de la copia (el KDF de ZIP-AES es PBKDF2-SHA1;
+// se compensa exigiendo una contraseña larga).
+const BACKUP_MIN_PASSWORD = 12;
+
+// API: Descargar copia de seguridad del usuario como .zip cifrado con AES-256.
+// POST (no GET) porque la contraseña viaja en el cuerpo, nunca en la URL.
+app.post('/api/users/:userId/backup', requireAuth, backupLimiter, (req, res) => {
   const userId = (req as any).userId;
   if (userId !== req.params.userId) {
     return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  const password = (req.body?.password ?? '') as string;
+  if (typeof password !== 'string' || password.length < BACKUP_MIN_PASSWORD) {
+    return res.status(400).json({ error: `La contraseña debe tener al menos ${BACKUP_MIN_PASSWORD} caracteres` });
+  }
+  // 7-Zip malinterpreta caracteres no-ASCII en la contraseña por argv según el
+  // codepage del SO (falla en Windows, ambiguo entre locales). Restringir a ASCII
+  // imprimible garantiza que la copia se restaure igual en cualquier plataforma.
+  if (!/^[\x20-\x7E]+$/.test(password)) {
+    return res.status(400).json({ error: 'La contraseña solo admite caracteres ASCII imprimibles' });
   }
 
   let userDataDir: string;
@@ -2335,8 +2435,8 @@ app.get('/api/users/:userId/backup', requireAuth, (req, res) => {
   const username = userRecord?.username ?? userId;
   const date = new Date().toISOString().split('T')[0];
 
-  // Write metadata JSON to temp file
-  const tmpMeta = path.join(os.tmpdir(), `meta_${userId}_${Date.now()}.json`);
+  // Metadatos incrustados dentro del árbol del usuario (se archivan con el resto).
+  const metaPath = path.join(userDataDir, BACKUP_META_FILENAME);
   const meta = {
     exportedAt: new Date().toISOString(),
     user: { id: userId, username: userRecord?.username, email: userRecord?.email },
@@ -2345,26 +2445,231 @@ app.get('/api/users/:userId/backup', requireAuth, (req, res) => {
       database.projects.some(p => p.userId === userId && p.id === f.projectId)
     )
   };
-  fs.writeFileSync(tmpMeta, JSON.stringify(meta, null, 2));
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
-  const filename = `backup_${username}_${date}.tar.gz`;
-  res.setHeader('Content-Type', 'application/gzip');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  const tmpZip = path.join(os.tmpdir(), `backup_${userId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.zip`);
+  const cleanupMeta = () => { try { fs.unlinkSync(metaPath); } catch {} };
 
-  const tar = spawn('tar', [
-    '-czf', '-',
-    '-C', userDataDir, '.',
-    '-C', os.tmpdir(),
-    path.basename(tmpMeta)
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // 7-Zip escribe a un archivo (no hace streaming fiable de zip cifrado): generamos
+  // el .zip AES-256 y luego lo transmitimos. La contraseña va como un único token
+  // argv (spawn sin shell), a salvo de inyección.
+  //
+  // Archivamos con un patrón comodín absoluto (userDataDir/*) — NO con { cwd: userDataDir }
+  // ni '.' — y guardamos rutas relativas a userDataDir igualmente.
+  //
+  // En Windows usamos spawnSync: un ChildProcess ASÍNCRONO deja abierto un handle sobre
+  // el árbol del usuario que persiste tras salir el proceso y luego bloquea el rename
+  // durante una restauración (EPERM). spawnSync libera todo de forma síncrona. En Linux
+  // (producción) no ocurre y preferimos spawn asíncrono para no bloquear el event loop.
+  const zipArgs = ['a', '-tzip', '-mem=AES256', '-mx=5', '-r', `-p${password}`, tmpZip, path.join(userDataDir, '*')];
+  const safeName = username.replace(/[^a-zA-Z0-9._\-]/g, '_');
+  const streamZip = () => {
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="backup_${safeName}_${date}.zip"`);
+    const stream = fs.createReadStream(tmpZip);
+    const removeZip = () => { try { fs.unlinkSync(tmpZip); } catch {} };
+    stream.pipe(res);
+    stream.on('close', removeZip);
+    stream.on('error', removeZip);
+    res.on('close', removeZip);
+  };
 
-  tar.stdout.pipe(res);
-  tar.stderr.on('data', (d: Buffer) => console.error('[BACKUP]', d.toString()));
-  tar.on('close', () => {
-    try { fs.unlinkSync(tmpMeta); } catch {}
+  if (process.platform === 'win32') {
+    const result = spawnSync(SEVENZIP, zipArgs, { encoding: 'utf8' });
+    cleanupMeta();
+    if (result.status !== 0) {
+      try { fs.unlinkSync(tmpZip); } catch {}
+      console.error('[BACKUP] 7z exit', result.status, result.stderr);
+      return res.status(500).json({ error: 'Error al generar la copia de seguridad' });
+    }
+    return streamZip();
+  }
+
+  const sz = spawn(SEVENZIP, zipArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let szErr = '';
+  sz.stdout.on('data', () => {}); // drenar
+  sz.stderr.on('data', (d: Buffer) => { szErr += d.toString(); });
+  sz.on('close', (code) => {
+    cleanupMeta();
+    if (code !== 0) {
+      try { fs.unlinkSync(tmpZip); } catch {}
+      console.error('[BACKUP] 7z exit', code, szErr);
+      if (!res.headersSent) res.status(500).json({ error: 'Error al generar la copia de seguridad' });
+      return;
+    }
+    streamZip();
   });
-  res.on('close', () => {
-    if (tar.exitCode === null) tar.kill();
+  sz.on('error', (err) => {
+    cleanupMeta();
+    try { fs.unlinkSync(tmpZip); } catch {}
+    console.error('[BACKUP] spawn error', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Error al generar la copia de seguridad' });
+  });
+});
+
+// API: Restaurar la copia de seguridad del usuario (DESTRUCTIVO — reemplaza todo).
+// Sube el .zip cifrado + contraseña; valida antes de tocar nada, hace snapshot y
+// revierte si algo falla.
+app.post('/api/users/:userId/restore', requireAuth, restoreLimiter, (req, res) => {
+  const userId = (req as any).userId;
+  if (userId !== req.params.userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  restoreUpload.single('backup')(req, res, (uploadErr: any) => {
+    if (uploadErr) {
+      return res.status(400).json({ error: 'Error al subir el archivo: ' + (uploadErr.message || uploadErr) });
+    }
+    const file = req.file;
+    const password = (req.body?.password ?? '') as string;
+    if (!file) {
+      return res.status(400).json({ error: 'No se recibió ningún archivo' });
+    }
+
+    // multer (diskStorage) invoca este callback en el evento 'finish' del stream,
+    // pero en Windows el descriptor se cierra recién en 'close': mientras tanto el
+    // handle de escritura sigue abierto y 7-Zip (que abre con un share mode más
+    // estricto) falla con ERROR_SHARING_VIOLATION. Copiamos a una ruta que sí
+    // controlamos por completo (la copia no tiene ningún writer abierto) y operamos
+    // sobre ella; en Linux es inocuo. Node abre con share mode permisivo, así que la
+    // copia funciona aunque multer aún tenga el original abierto.
+    const uploadedZip = file.path;
+    const workZip = uploadedZip + '.work.zip';
+    const cleanupZip = () => {
+      try { fs.unlinkSync(workZip); } catch {}
+      try { fs.unlinkSync(uploadedZip); } catch {}
+    };
+    try {
+      fs.copyFileSync(uploadedZip, workZip);
+    } catch {
+      cleanupZip();
+      return res.status(400).json({ error: 'No se pudo leer el archivo subido' });
+    }
+
+    if (typeof password !== 'string' || password.length < 1) {
+      cleanupZip();
+      return res.status(400).json({ error: 'Contraseña requerida' });
+    }
+
+    let userDataDir: string;
+    try {
+      userDataDir = safePath(APP_DATA_DIR, userId);
+    } catch {
+      cleanupZip();
+      return res.status(400).json({ error: 'Ruta inválida' });
+    }
+
+    // 1. Probar contraseña + integridad ANTES de destruir nada.
+    const test = spawnSync(SEVENZIP, ['t', `-p${password}`, workZip], { encoding: 'utf8' });
+    if (test.status !== 0) {
+      cleanupZip();
+      return res.status(400).json({ error: 'Contraseña incorrecta o archivo inválido' });
+    }
+
+    // 2. Extraer a un dir de staging que es HERMANO de userDataDir (bajo APP_DATA_DIR).
+    //    Debe estar en el MISMO sistema de archivos que el destino: en producción
+    //    os.tmpdir() (/tmp) y el volumen de datos (pywi_data) son FS distintos, y mover
+    //    entre ellos con rename daría EXDEV. Como hermano, todos los rename son intra-FS.
+    const swapId = `${userId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const stagingDir = path.join(APP_DATA_DIR, `.restore_stage_${swapId}`);
+    const snapshotDir = path.join(APP_DATA_DIR, `.restore_snap_${swapId}`);
+    const cleanupStaging = () => { try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch {} };
+    fs.mkdirSync(stagingDir, { recursive: true });
+    const extract = spawnSync(SEVENZIP, ['x', '-y', `-p${password}`, `-o${stagingDir}`, workZip], { encoding: 'utf8' });
+    if (extract.status !== 0) {
+      cleanupZip(); cleanupStaging();
+      return res.status(400).json({ error: 'No se pudo extraer el archivo' });
+    }
+    // El zip ya no se necesita: liberar el temporal cuanto antes.
+    cleanupZip();
+
+    // 3. Leer y validar metadatos.
+    let meta: any;
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(stagingDir, BACKUP_META_FILENAME), 'utf8'));
+    } catch {
+      cleanupStaging();
+      return res.status(400).json({ error: 'El archivo no es una copia válida (faltan metadatos)' });
+    }
+    if (!meta || !Array.isArray(meta.projects) || !Array.isArray(meta.files)) {
+      cleanupStaging();
+      return res.status(400).json({ error: 'El archivo no es una copia válida (metadatos corruptos)' });
+    }
+
+    // 4. Guard anti zip-slip: cada entrada de nivel superior debe quedar dentro del
+    //    dir de staging (safePath lanza si escapa).
+    let topEntries: string[];
+    try {
+      topEntries = fs.readdirSync(stagingDir);
+      for (const name of topEntries) safePath(stagingDir, name);
+    } catch {
+      cleanupStaging();
+      return res.status(400).json({ error: 'Archivo de copia inseguro' });
+    }
+
+    // 5-7. Snapshot + reemplazo + actualización de db.json (rollback si algo falla).
+    //
+    // Sincronización a NIVEL DE FICHERO: nunca renombramos ni borramos un directorio
+    // existente. En Windows, 7-Zip deja un handle abierto sobre cada directorio que toca
+    // (al archivar en el backup y al extraer aquí), lo que hace fallar rename/rm del
+    // directorio con EPERM; pero crear, sobrescribir y borrar FICHEROS dentro sí está
+    // permitido. Así que copiamos el backup encima y podamos los ficheros sobrantes.
+    // (En Linux esto también es correcto; solo cuesta una copia extra, aceptable por ser
+    // una operación rara y con límite de tasa.)
+    const database = readDB();
+    const dbBackupRaw = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE) : null;
+    const prevProjectIds = new Set(database.projects.filter(p => p.userId === userId).map(p => p.id));
+    // Quitar los metadatos del staging para poder copiarlo entero encima.
+    try { fs.unlinkSync(path.join(stagingDir, BACKUP_META_FILENAME)); } catch {}
+    let snapshotMade = false;
+
+    const pruneFiles = (dir: string, keep: Set<string>) => {
+      for (const rel of listRelFiles(dir)) {
+        if (!keep.has(rel)) {
+          try { fsRetry(() => fs.rmSync(safePath(dir, ...rel.split('/')), { force: true })); } catch {}
+        }
+      }
+    };
+
+    try {
+      fs.mkdirSync(userDataDir, { recursive: true });
+      // 5. Snapshot del árbol actual (copia; solo lee ficheros y escribe en un dir nuevo).
+      fs.cpSync(userDataDir, snapshotDir, { recursive: true });
+      snapshotMade = true;
+
+      // 6a. Podar: borrar ficheros que ya no están en el backup (borrar ficheros sí se permite).
+      const backupFiles = new Set(listRelFiles(stagingDir));
+      pruneFiles(userDataDir, backupFiles);
+      // 6b. Aplicar: copiar el contenido del backup encima (crea/sobrescribe ficheros y subdirs).
+      fs.cpSync(stagingDir, userDataDir, { recursive: true, force: true });
+
+      // 7. db.json: quitar proyectos/archivos del usuario e insertar los del backup
+      //    (forzando userId al usuario actual; nunca se toca su identidad/credenciales).
+      const restoredProjects = meta.projects.map((p: any) => ({ ...p, userId }));
+      const restoredProjectIds = new Set(restoredProjects.map((p: any) => p.id));
+      const restoredFiles = meta.files.filter((f: any) => restoredProjectIds.has(f.projectId));
+      database.projects = [...database.projects.filter(p => p.userId !== userId), ...restoredProjects];
+      database.files = [...database.files.filter(f => !prevProjectIds.has(f.projectId)), ...restoredFiles];
+      writeDB(database);
+
+      // 8. Éxito: descartar snapshot y staging (best-effort; dirs con handle pueden quedar).
+      try { fs.rmSync(snapshotDir, { recursive: true, force: true }); } catch {}
+      cleanupStaging();
+      return res.json({ success: true, projects: restoredProjects.length, files: restoredFiles.length });
+    } catch (err: any) {
+      // 9. Rollback a nivel de fichero: podar todo lo actual y recopiar desde el snapshot.
+      console.error('[RESTORE] Falló, revirtiendo:', err?.message || err);
+      if (snapshotMade) {
+        try {
+          pruneFiles(userDataDir, new Set(listRelFiles(snapshotDir)));
+          fs.cpSync(snapshotDir, userDataDir, { recursive: true, force: true });
+        } catch (e) { console.error('[RESTORE] Rollback incompleto:', e); }
+      }
+      if (dbBackupRaw) { try { fs.writeFileSync(DB_FILE, dbBackupRaw); } catch {} }
+      try { fs.rmSync(snapshotDir, { recursive: true, force: true }); } catch {}
+      cleanupStaging();
+      return res.status(500).json({ error: 'Error al restaurar. Se revirtió al estado anterior.' });
+    }
   });
 });
 

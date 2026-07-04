@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Settings, Mail, Code, Lock, Users, UserPlus, Trash2, Sparkles } from 'lucide-react';
+import { X, Settings, Mail, Code, Lock, Users, UserPlus, Trash2, Sparkles, DatabaseBackup, Upload, AlertTriangle, Loader2 } from 'lucide-react';
 import { useT, useLang } from '../i18n';
 import { UserSettings, AIConfig } from '../types';
 import { isValidPassword } from '../utils/passwordPolicy';
@@ -21,7 +21,7 @@ interface SettingsModalProps {
   userSettings: UserSettings;
   activeTheme?: string;
   onSettingsSaved: (settings: UserSettings) => void;
-  initialTab?: 'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai';
+  initialTab?: 'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai' | 'backup';
   onAiConfigSaved?: (cfg: AIConfig) => void;
 }
 
@@ -39,7 +39,7 @@ export default function SettingsModal({
   const t = useT();
   const { setLang } = useLang();
 
-  const [activeTab, setActiveTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>(initialTab || 'editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai' | 'backup'>(initialTab || 'editor');
   const [localSettings, setLocalSettings] = useState<UserSettings>(userSettings);
   const [smtpConfig, setSmtpConfig] = useState({
     host: '',
@@ -73,6 +73,20 @@ export default function SettingsModal({
   const [creatingUser, setCreatingUser] = useState(false);
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
+
+  // Backup (download) state
+  const [backupPassword, setBackupPassword] = useState('');
+  const [backupPasswordConfirm, setBackupPasswordConfirm] = useState('');
+  const [backupError, setBackupError] = useState('');
+
+  // Restore state
+  const restoreFileRef = useRef<HTMLInputElement>(null);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restorePassword, setRestorePassword] = useState('');
+  const [restoreError, setRestoreError] = useState('');
+  const [restoreMessage, setRestoreMessage] = useState('');
+  const [restoreConfirm, setRestoreConfirm] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // AI config state
   const [aiConfig, setAiConfig] = useState<AIConfig>({
@@ -231,30 +245,91 @@ export default function SettingsModal({
   };
 
   const handleDownloadBackup = async () => {
+    setBackupError('');
+    if (backupPassword.length < 12) {
+      setBackupError(t('backupPasswordTooShort'));
+      return;
+    }
+    if (!/^[\x20-\x7E]+$/.test(backupPassword)) {
+      setBackupError(t('backupPasswordCharset'));
+      return;
+    }
+    if (backupPassword !== backupPasswordConfirm) {
+      setBackupError(t('backupPasswordMismatch'));
+      return;
+    }
     setBackupLoading(true);
     const token = localStorage.getItem('py_ide_token');
     try {
       const res = await fetch(`/api/users/${userId}/backup`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ password: backupPassword })
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setSmtpMessage(data.error || t('backupError'));
+        setBackupError(data.error || t('backupError'));
         return;
       }
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const filename = match?.[1] || `backup_${userId}.zip`;
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = `backup_${userId}.tar.gz`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
+      setBackupPassword('');
+      setBackupPasswordConfirm('');
     } catch {
-      setSmtpMessage(t('backupError'));
+      setBackupError(t('backupError'));
     } finally {
       setBackupLoading(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setRestoreError('');
+    setRestoreMessage('');
+    if (!restoreFile) {
+      setRestoreError(t('restoreNoFile'));
+      return;
+    }
+    if (!restorePassword) {
+      setRestoreError(t('restorePasswordLabel'));
+      return;
+    }
+    setRestoreConfirm(false);
+    setRestoring(true);
+    const token = localStorage.getItem('py_ide_token');
+    try {
+      const formData = new FormData();
+      formData.append('backup', restoreFile);
+      formData.append('password', restorePassword);
+      const res = await fetch(`/api/users/${userId}/restore`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRestoreError(data.error || t('restoreError'));
+        return;
+      }
+      setRestoreMessage(t('restoreSuccess'));
+      // Recargar para que la app relea el estado restaurado (proyectos/archivos).
+      setTimeout(() => window.location.reload(), 900);
+    } catch {
+      setRestoreError(t('restoreError'));
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -429,10 +504,12 @@ export default function SettingsModal({
         header: 'bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-200',
         title: 'text-slate-800 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded transition-colors',
-        tabBar: 'flex border-b border-slate-200 bg-slate-50 overflow-x-auto scrollbar-thin',
-        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
+        tabBar: 'flex min-w-0 border-b border-slate-200 bg-slate-50 overflow-x-auto scrollbar-thin',
+        tab: 'flex items-center gap-1.5 sm:gap-2 px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
         tabActive: 'text-indigo-600 border-indigo-500',
         tabInactive: 'text-slate-400 border-transparent hover:text-slate-600',
+        tabFadeLeft: 'bg-gradient-to-r from-slate-50 to-transparent',
+        tabFadeRight: 'bg-gradient-to-l from-slate-50 to-transparent',
         content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-white',
         input: 'w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded text-slate-800 text-sm focus:outline-none focus:border-indigo-400',
         label: 'block text-xs font-bold uppercase text-slate-500 mb-1.5',
@@ -451,10 +528,12 @@ export default function SettingsModal({
         header: 'bg-[#080808] px-6 py-4 flex items-center justify-between border-b border-neutral-900',
         title: 'text-neutral-100 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-neutral-900 text-neutral-400 hover:text-neutral-100 rounded transition-colors',
-        tabBar: 'flex border-b border-neutral-900 bg-[#080808] overflow-x-auto scrollbar-thin',
-        tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
+        tabBar: 'flex min-w-0 border-b border-neutral-900 bg-[#080808] overflow-x-auto scrollbar-thin',
+        tab: 'flex items-center gap-1.5 sm:gap-2 px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
         tabActive: 'text-indigo-400 border-indigo-500',
         tabInactive: 'text-neutral-500 border-transparent hover:text-neutral-300',
+        tabFadeLeft: 'bg-gradient-to-r from-[#080808] to-transparent',
+        tabFadeRight: 'bg-gradient-to-l from-[#080808] to-transparent',
         content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-black',
         input: 'w-full px-3 py-2 bg-neutral-900/50 border border-neutral-800 rounded text-neutral-200 text-sm focus:outline-none focus:border-indigo-500',
         label: 'block text-xs font-bold uppercase text-neutral-400 mb-1.5',
@@ -472,10 +551,12 @@ export default function SettingsModal({
       header: 'bg-slate-900 px-6 py-4 flex items-center justify-between border-b border-slate-800',
       title: 'text-slate-100 font-semibold flex items-center gap-2',
       closeBtn: 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors',
-      tabBar: 'flex border-b border-slate-800 bg-slate-900 overflow-x-auto scrollbar-thin',
-      tab: 'flex items-center gap-2 px-4 py-3 text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
+      tabBar: 'flex min-w-0 border-b border-slate-800 bg-slate-900 overflow-x-auto scrollbar-thin',
+      tab: 'flex items-center gap-1.5 sm:gap-2 px-3 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium cursor-pointer transition-colors border-b-2 shrink-0 whitespace-nowrap',
       tabActive: 'text-indigo-400 border-indigo-500',
       tabInactive: 'text-slate-500 border-transparent hover:text-slate-300',
+      tabFadeLeft: 'bg-gradient-to-r from-slate-900 to-transparent',
+      tabFadeRight: 'bg-gradient-to-l from-slate-900 to-transparent',
       content: 'flex-1 overflow-y-auto p-6 space-y-5 bg-[#0b0f19]',
       input: 'w-full px-3 py-2 bg-slate-800/50 border border-slate-700 rounded text-slate-200 text-sm focus:outline-none focus:border-indigo-500',
       label: 'block text-xs font-bold uppercase text-slate-400 mb-1.5',
@@ -520,7 +601,12 @@ export default function SettingsModal({
           </div>
 
           {/* Tabs */}
-          <div className={c.tabBar}>
+          <div className="relative min-w-0">
+            {/* Pista visual de scroll en móvil: la barra ya es deslizable (overflow-x-auto),
+                estos degradados solo indican que hay más pestañas fuera de vista. */}
+            <div className={`${c.tabFadeLeft} absolute inset-y-0 left-0 w-6 z-10 sm:hidden pointer-events-none`} />
+            <div className={`${c.tabFadeRight} absolute inset-y-0 right-0 w-6 z-10 sm:hidden pointer-events-none`} />
+            <div className={c.tabBar}>
             <button
               onClick={() => setActiveTab('editor')}
               className={`${c.tab} ${activeTab === 'editor' ? c.tabActive : c.tabInactive}`}
@@ -532,7 +618,7 @@ export default function SettingsModal({
               onClick={() => setActiveTab('language')}
               className={`${c.tab} ${activeTab === 'language' ? c.tabActive : c.tabInactive}`}
             >
-              <span className="text-lg">🌐</span>
+              <span className="text-base sm:text-lg">🌐</span>
               {t('language')}
             </button>
             <button
@@ -565,6 +651,14 @@ export default function SettingsModal({
               <Sparkles className="h-4 w-4" />
               {t('aiTabLabel')}
             </button>
+            <button
+              onClick={() => setActiveTab('backup')}
+              className={`${c.tab} ${activeTab === 'backup' ? c.tabActive : c.tabInactive}`}
+            >
+              <DatabaseBackup className="h-4 w-4" />
+              {t('backupTab')}
+            </button>
+            </div>
           </div>
 
           {/* Content */}
@@ -969,23 +1063,134 @@ export default function SettingsModal({
                 </div>
               </div>
             )}
+
+            {/* Backup Tab */}
+            {activeTab === 'backup' && (
+              <div className="space-y-6">
+                {/* Descargar copia cifrada */}
+                <div className="space-y-3">
+                  <p className="text-xs font-bold uppercase text-slate-400 flex items-center gap-1.5">
+                    <DatabaseBackup className="h-3.5 w-3.5" /> {t('backupSectionTitle')}
+                  </p>
+                  <p className="text-xs text-slate-400">{t('backupDesc')}</p>
+                  <div>
+                    <label className={c.label}>{t('backupPasswordLabel')}</label>
+                    <input
+                      type="password"
+                      value={backupPassword}
+                      onChange={e => { setBackupPassword(e.target.value); setBackupError(''); }}
+                      className={c.input}
+                      placeholder="••••••••"
+                    />
+                    <PasswordStrengthMeter password={backupPassword} dark />
+                  </div>
+                  <div>
+                    <label className={c.label}>{t('backupPasswordConfirmLabel')}</label>
+                    <input
+                      type="password"
+                      value={backupPasswordConfirm}
+                      onChange={e => { setBackupPasswordConfirm(e.target.value); setBackupError(''); }}
+                      className={c.input}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500">{t('backupPasswordHint')}</p>
+                  {backupError && <p className="text-xs text-red-400">{backupError}</p>}
+                  <button onClick={handleDownloadBackup} disabled={backupLoading} className={c.button}>
+                    {backupLoading ? t('backupGenerating') : t('backupDownload')}
+                  </button>
+                </div>
+
+                <div className="border-t border-slate-800/60" />
+
+                {/* Restaurar copia (destructivo) */}
+                <div className="space-y-3">
+                  <p className="text-xs font-bold uppercase text-slate-400 flex items-center gap-1.5">
+                    <Upload className="h-3.5 w-3.5" /> {t('restoreTitle')}
+                  </p>
+                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                    <span className="text-xs text-amber-300">{t('restoreWarning')}</span>
+                  </div>
+                  <div>
+                    <label className={c.label}>{t('restoreFileLabel')}</label>
+                    <input
+                      ref={restoreFileRef}
+                      type="file"
+                      accept=".zip"
+                      className="hidden"
+                      onChange={e => { setRestoreFile(e.target.files?.[0] || null); setRestoreError(''); setRestoreMessage(''); setRestoreConfirm(false); }}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => restoreFileRef.current?.click()} className={c.buttonSecondary}>
+                        {t('restoreChooseFile')}
+                      </button>
+                      <span className="text-xs text-slate-400 truncate">{restoreFile?.name || '—'}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className={c.label}>{t('restorePasswordLabel')}</label>
+                    <input
+                      type="password"
+                      value={restorePassword}
+                      onChange={e => { setRestorePassword(e.target.value); setRestoreError(''); }}
+                      className={c.input}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  {restoreError && <p className="text-xs text-red-400">{restoreError}</p>}
+                  {restoreMessage && <p className="text-xs text-emerald-400">{restoreMessage}</p>}
+                  {!restoreConfirm ? (
+                    <button
+                      onClick={() => {
+                        setRestoreError('');
+                        if (!restoreFile) { setRestoreError(t('restoreNoFile')); return; }
+                        if (!restorePassword) { setRestoreError(t('restorePasswordLabel')); return; }
+                        setRestoreConfirm(true);
+                      }}
+                      disabled={restoring}
+                      className="px-4 py-2 rounded text-sm font-medium transition-colors bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+                    >
+                      {t('restoreButton')}
+                    </button>
+                  ) : (
+                    <div className="rounded-md border border-red-700/50 bg-red-950/40 px-3 py-2 space-y-2">
+                      <p className="text-xs text-red-300">{t('restoreConfirmQuestion')}</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleRestore}
+                          disabled={restoring}
+                          className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded transition-colors disabled:opacity-50"
+                        >
+                          {t('restoreConfirmYes')}
+                        </button>
+                        <button
+                          onClick={() => setRestoreConfirm(false)}
+                          disabled={restoring}
+                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold rounded transition-colors"
+                        >
+                          {t('restoreConfirmNo')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Restore progress overlay */}
+          {restoring && (
+            <div className="fixed inset-0 z-[60] bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+              <Loader2 className="h-10 w-10 text-indigo-400 animate-spin" />
+              <span className="text-sm text-slate-200 font-medium">{t('restoreInProgress')}</span>
+            </div>
+          )}
 
           {/* Footer */}
           <div className={c.footer}>
-            {/* Left side — backup (independent action, always available in editor tab) */}
-            <div>
-              {activeTab === 'editor' && (
-                <button
-                  onClick={handleDownloadBackup}
-                  disabled={backupLoading}
-                  className={c.buttonSecondary}
-                  title={t('backupDesc')}
-                >
-                  {backupLoading ? t('backupGenerating') : t('backupDownload')}
-                </button>
-              )}
-            </div>
+            {/* Left side — reserved (backup moved to its own tab) */}
+            <div />
             {/* Right side — save / cancel */}
             <div className="flex gap-2">
             {(activeTab === 'editor' || activeTab === 'language') && (

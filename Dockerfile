@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
     gosu \
+    p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 # node_modules compilado desde el stage deps.
