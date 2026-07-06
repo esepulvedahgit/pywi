@@ -1494,11 +1494,11 @@ app.post('/api/pip/update', requireAuth, (req, res) => {
   });
 });
 
-// API: Check if admin exists (public — used by frontend to hide register tab)
+// API: Check if initial setup (first admin) is complete (public — used by frontend to hide register tab)
 app.get('/api/auth/admin-exists', adminExistsLimiter, (req, res) => {
   const database = readDB();
-  const adminExists = database.users.some(u => u.role === 'admin');
-  res.json({ adminExists });
+  const setupComplete = database.users.some(u => u.role === 'admin');
+  res.json({ setupComplete });
 });
 
 // API: Auth registration (only allowed when no users exist; first user becomes admin)
@@ -1506,6 +1506,9 @@ app.post('/api/auth/register', async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
+    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+  }
+  if (typeof username !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: 'Todos los campos son obligatorios' });
   }
   const pwError = validatePassword(password);
@@ -1744,6 +1747,12 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
   if (!model || typeof model !== 'string' || model.length > 100) {
     return res.status(400).json({ error: 'Nombre de modelo inválido' });
   }
+  if (apiKey !== undefined && typeof apiKey !== 'string') {
+    return res.status(400).json({ error: 'API key inválida' });
+  }
+  if (baseUrl !== undefined && typeof baseUrl !== 'string') {
+    return res.status(400).json({ error: 'Base URL inválida' });
+  }
 
   const database = readDB();
   const user = database.users.find(u => u.id === userId);
@@ -1822,8 +1831,8 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
   const validProviders = ['openai', 'deepseek', 'gemini', 'custom'];
   const provider: string = (body.provider && validProviders.includes(body.provider))
     ? body.provider : (cfg?.provider || '');
-  const model: string = body.model?.trim() || cfg?.model || '';
-  const baseUrl: string | undefined = body.baseUrl?.trim() || cfg?.baseUrl;
+  const model: string = (typeof body.model === 'string' ? body.model.trim() : '') || cfg?.model || '';
+  const baseUrl: string | undefined = (typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '') || cfg?.baseUrl;
 
   if (!provider) {
     return res.status(400).json({ error: 'Proveedor IA inválido o no configurado.' });
@@ -1833,7 +1842,7 @@ app.post('/api/ai/test', requireAuth, async (req, res) => {
   }
 
   // Key resolution: real key from body → stored encrypted key → nothing
-  const bodyKey: string = (body.apiKey && body.apiKey !== '••••••') ? body.apiKey.trim() : '';
+  const bodyKey: string = (typeof body.apiKey === 'string' && body.apiKey !== '••••••') ? body.apiKey.trim() : '';
   let plainKey = bodyKey; // body key arrives in plain text
   if (!plainKey && cfg?.apiKey) {
     plainKey = decryptApiKey(cfg.apiKey) || '';
@@ -2195,6 +2204,9 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'Todos los campos son obligatorios' });
   }
+  if (typeof username !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+  }
   const pwError2 = validatePassword(password);
   if (pwError2) return res.status(400).json({ error: pwError2 });
 
@@ -2440,14 +2452,18 @@ app.post('/api/auth/reset-password', authStrictLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Usuario no encontrado' });
   }
 
-  user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-  user.passwordChangedAt = Math.floor(Date.now() / 1000);
+  try {
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    user.passwordChangedAt = Math.floor(Date.now() / 1000);
 
-  // Invalidar TODOS los tokens de reset del usuario, no solo el usado
-  database.resetTokens = database.resetTokens.filter(t => t.userId !== resetToken.userId);
-  writeDB(database);
+    // Invalidar TODOS los tokens de reset del usuario, no solo el usado
+    database.resetTokens = database.resetTokens.filter(t => t.userId !== resetToken.userId);
+    writeDB(database);
 
-  res.json({ success: true, message: 'Contraseña restablecida' });
+    res.json({ success: true, message: 'Contraseña restablecida' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Error al restablecer la contraseña' });
+  }
 });
 
 // Nombre del archivo de metadatos incrustado en cada copia (proyectos + archivos

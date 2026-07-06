@@ -69,7 +69,7 @@ function AppContent() {
   });
   // Persistimos el bloqueo para que sobreviva a un refresco del navegador
   const [isLocked, setIsLocked] = useState(() => localStorage.getItem('py_ide_locked') === '1');
-  const [adminExists, setAdminExists] = useState<boolean>(true);
+  const [setupComplete, setSetupComplete] = useState<boolean>(true);
 
   // Publica el viewport VISIBLE como variables CSS para que el root y los paneles fijos
   // abracen exactamente el área visible sin dejar huecos negros debajo del teclado.
@@ -107,8 +107,8 @@ function AppContent() {
   useEffect(() => {
     fetch('/api/auth/admin-exists')
       .then(r => r.json())
-      .then(d => setAdminExists(d.adminExists))
-      .catch(() => setAdminExists(true));
+      .then(d => setSetupComplete(d.setupComplete))
+      .catch(() => setSetupComplete(true));
   }, []);
 
   // User settings & language state
@@ -1136,7 +1136,7 @@ function AppContent() {
   };
 
   if (!user) {
-    return <AuthScreen onLoginSuccess={handleLoginSuccess} adminExists={adminExists} />;
+    return <AuthScreen onLoginSuccess={handleLoginSuccess} setupComplete={setupComplete} />;
   }
 
   const t = getThemeClasses(activeTheme);

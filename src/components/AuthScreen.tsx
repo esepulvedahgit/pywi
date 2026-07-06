@@ -7,10 +7,10 @@ import PasswordStrengthMeter from './PasswordStrengthMeter';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: User) => void;
-  adminExists: boolean;
+  setupComplete: boolean;
 }
 
-export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenProps) {
+export default function AuthScreen({ onLoginSuccess, setupComplete }: AuthScreenProps) {
   const t = useT();
   const [view, setView] = useState<'login' | 'register' | 'forgot'>('login');
   const isRegistering = view === 'register';
@@ -135,7 +135,7 @@ export default function AuthScreen({ onLoginSuccess, adminExists }: AuthScreenPr
                 {t('forgotPasswordTitle')}
               </p>
             </div>
-          ) : !adminExists ? (
+          ) : !setupComplete ? (
             <div className="flex border-b border-slate-200 mb-6" id="auth-tab">
               <button
                 onClick={() => { setView('login'); setError(''); }}

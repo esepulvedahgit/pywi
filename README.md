@@ -21,9 +21,9 @@
 
 ## ¿Qué es PyWI? / What is PyWI?
 
-**ES:** PyWI es un entorno de desarrollo Python accesible desde el navegador, diseñado para estudiar Python, librerías de datos y machine learning básico. Incluye editor de código, ejecución con salida en vivo, visualización de gráficos, gestor de paquetes, visor de datasets y un tutor IA integrado. Funciona completamente desde móvil y es 100% auto-alojable.
+**ES:** PyWI es un entorno de desarrollo Python accesible desde el navegador, diseñado para estudiar Python, librerías de datos y machine learning básico. Incluye editor de código, una terminal interactiva real (con soporte para `input()`), visualización de gráficos, gestor de paquetes, visor de datasets, tutor IA integrado y copias de seguridad cifradas con restauración. Funciona completamente desde móvil y es 100% auto-alojable.
 
-**EN:** PyWI is a browser-based Python development environment designed for studying Python, data libraries, and basic machine learning. It includes a code editor, live output streaming, chart visualization, package manager, dataset viewer, and an integrated AI tutor. Fully mobile-friendly and 100% self-hostable.
+**EN:** PyWI is a browser-based Python development environment designed for studying Python, data libraries, and basic machine learning. It includes a code editor, a real interactive terminal (with `input()` support), chart visualization, package manager, dataset viewer, integrated AI tutor, and encrypted backups with restore. Fully mobile-friendly and 100% self-hostable.
 
 ---
 
@@ -62,7 +62,8 @@
 |---|---|
 | **Frontend** | React 19, Vite, CodeMirror 6, Tailwind CSS, TypeScript |
 | **Backend** | Node.js 20, Express, TypeScript, esbuild |
-| **Runtime Python** | Python 3.11, venv, pandas, numpy, matplotlib, seaborn, scikit-learn |
+| **Terminal interactiva** | xterm.js, node-pty, WebSocket (soporta `input()` en vivo) |
+| **Runtime Python** | Python 3.11, venv, pandas, numpy, matplotlib, seaborn, scikit-learn, openpyxl, xlrd, pyarrow |
 | **Tutor IA / AI Tutor** | OpenAI, DeepSeek, Google Gemini, custom (OpenAI-compatible) |
 | **Seguridad / Security** | JWT, bcryptjs, AES-256-GCM (API keys at rest) |
 | **Infraestructura** | Docker, Docker Compose |
