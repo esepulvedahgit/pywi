@@ -24,6 +24,15 @@ if (!process.env.JWT_SECRET) {
 }
 const JWT_SECRET = process.env.JWT_SECRET as string;
 
+// Process-level safety net: an uncaught error in any single request must never
+// take down the server for every other user. Log it and keep running instead.
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL-CAUGHT] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL-CAUGHT] unhandledRejection:', reason);
+});
+
 // ── Encryption helpers for AI API keys ────────────────────────────────────────
 // Keys are stored as AES-256-GCM ciphertext in db.json.
 // Format on disk: "enc:v1:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
@@ -1130,6 +1139,13 @@ const authStrictLimiter = rateLimit({
   message: { error: 'Demasiados intentos. Inténtalo de nuevo en 15 minutos.' }
 });
 
+const adminExistsLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  message: { error: 'Demasiadas solicitudes. Inténtalo de nuevo en un minuto.' }
+});
+
 const runLimiter = rateLimit({
   ...baseLimiterOpts,
   windowMs: 60 * 1000, // 1 minute
@@ -1161,7 +1177,7 @@ const restoreLimiter = rateLimit({
 });
 
 // API: Venv status & stats
-app.get('/api/pip/status', (req, res) => {
+app.get('/api/pip/status', requireAuth, (req, res) => {
   res.json({
     success: true,
     hasPython,
@@ -1221,7 +1237,7 @@ function restoreUserPackages(userId: string, packages: string[]): void {
 }
 
 // API: Get venv installed packages
-app.get('/api/pip/packages', (req, res) => {
+app.get('/api/pip/packages', requireAuth, (req, res) => {
   res.json({
     success: true,
     packages: hasPython ? installedPackagesList : mockPackages
@@ -1479,7 +1495,7 @@ app.post('/api/pip/update', requireAuth, (req, res) => {
 });
 
 // API: Check if admin exists (public — used by frontend to hide register tab)
-app.get('/api/auth/admin-exists', (req, res) => {
+app.get('/api/auth/admin-exists', adminExistsLimiter, (req, res) => {
   const database = readDB();
   const adminExists = database.users.some(u => u.role === 'admin');
   res.json({ adminExists });
@@ -4088,6 +4104,15 @@ async function startServer() {
     } else {
       res.status(404).send('index.html not found. Run: npm run build');
     }
+  });
+
+  // Catch-all Express error handler: any sync/async error thrown by a route
+  // that wasn't already caught locally ends here as a generic 500 instead of
+  // crashing the process or leaking a stack trace to the client.
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[FATAL-CAUGHT] Express error handler:', err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: 'Error interno del servidor' });
   });
 
   const httpServer = http.createServer(app);

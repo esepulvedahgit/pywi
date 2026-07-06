@@ -81,19 +81,21 @@ export default function PackageManagerModal({
 
   const fetchStatusAndPackages = async () => {
     try {
-      const resStatus = await fetch('/api/pip/status');
+      const token = localStorage.getItem('py_ide_token');
+      const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+      const resStatus = await fetch('/api/pip/status', { headers: authHeaders });
       const dataStatus = await resStatus.json();
       setStatus(dataStatus);
 
-      const resPkgs = await fetch('/api/pip/packages');
+      const resPkgs = await fetch('/api/pip/packages', { headers: authHeaders });
       const dataPkgs = await resPkgs.json();
       if (dataPkgs.success && Array.isArray(dataPkgs.packages)) {
         setPackages(dataPkgs.packages);
       }
 
-      const token = localStorage.getItem('py_ide_token');
       const resSecurity = await fetch('/api/system/security', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: authHeaders
       });
       if (resSecurity.ok) {
         const dataSecurity = await resSecurity.json();
@@ -123,12 +125,15 @@ export default function PackageManagerModal({
       // Periodically refresh if venv base packages are installing in the background
       const interval = setInterval(async () => {
         try {
-          const res = await fetch('/api/pip/status');
+          const token = localStorage.getItem('py_ide_token');
+          const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+          const res = await fetch('/api/pip/status', { headers: authHeaders });
           const data = await res.json();
           setStatus(data);
           if (!data.installingBase) {
             // Once base packages installation finishes, pull the updated library list and stop interval
-            const resPkgs = await fetch('/api/pip/packages');
+            const resPkgs = await fetch('/api/pip/packages', { headers: authHeaders });
             const dataPkgs = await resPkgs.json();
             if (dataPkgs.success && Array.isArray(dataPkgs.packages)) {
               setPackages(dataPkgs.packages);
