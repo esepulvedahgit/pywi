@@ -18,7 +18,8 @@ import {
   Eye,
   Clipboard,
   Check,
-  FolderInput
+  FolderInput,
+  Lock
 } from 'lucide-react';
 import { FileOutput, Download, Eraser } from 'lucide-react';
 import { Project, FileItem, OutputFile } from '../types';
@@ -63,6 +64,10 @@ interface SidebarProps {
   onOpenPackageManager?: () => void;
   packageUpdateCount?: number;
   onPreviewDataset?: (file: FileItem) => void;
+  secretKeys?: string[];
+  secretError?: string | null;
+  onSaveSecret?: (key: string, value: string) => void;
+  onDeleteSecret?: (key: string) => void;
   outputFiles?: OutputFile[];
   onPreviewOutput?: (file: OutputFile) => void;
   onClearOutput?: () => void;
@@ -577,6 +582,10 @@ export default function Sidebar({
   onOpenPackageManager,
   packageUpdateCount = 0,
   onPreviewDataset,
+  secretKeys = [],
+  secretError = null,
+  onSaveSecret,
+  onDeleteSecret,
   outputFiles = [],
   onPreviewOutput,
   onClearOutput,
@@ -600,6 +609,9 @@ export default function Sidebar({
   const [scriptSessionFolders, setScriptSessionFolders] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [newSecretKey, setNewSecretKey] = useState('');
+  const [newSecretValue, setNewSecretValue] = useState('');
+  const [confirmDeleteSecretKey, setConfirmDeleteSecretKey] = useState<string | null>(null);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
   const [copiedDataset, setCopiedDataset] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -1468,6 +1480,98 @@ export default function Sidebar({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Secrets section — encrypted env vars, never files/datasets */}
+          <div>
+            <span className={`text-[10px] ${s.subText} uppercase font-bold tracking-wider flex items-center gap-1.5 mb-1`}>
+              <Lock className="h-3.5 w-3.5 text-amber-500" /> {t('secretSection')}
+            </span>
+            <p className={`text-[9px] ${s.subText} mb-2 pl-0.5`}>
+              {t('secretSectionHint')}
+            </p>
+
+            <div className="space-y-1 mb-2" id="secrets-list">
+              {secretKeys.map((key) => (
+                <div key={key}>
+                  <div className={`group flex items-center justify-between p-1.5 rounded-lg text-xs transition-all ${s.datasetInactive}`}>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                      <span className="font-mono truncate font-medium">{key}</span>
+                      <span className={`text-[9px] ${s.subText} shrink-0 font-mono`}>••••••</span>
+                    </div>
+                    <button
+                      onClick={() => setConfirmDeleteSecretKey(key)}
+                      className="p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 rounded transition-all shrink-0"
+                      title={t('secretDeleteTooltip')}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+
+                  {confirmDeleteSecretKey === key && (
+                    <div className={`mx-1 mb-1 px-2 py-1.5 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                      <span className={`text-[10px] ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('secretDeleteConfirm', { name: key })}</span>
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          onClick={() => { onDeleteSecret?.(key); setConfirmDeleteSecretKey(null); }}
+                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-bold rounded transition-colors"
+                        >
+                          {t('secretConfirmYes')}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteSecretKey(null)}
+                          className={`px-2 py-0.5 text-[9px] font-bold rounded transition-colors ${activeTheme === 'light' ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}
+                        >
+                          {t('secretConfirmNo')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {secretKeys.length === 0 && (
+                <p className={`text-[11px] ${s.subText} italic pl-5 py-1`}>{t('secretNoSecrets')}</p>
+              )}
+            </div>
+
+            {/* Add secret form */}
+            <div className="space-y-1.5 mb-2">
+              <input
+                type="text"
+                value={newSecretKey}
+                onChange={e => setNewSecretKey(e.target.value.toUpperCase())}
+                placeholder={t('secretKeyPlaceholder')}
+                className={`w-full px-2 py-1 rounded text-[11px] font-mono ${s.input}`}
+              />
+              <input
+                type="password"
+                value={newSecretValue}
+                onChange={e => setNewSecretValue(e.target.value)}
+                placeholder={t('secretValuePlaceholder')}
+                className={`w-full px-2 py-1 rounded text-[11px] ${s.input}`}
+              />
+              {secretError && <p className="text-[10px] text-red-400">{secretError}</p>}
+              <button
+                onClick={() => {
+                  if (!newSecretKey || !newSecretValue) return;
+                  onSaveSecret?.(newSecretKey, newSecretValue);
+                  setNewSecretKey('');
+                  setNewSecretValue('');
+                }}
+                className="w-full px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold rounded transition-colors"
+              >
+                {t('secretAddBtn')}
+              </button>
+            </div>
+
+            {/* Usage hint — the exact way to read a secret from a script */}
+            <div className="px-2 py-1.5 bg-slate-800 rounded-md border border-amber-600/30">
+              <p className="text-[9px] text-amber-400 font-bold mb-1 uppercase tracking-wide">{t('secretUsageHint')}</p>
+              <code className="text-[10px] text-amber-300 font-mono block whitespace-pre-wrap break-all">
+                from ide_env import get_secret{'\n'}get_secret('{newSecretKey || 'NOMBRE'}')
+              </code>
             </div>
           </div>
 

@@ -126,6 +126,7 @@ function AppContent() {
     provider: 'openai', model: '', baseUrl: '', enabled: false, hasKey: false, validated: false,
   });
   const [showAiNotice, setShowAiNotice] = useState(false);
+  const [importBlockedModule, setImportBlockedModule] = useState<string | null>(null);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'editor' | 'language' | 'smtp' | 'security' | 'users' | 'ai'>('editor');
   // aiCommand: dispatch a pre-filled message to the tutor from outside the panel
   const [aiCommand, setAiCommand] = useState<{ text: string; nonce: number } | null>(null);
@@ -308,8 +309,10 @@ function AppContent() {
     if (currentProject) {
       fetchFiles(currentProject.id);
       fetchOutputFiles(currentProject.id);
+      fetchSecretKeys(currentProject.id);
     } else {
       setOutputFiles([]);
+      setSecretKeys([]);
     }
   }, [currentProject]);
 
@@ -574,6 +577,57 @@ function AppContent() {
 
   // Upload notice: shown after dataset upload to remind user of correct path
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+
+  // Project secrets: only key names ever live in state, values never leave the server
+  const [secretKeys, setSecretKeys] = useState<string[]>([]);
+  const [secretError, setSecretError] = useState<string | null>(null);
+
+  const fetchSecretKeys = async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/secrets`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setSecretKeys(data.keys || []);
+      }
+    } catch (err) {
+      console.error('Error fetching secret keys:', err);
+    }
+  };
+
+  const handleSaveSecret = async (key: string, value: string) => {
+    if (!currentProject) return;
+    setSecretError(null);
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/secrets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ key, value })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchSecretKeys(currentProject.id);
+      } else {
+        setSecretError(data.error || tl('secretErrorEmpty'));
+      }
+    } catch (err) {
+      console.error('Error saving secret:', err);
+    }
+  };
+
+  const handleDeleteSecret = async (key: string) => {
+    if (!currentProject) return;
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/secrets/${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+        headers: authHeaders()
+      });
+      if (res.ok) {
+        fetchSecretKeys(currentProject.id);
+      }
+    } catch (err) {
+      console.error('Error deleting secret:', err);
+    }
+  };
 
   // API Call: Upload files via dataset multer engine
   const handleUploadDataset = async (file: File) => {
@@ -1133,6 +1187,10 @@ function AppContent() {
         onOpenPackageManager={() => setShowPackageManager(true)}
         packageUpdateCount={packageUpdates.dismissed ? 0 : packageUpdates.outdated.length}
         onPreviewDataset={handlePreviewDataset}
+        secretKeys={secretKeys}
+        secretError={secretError}
+        onSaveSecret={handleSaveSecret}
+        onDeleteSecret={handleDeleteSecret}
         outputFiles={outputFiles}
         onPreviewOutput={setPreviewOutputFile}
         onClearOutput={handleClearOutput}
@@ -1544,12 +1602,13 @@ function AppContent() {
                               setActiveTheme('light');
                               setShowMobileOptions(false);
                             }}
-                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
+                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border flex items-center justify-center gap-1 ${
                               activeTheme === 'light'
                                 ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
                                 : 'bg-slate-100/50 border-transparent text-slate-500'
                             }`}
                           >
+                            <span className="w-2.5 h-2.5 rounded-full border border-slate-300 bg-white shrink-0" />
                             {tl('themeLight')}
                           </button>
                           <button
@@ -1557,12 +1616,13 @@ function AppContent() {
                               setActiveTheme('vibrant-dark');
                               setShowMobileOptions(false);
                             }}
-                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
+                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border flex items-center justify-center gap-1 ${
                               activeTheme === 'vibrant-dark'
                                 ? 'bg-indigo-950/50 border-indigo-800 text-indigo-300'
                                 : 'bg-slate-900/40 border-transparent text-slate-400'
                             }`}
                           >
+                            <span className="w-2.5 h-2.5 rounded-full border border-indigo-500/20 bg-slate-600 shrink-0" />
                             {tl('themeSlate')}
                           </button>
                           <button
@@ -1570,12 +1630,13 @@ function AppContent() {
                               setActiveTheme('midnight-obsidian');
                               setShowMobileOptions(false);
                             }}
-                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border ${
+                            className={`px-1.5 py-1 text-[10px] font-bold rounded text-center border flex items-center justify-center gap-1 ${
                               activeTheme === 'midnight-obsidian'
                                 ? 'bg-neutral-800 border-neutral-600 text-white'
                                 : 'bg-neutral-900/40 border-transparent text-neutral-400'
                             }`}
                           >
+                            <span className="w-2.5 h-2.5 rounded-full border border-neutral-800 bg-black shrink-0" />
                             {tl('themeObsidian')}
                           </button>
                         </div>
@@ -1979,6 +2040,7 @@ function AppContent() {
           onRunStateChange={setIsRunning}
           onExitResult={setLastExitResult}
           onExplainError={aiReady ? () => triggerAiCommand(tl('aiExplainErrorPrompt')) : undefined}
+          onImportBlocked={setImportBlockedModule}
         />
 
         {/* Settings Modal */}
@@ -2052,6 +2114,57 @@ function AppContent() {
                   }`}
                 >
                   {tl('cancel')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Import blocked notice — shown when a script is rejected for using a forbidden module */}
+        {importBlockedModule && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setImportBlockedModule(null)}>
+            <div
+              className={`rounded-xl shadow-2xl p-5 max-w-sm w-full mx-4 border ${
+                activeTheme === 'light'
+                  ? 'bg-white border-slate-200'
+                  : activeTheme === 'midnight-obsidian'
+                  ? 'bg-[#0a0a0a] border-neutral-800'
+                  : 'bg-slate-950 border-slate-800'
+              }`}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              <div className="flex items-start gap-3 mb-4">
+                <span className="text-2xl shrink-0">🔒</span>
+                <div>
+                  <p className={`text-sm font-semibold mb-1 ${activeTheme === 'light' ? 'text-slate-900' : 'text-white'}`}>
+                    {tl('importBlockedTitle', { module: importBlockedModule })}
+                  </p>
+                  <p className={`text-xs leading-relaxed ${activeTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>
+                    {tl('importBlockedBody', { module: importBlockedModule })}
+                  </p>
+                  <p className={`text-xs leading-relaxed mt-2 ${activeTheme === 'light' ? 'text-slate-600' : 'text-slate-400'}`}>
+                    {user?.role === 'admin' ? tl('importBlockedAdminHint') : tl('importBlockedContactAdmin')}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {user?.role === 'admin' && (
+                  <button
+                    onClick={() => { setImportBlockedModule(null); setSettingsInitialTab('users'); setShowSettingsModal(true); }}
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                  >
+                    {tl('importBlockedGoToConfig')}
+                  </button>
+                )}
+                <button
+                  onClick={() => setImportBlockedModule(null)}
+                  className={`px-4 py-2 text-sm rounded-lg border transition-colors ${user?.role === 'admin' ? '' : 'flex-1'} ${
+                    activeTheme === 'light'
+                      ? 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                      : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                  }`}
+                >
+                  {tl('importBlockedClose')}
                 </button>
               </div>
             </div>

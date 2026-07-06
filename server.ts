@@ -609,6 +609,10 @@ interface SmtpConfig {
   secure: boolean;
 }
 
+interface SecurityConfig {
+  allowUnsafeImports: boolean;
+}
+
 interface AIConfig {
   provider: 'openai' | 'deepseek' | 'gemini' | 'custom';
   model: string;
@@ -640,7 +644,7 @@ interface SimpleDB {
     sessionLockedAt?: number; // unix timestamp; tokens issued before this are invalid (lock/logout)
     aiConfig?: AIConfig;
   }>;
-  projects: Array<{ id: string; userId: string; name: string; createdAt: string }>;
+  projects: Array<{ id: string; userId: string; name: string; createdAt: string; secretsEnc?: Record<string, string> }>;
   files: Array<{
     id: string;
     projectId: string;
@@ -690,6 +694,26 @@ function readSmtpConfig(): SmtpConfig | null {
 
 function writeSmtpConfig(cfg: SmtpConfig) {
   fs.writeFileSync(SMTP_CONFIG_FILE, JSON.stringify(cfg, null, 2));
+}
+
+// Security configuration — global instance-wide toggle for the FORBIDDEN_MODULES
+// check in code_inspector.py. Defaults to enabled (allowUnsafeImports: false) when
+// the file doesn't exist, so existing deployments keep the protection by default.
+const SECURITY_CONFIG_FILE = path.join(DATA_DIR, 'security_config.json');
+
+function readSecurityConfig(): SecurityConfig {
+  if (!fs.existsSync(SECURITY_CONFIG_FILE)) return { allowUnsafeImports: false };
+  try {
+    const raw = fs.readFileSync(SECURITY_CONFIG_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return { allowUnsafeImports: parsed?.allowUnsafeImports === true };
+  } catch (err) {
+    return { allowUnsafeImports: false };
+  }
+}
+
+function writeSecurityConfig(cfg: SecurityConfig) {
+  fs.writeFileSync(SECURITY_CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
 // Token usage shape returned by all AI providers (normalized)
@@ -2242,6 +2266,23 @@ app.delete('/api/admin/users/:targetUserId', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
+// API: Get security configuration (any authenticated user — not sensitive, just a boolean flag)
+app.get('/api/system/security', requireAuth, (req, res) => {
+  res.json(readSecurityConfig());
+});
+
+// API: Update security configuration (admin only) — global instance-wide toggle
+app.put('/api/system/security', requireAdmin, (req, res) => {
+  const { allowUnsafeImports } = req.body;
+
+  if (typeof allowUnsafeImports !== 'boolean') {
+    return res.status(400).json({ error: 'allowUnsafeImports debe ser booleano' });
+  }
+
+  writeSecurityConfig({ allowUnsafeImports });
+  res.json({ success: true });
+});
+
 // API: Get SMTP configuration
 app.get('/api/system/smtp', requireAdmin, (req, res) => {
   const config = readSmtpConfig();
@@ -3057,6 +3098,79 @@ app.delete('/api/projects/:projectId/folders', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// Secrets (per-project encrypted env vars) — validation shared by the endpoints below
+const SECRET_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const SECRET_RESERVED_KEYS = new Set([
+  'PATH', 'HOME', 'PYTHONUNBUFFERED', 'MPLBACKEND', 'LANG', 'LC_ALL', 'TERM', 'OUTPUT_DIR', 'PYTHONPATH'
+]);
+const SECRET_MAX_VALUE_LENGTH = 4096;
+const SECRET_MAX_COUNT_PER_PROJECT = 50;
+
+// API: List secret names for a project (never values)
+app.get('/api/projects/:projectId/secrets', requireAuth, (req, res) => {
+  const { projectId } = req.params;
+  const userId = (req as any).userId;
+
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  res.json({ keys: Object.keys(project.secretsEnc || {}) });
+});
+
+// API: Create/update a secret for a project
+app.post('/api/projects/:projectId/secrets', requireAuth, (req, res) => {
+  const { projectId } = req.params;
+  const userId = (req as any).userId;
+  const { key, value } = req.body;
+
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  if (typeof key !== 'string' || !SECRET_KEY_PATTERN.test(key)) {
+    return res.status(400).json({ error: 'Nombre inválido: usa MAYÚSCULAS, números y _ (debe empezar con una letra)' });
+  }
+  if (SECRET_RESERVED_KEYS.has(key)) {
+    return res.status(400).json({ error: `"${key}" es un nombre reservado del entorno de ejecución` });
+  }
+  if (typeof value !== 'string' || value.length === 0 || value.length > SECRET_MAX_VALUE_LENGTH) {
+    return res.status(400).json({ error: `El valor debe tener entre 1 y ${SECRET_MAX_VALUE_LENGTH} caracteres` });
+  }
+
+  const existingKeys = Object.keys(project.secretsEnc || {});
+  if (!existingKeys.includes(key) && existingKeys.length >= SECRET_MAX_COUNT_PER_PROJECT) {
+    return res.status(400).json({ error: `Máximo ${SECRET_MAX_COUNT_PER_PROJECT} secretos por proyecto` });
+  }
+
+  project.secretsEnc = project.secretsEnc || {};
+  project.secretsEnc[key] = encryptApiKey(value);
+  writeDB(database);
+  res.json({ success: true });
+});
+
+// API: Delete a secret from a project
+app.delete('/api/projects/:projectId/secrets/:key', requireAuth, (req, res) => {
+  const { projectId, key } = req.params;
+  const userId = (req as any).userId;
+
+  const database = readDB();
+  const project = database.projects.find(p => p.id === projectId);
+  if (!project || project.userId !== userId) {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+
+  if (project.secretsEnc) {
+    delete project.secretsEnc[key];
+  }
+  writeDB(database);
+  res.json({ success: true });
+});
+
 // API: Get file content
 app.get('/api/projects/:projectId/files/:fileId/content', requireAuth, (req, res) => {
   const { projectId, fileId } = req.params;
@@ -3614,8 +3728,8 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       const { token, projectId, fileId, runCode, cols = 80, rows = 24 } = parsed;
 
       // ── Local helper: send a denial frame and close the socket ───────────────
-      const deny = (message: string) => {
-        ws.send(JSON.stringify({ type: 'denied', message })); ws.close();
+      const deny = (message: string, extra?: Record<string, unknown>) => {
+        ws.send(JSON.stringify({ type: 'denied', message, ...extra })); ws.close();
       };
 
       // ── Auth ──────────────────────────────────────────────────────────────────
@@ -3735,22 +3849,32 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
         catch { pythonPath = 'python'; }
       }
 
-      // Security: code_inspector.py pre-execution check (fail-closed)
-      const inspectorPath = path.join(process.cwd(), 'scripts', 'security', 'code_inspector.py');
-      if (!fs.existsSync(inspectorPath)) {
-        deny('Inspector de seguridad no disponible. Contacta al administrador.'); return;
-      }
-      const inspectorPython = pythonPath; // already resolved above — no second getVenvPythonPath()
-      const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], { encoding: 'utf8', timeout: 10000 });
-      if (inspectResult.status !== 0) {
-        // Solo reenviamos mensajes estructurados del inspector; nunca su stderr/traceback.
-        const out = inspectResult.stdout?.trim() ?? '';
-        if (out.startsWith('SECURITY_VIOLATION:')) {
-          deny(out.replace(/^SECURITY_VIOLATION:\s*/, '')); return;
+      // Security: code_inspector.py pre-execution check (fail-closed), unless an
+      // admin has globally disabled it via /api/system/security. There is no
+      // per-run sandboxing in this app (single shared container/venv/OS user for
+      // every tenant), so this bypass is intentionally instance-wide, not per-user.
+      const securityConfig = readSecurityConfig();
+      if (!securityConfig.allowUnsafeImports) {
+        const inspectorPath = path.join(process.cwd(), 'scripts', 'security', 'code_inspector.py');
+        if (!fs.existsSync(inspectorPath)) {
+          deny('Inspector de seguridad no disponible. Contacta al administrador.'); return;
         }
-        // Fallo inesperado (INSPECTOR_ERROR, crash, timeout…): log server-side, mensaje genérico al cliente.
-        if (inspectResult.stderr?.trim()) console.error('[inspector] fallo inesperado:', inspectResult.stderr.trim());
-        deny('Código rechazado por el inspector de seguridad'); return;
+        const inspectorPython = pythonPath; // already resolved above — no second getVenvPythonPath()
+        const inspectResult = spawnSync(inspectorPython, [inspectorPath, filepath], { encoding: 'utf8', timeout: 10000 });
+        if (inspectResult.status !== 0) {
+          // Solo reenviamos mensajes estructurados del inspector; nunca su stderr/traceback.
+          const out = inspectResult.stdout?.trim() ?? '';
+          if (out.startsWith('SECURITY_VIOLATION:')) {
+            const reasonText = out.replace(/^SECURITY_VIOLATION:\s*/, '');
+            const moduleMatch = reasonText.match(/-> (\S+)/);
+            deny(reasonText, { reason: 'forbidden_import', module: moduleMatch?.[1] }); return;
+          }
+          // Fallo inesperado (INSPECTOR_ERROR, crash, timeout…): log server-side, mensaje genérico al cliente.
+          if (inspectResult.stderr?.trim()) console.error('[inspector] fallo inesperado:', inspectResult.stderr.trim());
+          deny('Código rechazado por el inspector de seguridad'); return;
+        }
+      } else {
+        console.warn(`[security] Chequeo de módulos omitido por configuración global (allowUnsafeImports=true) — run de userId=${userId}`);
       }
 
       // Carpeta output/ del proyecto: se crea antes de lanzar y se expone al script
@@ -3773,7 +3897,17 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
         LC_ALL: process.env.LC_ALL ?? 'C.UTF-8',
         TERM: 'xterm-color',
         OUTPUT_DIR: outputDir,
+        PYTHONPATH: path.join(process.cwd(), 'scripts', 'runtime'),
       };
+
+      // Secretos del proyecto (cifrados en db.json): se descifran solo acá, en memoria,
+      // y se inyectan como variables de entorno del proceso hijo — nunca se exponen como
+      // archivo. Ver ide_env.get_secret() para la forma de leerlos desde el script.
+      if (project.secretsEnc) {
+        for (const [key, encValue] of Object.entries(project.secretsEnc)) {
+          safeSubprocessEnv[key] = decryptApiKey(encValue);
+        }
+      }
 
       // ── PTY helpers (declared here so they close over ptyProc and ws) ─────────
       const clampCols = (c: unknown): number => Math.min(Math.max(Number(c) || 80, 1), 500);

@@ -72,6 +72,8 @@ export default function SettingsModal({
   const [usersError, setUsersError] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [allowUnsafeImports, setAllowUnsafeImports] = useState(false);
+  const [confirmDisableSecurity, setConfirmDisableSecurity] = useState(false);
   const [backupLoading, setBackupLoading] = useState(false);
 
   // Backup (download) state
@@ -124,6 +126,11 @@ export default function SettingsModal({
         .then(r => r.json())
         .then(users => setAdminUsers(users))
         .catch(() => {});
+
+      fetch('/api/system/security', { headers })
+        .then(r => r.json())
+        .then(cfg => setAllowUnsafeImports(!!cfg.allowUnsafeImports))
+        .catch(() => {});
     }
 
     fetch('/api/ai/config', { headers })
@@ -172,6 +179,26 @@ export default function SettingsModal({
       setPasswordError(t('passwordErrorConnection'));
     } finally {
       setSavingPassword(false);
+    }
+  };
+
+  const handleSetAllowUnsafeImports = async (value: boolean) => {
+    const token = localStorage.getItem('py_ide_token');
+    try {
+      const res = await fetch('/api/system/security', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ allowUnsafeImports: value })
+      });
+      if (res.ok) {
+        setAllowUnsafeImports(value);
+        setConfirmDisableSecurity(false);
+      }
+    } catch {
+      // Silencioso: el estado en pantalla simplemente no cambia si falla la request.
     }
   };
 
@@ -500,7 +527,7 @@ export default function SettingsModal({
     if (theme === 'light') {
       return {
         overlay: 'fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
-        modal: 'bg-white border border-slate-200 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col',
+        modal: 'bg-white border border-slate-200 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[calc(var(--app-height,100dvh)*0.92)] sm:h-auto sm:max-h-[calc(var(--app-height,100dvh)*0.9)] overflow-hidden flex flex-col',
         header: 'bg-slate-50 px-6 py-4 flex items-center justify-between border-b border-slate-200',
         title: 'text-slate-800 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded transition-colors',
@@ -524,7 +551,7 @@ export default function SettingsModal({
     if (theme === 'midnight-obsidian') {
       return {
         overlay: 'fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
-        modal: 'bg-black border border-neutral-900 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col',
+        modal: 'bg-black border border-neutral-900 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[calc(var(--app-height,100dvh)*0.92)] sm:h-auto sm:max-h-[calc(var(--app-height,100dvh)*0.9)] overflow-hidden flex flex-col',
         header: 'bg-[#080808] px-6 py-4 flex items-center justify-between border-b border-neutral-900',
         title: 'text-neutral-100 font-semibold flex items-center gap-2',
         closeBtn: 'p-1 hover:bg-neutral-900 text-neutral-400 hover:text-neutral-100 rounded transition-colors',
@@ -547,7 +574,7 @@ export default function SettingsModal({
     // vibrant-dark: paleta slate
     return {
       overlay: 'fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4',
-      modal: 'bg-slate-950 border border-slate-800 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden flex flex-col',
+      modal: 'bg-slate-950 border border-slate-800 rounded-t-2xl sm:rounded-lg shadow-2xl w-full sm:max-w-2xl h-[calc(var(--app-height,100dvh)*0.92)] sm:h-auto sm:max-h-[calc(var(--app-height,100dvh)*0.9)] overflow-hidden flex flex-col',
       header: 'bg-slate-900 px-6 py-4 flex items-center justify-between border-b border-slate-800',
       title: 'text-slate-100 font-semibold flex items-center gap-2',
       closeBtn: 'p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded transition-colors',
@@ -584,6 +611,10 @@ export default function SettingsModal({
           exit={{ scale: 0.95, opacity: 0 }}
           onClick={e => e.stopPropagation()}
           className={c.modal}
+          style={{
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
         >
           {/* Header */}
           <div className={c.header}>
@@ -854,8 +885,8 @@ export default function SettingsModal({
                           </div>
                         </div>
                         {confirmDeleteUserId === u.id && (
-                          <div className="mx-0 mt-1 px-3 py-2 bg-red-950/60 rounded-md border border-red-700/50 flex items-center justify-between gap-2">
-                            <span className="text-xs text-red-300">{t('confirmDeleteUser', { name: u.username })}</span>
+                          <div className={`mx-0 mt-1 px-3 py-2 rounded-md border flex items-center justify-between gap-2 ${activeTheme === 'light' ? 'bg-red-50 border-red-200' : 'bg-red-950/60 border-red-700/50'}`}>
+                            <span className={`text-xs ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('confirmDeleteUser', { name: u.username })}</span>
                             <div className="flex gap-2 shrink-0">
                               <button
                                 onClick={() => handleDeleteUser(u.id)}
@@ -878,6 +909,64 @@ export default function SettingsModal({
                       <p className="text-xs text-slate-500">{t('noRegisteredUsers')}</p>
                     )}
                   </div>
+                </div>
+
+                {/* Global toggle: FORBIDDEN_MODULES security check (instance-wide, admin only) */}
+                <div>
+                  <p className="text-xs font-bold uppercase text-slate-400 mb-3 flex items-center gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5" /> {t('secGlobalTitle')}
+                  </p>
+                  <div className={`flex items-start gap-2 rounded-md border px-3 py-2 ${
+                    allowUnsafeImports
+                      ? activeTheme === 'light' ? 'border-red-200 bg-red-50' : 'border-red-700/50 bg-red-950/40'
+                      : activeTheme === 'light' ? 'border-emerald-200 bg-emerald-50' : 'border-emerald-700/40 bg-emerald-950/20'
+                  }`}>
+                    <AlertTriangle className={`h-4 w-4 shrink-0 mt-0.5 ${
+                      allowUnsafeImports
+                        ? activeTheme === 'light' ? 'text-red-600' : 'text-red-400'
+                        : activeTheme === 'light' ? 'text-emerald-600' : 'text-emerald-400'
+                    }`} />
+                    <span className={`text-xs ${
+                      allowUnsafeImports
+                        ? activeTheme === 'light' ? 'text-red-700' : 'text-red-300'
+                        : activeTheme === 'light' ? 'text-emerald-700' : 'text-emerald-300'
+                    }`}>
+                      {allowUnsafeImports ? t('secGlobalDisabledDesc') : t('secGlobalActiveDesc')}
+                    </span>
+                  </div>
+
+                  {!confirmDisableSecurity && (
+                    <button
+                      onClick={() => allowUnsafeImports ? handleSetAllowUnsafeImports(false) : setConfirmDisableSecurity(true)}
+                      className={`mt-2 px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+                        allowUnsafeImports
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                      }`}
+                    >
+                      {allowUnsafeImports ? t('secGlobalEnableBtn') : t('secGlobalDisableBtn')}
+                    </button>
+                  )}
+
+                  {confirmDisableSecurity && (
+                    <div className={`mt-2 rounded-md border px-3 py-2 space-y-2 ${activeTheme === 'light' ? 'border-red-200 bg-red-50' : 'border-red-700/50 bg-red-950/40'}`}>
+                      <p className={`text-xs ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('secGlobalConfirmWarning')}</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleSetAllowUnsafeImports(true)}
+                          className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded transition-colors"
+                        >
+                          {t('secGlobalConfirmYes')}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDisableSecurity(false)}
+                          className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-bold rounded transition-colors"
+                        >
+                          {t('secGlobalConfirmNo')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1108,9 +1197,9 @@ export default function SettingsModal({
                   <p className="text-xs font-bold uppercase text-slate-400 flex items-center gap-1.5">
                     <Upload className="h-3.5 w-3.5" /> {t('restoreTitle')}
                   </p>
-                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span className="text-xs text-amber-300">{t('restoreWarning')}</span>
+                  <div className={`flex items-start gap-2 rounded-md border px-3 py-2 ${activeTheme === 'light' ? 'border-amber-200 bg-amber-50' : 'border-amber-500/40 bg-amber-500/10'}`}>
+                    <AlertTriangle className={`h-4 w-4 shrink-0 mt-0.5 ${activeTheme === 'light' ? 'text-amber-600' : 'text-amber-400'}`} />
+                    <span className={`text-xs ${activeTheme === 'light' ? 'text-amber-700' : 'text-amber-300'}`}>{t('restoreWarning')}</span>
                   </div>
                   <div>
                     <label className={c.label}>{t('restoreFileLabel')}</label>
@@ -1154,8 +1243,8 @@ export default function SettingsModal({
                       {t('restoreButton')}
                     </button>
                   ) : (
-                    <div className="rounded-md border border-red-700/50 bg-red-950/40 px-3 py-2 space-y-2">
-                      <p className="text-xs text-red-300">{t('restoreConfirmQuestion')}</p>
+                    <div className={`rounded-md border px-3 py-2 space-y-2 ${activeTheme === 'light' ? 'border-red-200 bg-red-50' : 'border-red-700/50 bg-red-950/40'}`}>
+                      <p className={`text-xs ${activeTheme === 'light' ? 'text-red-700' : 'text-red-300'}`}>{t('restoreConfirmQuestion')}</p>
                       <div className="flex gap-2">
                         <button
                           onClick={handleRestore}

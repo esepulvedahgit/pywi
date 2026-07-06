@@ -67,6 +67,7 @@ export default function PackageManagerModal({
   const [updateOutput, setUpdateOutput] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [allowUnsafeImports, setAllowUnsafeImports] = useState(false);
 
   // Common packages suggestion catalog (descriptions stay in ES as they are technical/natural)
   const popularPackages = [
@@ -75,8 +76,7 @@ export default function PackageManagerModal({
     { name: 'scikit-image', desc: 'Procesamiento de imágenes y visión computacional.' },
     { name: 'nltk', desc: 'Procesamiento de Lenguaje Natural (NLP/textos).' },
     { name: 'openpyxl', desc: 'Lógica para leer y escribir planillas de cálculo Excel.' },
-    { name: 'plotly', desc: 'Gráficos científicos altamente interactivos y dinámicos.' },
-    { name: 'requests', desc: 'Llamados HTTP y descargas externas de APIs en vivo.' }
+    { name: 'plotly', desc: 'Gráficos científicos altamente interactivos y dinámicos.' }
   ];
 
   const fetchStatusAndPackages = async () => {
@@ -89,6 +89,15 @@ export default function PackageManagerModal({
       const dataPkgs = await resPkgs.json();
       if (dataPkgs.success && Array.isArray(dataPkgs.packages)) {
         setPackages(dataPkgs.packages);
+      }
+
+      const token = localStorage.getItem('py_ide_token');
+      const resSecurity = await fetch('/api/system/security', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (resSecurity.ok) {
+        const dataSecurity = await resSecurity.json();
+        setAllowUnsafeImports(!!dataSecurity.allowUnsafeImports);
       }
     } catch (err) {
       console.error('Error fetching environment data:', err);
@@ -191,6 +200,7 @@ export default function PackageManagerModal({
     subText: isLight ? 'text-slate-500' : 'text-slate-400',
     closeBtn: isLight ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-slate-400 hover:text-white hover:bg-slate-800',
     statusBadge: isLight ? 'bg-indigo-50 border border-indigo-150 text-indigo-700' : 'bg-indigo-950/20 border border-indigo-900/60 text-indigo-300',
+    infoBox: isLight ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-amber-500/10 border border-amber-500/40 text-amber-300',
     statusInstalledBg: isLight ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-emerald-950/20 text-emerald-400 border border-emerald-900/40',
     input: isLight ? 'bg-slate-50 border-slate-250 text-slate-800 placeholder-slate-400' : 'bg-slate-950 border-slate-800 text-slate-100 placeholder-slate-600',
     cardItem: isLight ? 'bg-slate-50 border border-slate-200/80 hover:bg-slate-100/60' : 'bg-slate-950/50 border border-slate-850 hover:bg-slate-900/40',
@@ -510,6 +520,17 @@ export default function PackageManagerModal({
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Restricted modules info — only while the admin-controlled protection is active */}
+          {!allowUnsafeImports && (
+            <div className={`p-3 rounded-xl flex items-start gap-2.5 ${c.infoBox}`}>
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold">{t('pkgRestrictedTitle')}</p>
+                <p className="text-[11px] leading-relaxed opacity-90 mt-0.5">{t('pkgRestrictedDesc')}</p>
               </div>
             </div>
           )}

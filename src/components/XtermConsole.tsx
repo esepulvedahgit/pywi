@@ -73,6 +73,7 @@ export interface XtermConsoleProps {
   onRunStateChange?: (isRunning: boolean) => void;
   onExitResult?: (result: ExitResult) => void;
   onExplainError?: () => void;
+  onImportBlocked?: (module: string) => void;
 }
 
 // ── Max PTY buffer to keep in memory (for AI tutor) ─────────────────────────
@@ -83,7 +84,7 @@ export default function XtermConsole({
   projectId, fileId, runCode, token,
   runNonce, stopNonce,
   activeTheme,
-  aiReady, onRunStateChange, onExitResult, onExplainError,
+  aiReady, onRunStateChange, onExitResult, onExplainError, onImportBlocked,
 }: XtermConsoleProps) {
   const t = useT();
 
@@ -241,6 +242,9 @@ export default function XtermConsole({
           // Normalizar saltos de línea a \r\n: xterm deja las líneas en cascada con \n crudo.
           const clean = String(msg.message ?? 'Acceso denegado').replace(/\r?\n/g, '\r\n');
           xtermRef.current?.writeln(`\r\n\x1b[31m⛔ ${clean}\x1b[0m`);
+          if (msg.reason === 'forbidden_import' && msg.module) {
+            onImportBlocked?.(msg.module);
+          }
           stopRunning();
         } else if (msg.type === 'exit') {
           // Join chunks once and tail-slice to cap size
