@@ -73,12 +73,24 @@
 
 ## Despliegue rápido / Quick Deploy
 
+### Despliegue en un clic / One-click deploy
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/pywi/main/deploy.sh | bash
+```
+
+El script clona el repositorio, genera `JWT_SECRET` y `ENCRYPTION_KEY`, pregunta el dominio público de forma interactiva, construye la imagen Docker y levanta el servicio con `docker compose up -d`, verificando al final que quede arriba.
+The script clones the repository, generates `JWT_SECRET` and `ENCRYPTION_KEY`, interactively asks for the public domain, builds the Docker image, and starts the service with `docker compose up -d`, verifying it's up at the end.
+
+> No configura nginx/TLS — se asume un reverse proxy externo delante del puerto 3000. Para arm64/NPU (Radxa, Orange Pi) o pasos manuales, usa la guía detallada de abajo.
+> Does not configure nginx/TLS — an external reverse proxy in front of port 3000 is assumed. For arm64/NPU boards (Radxa, Orange Pi) or manual steps, use the detailed guide below.
+
 ### amd64 — PC / Servidor con GPU NVIDIA
 
 ```bash
 # 1. Descarga los archivos de despliegue / Download deployment files
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/.env.example
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/.env.example
 
 # 2. Configura las variables de entorno / Configure environment variables
 cp .env.example .env
@@ -99,9 +111,9 @@ Guía detallada → [docs/DEPLOY-AMD64.md](docs/DEPLOY-AMD64.md)
 
 ```bash
 # 1. Descarga los archivos / Download files
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.arm64.yml
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/.env.example
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.arm64.yml
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/.env.example
 
 # 2. Configura el GID del grupo render y las variables de entorno
 # Configure render group GID and environment variables

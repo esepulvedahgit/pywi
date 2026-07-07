@@ -18,12 +18,9 @@
 ## Paso 1 — Descargar los archivos / Step 1 — Download files
 
 ```bash
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/tuusuario/pywi/main/.env.example
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/.env.example
 ```
-
-> ⚠️ Reemplaza `tuusuario/pywi` con la URL real del repositorio.
-> Replace `tuusuario/pywi` with the real repository URL.
 
 ---
 
