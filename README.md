@@ -157,6 +157,7 @@ Configuración completa → [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 | [Despliegue amd64](docs/DEPLOY-AMD64.md) | Despliegue detallado con GPU NVIDIA / Detailed deployment with NVIDIA GPU |
 | [Despliegue arm64 / NPU](docs/DEPLOY-ARM64.md) | Guía para Radxa 5A, Orange Pi 5 y similares / Guide for Radxa 5A, Orange Pi 5 and similar boards |
 | [Configuración avanzada / Advanced Config](docs/CONFIGURATION.md) | Variables de entorno, tutor IA, gestión de usuarios / Environment variables, AI tutor, user management |
+| [CI y seguridad / CI and Security](docs/CI-SECURITY.md) | Workflows, alertas de dependencias y configuración de GitHub / Workflows, dependency alerts, and GitHub setup |
 
 ---
 
