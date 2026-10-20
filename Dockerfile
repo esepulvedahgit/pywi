@@ -64,12 +64,17 @@ COPY --chown=node:node . .
 # dist/ compilado en el stage deps (no está en .dockerignore de host).
 COPY --chown=node:node --from=deps /app/dist ./dist
 
-# Entrypoint corre como root, corrige ownership de data/,
-# luego baja a usuario node vía gosu.
+# Un volumen nombrado nuevo hereda estos permisos; la app escribe
+# db.json y proyectos en /app/data desde el primer arranque.
+RUN install -d -o node -g node /app/data /app/data/app_data
+
+# Por defecto el entrypoint y la app corren como node. gosu solo se
+# usa al iniciar explícitamente como root para reparar datos antiguos.
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
+USER node
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # dist/ ya compilado en el stage deps — arrancar directamente el servidor.

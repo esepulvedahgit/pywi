@@ -128,6 +128,20 @@ Guía detallada → [docs/DEPLOY-ARM64.md](docs/DEPLOY-ARM64.md)
 
 ---
 
+### Permisos de datos / Data permissions
+
+La imagen se inicia como `node` (UID 1000). El volumen `pywi_data` del Compose incluido funciona sin cambios. Si sustituiste ese volumen por una carpeta del host propiedad de root, prepara sus permisos una vez antes de iniciar la nueva imagen:
+
+The image starts as `node` (UID 1000). The included Compose named volume needs no changes. If you replaced it with a root-owned host directory, prepare its permissions once before starting the new image:
+
+```bash
+docker compose stop web-ide
+docker compose run --rm --user root web-ide true
+docker compose up -d
+```
+
+---
+
 ## Variables de entorno / Environment Variables
 
 | Variable | Requerida / Required | Descripción / Description | Por defecto / Default |

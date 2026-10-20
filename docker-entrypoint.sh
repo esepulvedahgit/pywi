@@ -1,11 +1,13 @@
 #!/bin/sh
 set -e
 
-# Ensure the data directory exists and is owned by the node user (UID 1000).
-# This handles the case where ./data is bind-mounted from a host directory
-# owned by root — without this the node process gets EACCES on first write.
-mkdir -p /app/data/app_data
-chown -R node:node /app/data
+# Solo una ejecución explícita como root repara volúmenes antiguos.
+# El arranque normal conserva el usuario node (UID 1000) de la imagen.
+if [ "$(id -u)" -eq 0 ]; then
+  mkdir -p /app/data/app_data
+  chown -R node:node /app/data
+  exec gosu node "$@"
+fi
 
-# Drop privileges: exec the CMD as the node user
-exec gosu node "$@"
+mkdir -p /app/data/app_data
+exec "$@"
