@@ -56,6 +56,8 @@ jobs:
         with:
           scan-type: image
           image-ref: pywi:security-${{ matrix.arch }}
+          version: v0.76.0
+          scanners: vuln
           format: table
           severity: HIGH,CRITICAL
           exit-code: '0'
@@ -65,6 +67,8 @@ jobs:
         with:
           scan-type: image
           image-ref: pywi:security-${{ matrix.arch }}
+          version: v0.76.0
+          scanners: vuln
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -78,11 +82,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Scan Docker and Compose configuration
+      - name: Scan Dockerfile configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
-          scan-ref: .
+          scan-ref: Dockerfile
+          version: v0.76.0
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Scan Docker Compose security rules
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: docker-compose.yml
+          version: v0.76.0
+          trivy-config: .trivy/trivy.yaml
           format: table
           severity: HIGH,CRITICAL
           exit-code: '1'

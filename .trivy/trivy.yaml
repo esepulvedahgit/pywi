@@ -1,0 +1,10 @@
+misconfiguration:
+  scanners:
+    - dockerfile
+    - yaml
+
+rego:
+  check:
+    - .trivy/policies
+  namespaces:
+    - user
