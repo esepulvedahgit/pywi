@@ -16,7 +16,7 @@ El repositorio es público. La rama remota predeterminada es `dev`; también exi
 
 Workflow `.github/workflows/ci.yml`:
 
-- Eventos: push a `dev` y `main`; pull request dirigido a `dev` o `main`.
+- Eventos: push a `dev` y `main`; pull request dirigido a `dev` o `main`; auditoría semanal de `dev`; ejecución manual.
 - Node.js 20: `npm ci`, `npm audit --audit-level=high`, `npm run lint` y `npm run build`.
 - Python 3.11: `pip-audit -r requirements.txt`.
 - El lockfile `package-lock.json` versionado se usa para la instalación y auditoría de npm.
@@ -40,7 +40,7 @@ Workflow `.github/workflows/container-security.yml`:
 - Construye y escanea la imagen final del Dockerfile en pull requests, pushes a `dev`/`main`, análisis semanal de `dev` y ejecución manual.
 - Usa una matriz para `linux/amd64` y `linux/arm64`, en línea con las arquitecturas documentadas por PyWI.
 - Ejecuta además el análisis de configuración de Trivy sobre los archivos de Docker y Compose versionados.
-- Trivy analiza vulnerabilidades `HIGH` y `CRITICAL`; las que no tengan una corrección disponible se reportan sin bloquear el job.
+- Trivy genera un informe de vulnerabilidades `HIGH` y `CRITICAL`; las que tengan una corrección disponible bloquean el job, y las que no tengan parche se muestran en el informe sin bloquearlo.
 - No publica la imagen ni requiere credenciales de registry.
 
 La construcción arm64 requiere QEMU/Buildx y puede aumentar de forma notable la duración del job debido a las dependencias Python y la imagen resultante.
