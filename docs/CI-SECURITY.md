@@ -32,7 +32,7 @@ Las reglas propias de Compose bloquean `privileged`, namespaces de host, capacid
 
 ## Configuración necesaria en GitHub
 
-1. En **Settings → Security**, activa **Dependabot alerts**. En repositorios públicos de GitHub.com, el dependency graph permanece habilitado; confirma que siga disponible porque Dependency Review lo necesita.
+1. En **Settings → Security → Advanced Security**, confirma que **Dependency Graph** esté habilitado y activa **Dependabot alerts**. Los repositorios públicos normalmente tienen el grafo disponible. Si `Dependency review` muestra `not supported on this repository`, GitHub devolvió un 403 porque la acción no puede consultar el grafo; resuelve esa configuración en GitHub y vuelve a ejecutar el workflow del PR. El archivo YAML no puede habilitar esta función.
 2. Activa **Dependabot security updates** si quieres PRs de seguridad además de las actualizaciones de versión semanales de `.github/dependabot.yml`.
 3. En **Settings → Rules → Rulesets** (o protección de ramas), protege `dev` y `main`, exige pull requests y exige que pasen estos checks después de que aparezcan en GitHub: `Node.js checks`, `Python dependencies`, `Dependency review`, `Analyze (javascript-typescript)`, `Analyze (python)`, `Analyze (actions)`, `Image scan (amd64)`, `Image scan (arm64)` y `Docker configuration`.
 4. Para impedir la integración cuando aparezcan alertas nuevas, añade al ruleset la regla **Require code scanning results**, elige CodeQL y configura el umbral **High or higher**. Exigir solo el estado exitoso del workflow no bloquea alertas por sí mismo.
