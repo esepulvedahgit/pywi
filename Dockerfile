@@ -4,7 +4,7 @@
 # Este stage se descarta al final; build-essential NO llega
 # a la imagen runtime.
 # ============================================================
-FROM node:24-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ RUN npm run build
 # Contiene código + node_modules + .venv. El despliegue usa
 # docker compose con volumen nombrado para /app/data.
 # ============================================================
-FROM node:24-bookworm-slim
+FROM node:26-bookworm-slim
 
 WORKDIR /app
 
