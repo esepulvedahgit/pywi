@@ -4,7 +4,7 @@
 # Este stage se descarta al final; build-essential NO llega
 # a la imagen runtime.
 # ============================================================
-FROM node:20-bookworm-slim AS deps
+FROM node:24-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -28,18 +28,22 @@ RUN npm run build
 # Contiene código + node_modules + .venv. El despliegue usa
 # docker compose con volumen nombrado para /app/data.
 # ============================================================
-FROM node:20-bookworm-slim
+FROM node:24-bookworm-slim
 
 WORKDIR /app
 
 # Solo runtime: python para crear el venv, gosu para bajar
 # privilegios. Sin build-essential ni python3-pip.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     python3 \
     python3-venv \
     gosu \
     p7zip-full \
     && rm -rf /var/lib/apt/lists/*
+
+# npm is only needed in the build stage. The runtime launches Node directly.
+RUN rm -rf /usr/local/lib/node_modules/npm && \
+    rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 # node_modules compilado desde el stage deps.
 # --chown fija ownership en la misma instrucción COPY, evitando
@@ -53,7 +57,7 @@ COPY --chown=node:node requirements.txt ./
 RUN chown node:node /app
 USER node
 RUN python3 -m venv .venv && \
-    .venv/bin/pip install --no-cache-dir --upgrade pip && \
+    .venv/bin/pip install --no-cache-dir --upgrade pip setuptools && \
     .venv/bin/pip install --no-cache-dir -r requirements.txt
 USER root
 
@@ -78,4 +82,4 @@ USER node
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # dist/ ya compilado en el stage deps — arrancar directamente el servidor.
-CMD ["npm", "start"]
+CMD ["node", "dist/server.cjs"]
