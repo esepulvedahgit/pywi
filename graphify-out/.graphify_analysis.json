@@ -1,0 +1,249 @@
+{
+  "communities": {
+    "0": [
+      "server_actualpath",
+      "server_app",
+      "server_app_data_dir",
+      "server_data_dir",
+      "server_database",
+      "server_db",
+      "server_db_file",
+      "server_exists",
+      "server_filepath",
+      "server_filerecord",
+      "server_firstproject",
+      "server_installedpackageslist",
+      "server_isscript",
+      "server_mockpackages",
+      "server_newdataset",
+      "server_newfile",
+      "server_newproject",
+      "server_newuser",
+      "server_passwordhash",
+      "server_pippath",
+      "server_project",
+      "server_projectdir",
+      "server_projectfiles",
+      "server_projpath",
+      "server_readdb",
+      "server_sanitized",
+      "server_simpledb",
+      "server_startserver",
+      "server_starttime",
+      "server_storage",
+      "server_targetpath",
+      "server_testuser",
+      "server_text",
+      "server_ts",
+      "server_upload",
+      "server_user",
+      "server_userprojects",
+      "server_venv_dir",
+      "server_venvpython",
+      "server_venvstatus",
+      "server_version",
+      "server_writedb"
+    ],
+    "1": [
+      "components_authscreen_authscreen",
+      "components_authscreen_authscreenprops",
+      "components_consolesheet_consolesheet",
+      "components_consolesheet_consolesheetprops",
+      "components_sidebar_getthemesidebarclasses",
+      "components_sidebar_sidebar",
+      "components_sidebar_sidebarprops",
+      "src_app_app",
+      "src_app_tsx",
+      "src_components_authscreen_tsx",
+      "src_components_consolesheet_tsx",
+      "src_components_sidebar_tsx",
+      "src_main_tsx",
+      "src_types_executionresult",
+      "src_types_fileitem",
+      "src_types_project",
+      "src_types_ts",
+      "src_types_user"
+    ],
+    "2": [
+      "docker_service",
+      "gemini_api",
+      "matplotlib_dep",
+      "nodejs_runtime",
+      "npm_dev",
+      "numpy_dep",
+      "pandas_dep",
+      "port_3000",
+      "project_ai_studio",
+      "python_runtime",
+      "seaborn_dep",
+      "sklearn_dep"
+    ],
+    "3": [
+      "server_checkinstalledpackages",
+      "server_getvenvpythonpath",
+      "server_handlecompilationorexecution",
+      "server_onvenvcreated",
+      "server_setupvenv"
+    ],
+    "4": [
+      "components_packagemanagermodal_packagemanagermodal",
+      "components_packagemanagermodal_packagemanagermodalprops",
+      "components_packagemanagermodal_pythonlib",
+      "components_packagemanagermodal_venvstatus",
+      "src_components_packagemanagermodal_tsx"
+    ],
+    "5": [
+      "components_specialkeys_specialkeys",
+      "components_specialkeys_specialkeysprops",
+      "src_components_specialkeys_tsx"
+    ],
+    "6": [
+      "data_presets_preset_templates",
+      "data_presets_presettemplate",
+      "src_data_presets_ts"
+    ],
+    "7": [
+      "data_app_data_user_default_proj_default_main_py",
+      "proj_default_main_rationale_1"
+    ],
+    "8": [
+      "vite_config_ts"
+    ],
+    "9": [
+      "data_app_data_user_hdto0l16e_proj_jh0jwb2pa_main_py"
+    ]
+  },
+  "cohesion": {
+    "0": 0.05,
+    "1": 0.19,
+    "2": 0.21,
+    "3": 0.4,
+    "4": 0.4,
+    "5": 0.67,
+    "6": 0.67,
+    "7": 1.0,
+    "8": 1.0,
+    "9": 1.0
+  },
+  "gods": [
+    {
+      "id": "python_runtime",
+      "label": "Python Runtime",
+      "degree": 7
+    },
+    {
+      "id": "project_ai_studio",
+      "label": "AI Studio Web IDE",
+      "degree": 5
+    },
+    {
+      "id": "docker_service",
+      "label": "Docker web-ide Service",
+      "degree": 5
+    },
+    {
+      "id": "server_getvenvpythonpath",
+      "label": "getVenvPythonPath()",
+      "degree": 4
+    },
+    {
+      "id": "server_checkinstalledpackages",
+      "label": "checkInstalledPackages()",
+      "degree": 3
+    },
+    {
+      "id": "src_types_user",
+      "label": "User",
+      "degree": 3
+    },
+    {
+      "id": "src_types_project",
+      "label": "Project",
+      "degree": 3
+    },
+    {
+      "id": "src_types_fileitem",
+      "label": "FileItem",
+      "degree": 3
+    },
+    {
+      "id": "src_types_executionresult",
+      "label": "ExecutionResult",
+      "degree": 3
+    },
+    {
+      "id": "server_onvenvcreated",
+      "label": "onVenvCreated()",
+      "degree": 2
+    }
+  ],
+  "surprises": [
+    {
+      "source": "AI Studio Web IDE",
+      "target": "Node.js Runtime",
+      "source_files": [
+        "README.md",
+        "README.md,docker-compose.yml"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "uses",
+      "why": "connects across different repos/directories; peripheral node `Node.js Runtime` unexpectedly reaches hub `AI Studio Web IDE`"
+    },
+    {
+      "source": "AI Studio Web IDE",
+      "target": "Gemini API",
+      "source_files": [
+        "README.md",
+        "README.md,docker-compose.yml"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "depends_on",
+      "why": "connects across different repos/directories; peripheral node `Gemini API` unexpectedly reaches hub `AI Studio Web IDE`"
+    },
+    {
+      "source": "Docker web-ide Service",
+      "target": "Node.js Runtime",
+      "source_files": [
+        "docker-compose.yml",
+        "README.md,docker-compose.yml"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "uses",
+      "why": "connects across different repos/directories; peripheral node `Node.js Runtime` unexpectedly reaches hub `Docker web-ide Service`"
+    },
+    {
+      "source": "Python Runtime",
+      "target": "NumPy >=1.24.0",
+      "source_files": [
+        "docker-compose.yml",
+        "requirements.txt"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "depends_on",
+      "why": "connects across different repos/directories; peripheral node `NumPy >=1.24.0` unexpectedly reaches hub `Python Runtime`"
+    },
+    {
+      "source": "Python Runtime",
+      "target": "Pandas >=2.0.0",
+      "source_files": [
+        "docker-compose.yml",
+        "requirements.txt"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "depends_on",
+      "why": "connects across different repos/directories; peripheral node `Pandas >=2.0.0` unexpectedly reaches hub `Python Runtime`"
+    }
+  ],
+  "questions": [
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `app`, `DATA_DIR`, `DB_FILE` to the rest of the system?",
+      "why": "55 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 0` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.05 - nodes in this community are weakly interconnected."
+    }
+  ]
+}

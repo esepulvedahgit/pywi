@@ -1,0 +1,22 @@
+node_modules
+.venv
+dist
+build
+data
+export
+.git
+.env
+.env.local
+*.log
+Dockerfile
+docker-compose.yml
+README.md
+# Archivos de desarrollo que no forman parte de la imagen
+.claude
+docs
+*.md
+# NO excluir .gitignore: Tailwind v4 (sin tailwind.config) usa detección
+# automática de contenido y respeta .gitignore para saber qué carpetas saltar.
+# Si .gitignore no existe dentro del contenedor, Tailwind escanea todo el
+# árbol (incluyendo archivos grandes que deberían ignorarse) y el build se
+# vuelve catastróficamente lento.
