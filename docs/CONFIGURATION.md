@@ -13,6 +13,7 @@
 | `PORT` | ❌ | Puerto interno del servidor Node.js / Internal Node.js server port | `3000` |
 | `NODE_ENV` | ❌ | Entorno de Node.js / Node.js environment | `production` |
 | `UV_BIN` | ❌ | Ruta del ejecutable `uv` al ejecutar el servidor directamente / Path to the `uv` executable when running the server directly | `uv` (`uv.exe` en Windows / on Windows) |
+| `AI_ALLOWED_BASE_URLS` | ❌ | URLs base personalizadas permitidas para el tutor IA, separadas por comas / Comma-separated custom AI tutor base URLs allowed by the deployment operator | vacío / empty |
 
 El contenedor oficial ya incluye `uv`. Si ejecutas el servidor fuera de Docker, instala `uv` y déjalo disponible en `PATH`, o configura `UV_BIN` con su ruta completa. El gestor de paquetes de la interfaz utiliza `uv` para crear el entorno virtual e instalar, listar, actualizar y desinstalar paquetes.
 
@@ -67,8 +68,10 @@ The AI tutor is configured from the web interface in **Settings → AI Assistant
 - **Alternativa / Alternative:** `gemini-1.5-pro`
 
 #### Custom (compatible con OpenAI / OpenAI-compatible)
-- Introduce la URL base de tu API / Enter your API base URL (ej. / e.g. `http://localhost:11434/v1` para / for Ollama)
+- Introduce la URL base de tu API / Enter your API base URL (ej. / e.g. `http://ollama:11434/v1` para / for Ollama)
 - El nombre del modelo según tu proveedor / Model name per your provider
+- Un administrador debe agregar esa URL exacta a AI_ALLOWED_BASE_URLS en .env. Para Ollama en Docker, usa el nombre del servicio y asegúrate de que ambos contenedores compartan una red.
+- An administrator must add that exact URL to AI_ALLOWED_BASE_URLS in .env. For Ollama in Docker, use the service name and make sure both containers share a network.
 
 ### Seguridad de las API keys / API keys security
 
