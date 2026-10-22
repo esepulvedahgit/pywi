@@ -1,0 +1,40 @@
+# docker-compose.yml — configuración única para producción (amd64 y arm64)
+# Uso:
+#   docker compose up -d          # levanta con la imagen ya cargada
+#   docker compose down           # para
+#   docker compose logs -f        # ver logs en tiempo real
+#
+# Requisitos previos en el host:
+#   1. Imagen cargada:  docker load < python-web-ide-<arch>.tar.gz
+#   2. Archivo .env con JWT_SECRET, ENCRYPTION_KEY, APP_URL e IMAGE_NAME
+#
+# Cambia IMAGE_NAME en .env según la arquitectura:
+#   amd64 → IMAGE_NAME=python-web-ide:amd64
+#   arm64 → IMAGE_NAME=python-web-ide:arm64
+
+services:
+  web-ide:
+    image: ${IMAGE_NAME:-pywi:local}
+    container_name: python-web-ide
+    ports:
+      - "0.0.0.0:3000:3000"
+    volumes:
+      # Volumen nombrado para persistir datos de usuario (DB, proyectos, paquetes)
+      - pywi_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_URL=${APP_URL:-http://localhost:3000}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - EXEC_TIMEOUT_MS=${EXEC_TIMEOUT_MS:-180000}
+      - INPUT_IDLE_TIMEOUT_MS=${INPUT_IDLE_TIMEOUT_MS:-600000}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '2.0'
+
+volumes:
+  pywi_data:

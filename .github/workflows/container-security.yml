@@ -1,0 +1,104 @@
+name: Container security
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Image scan (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build local image
+        env:
+          IMAGE_REF: pywi:security-${{ matrix.arch }}
+        run: >-
+          docker buildx build
+          --platform "${{ matrix.platform }}"
+          --tag "$IMAGE_REF"
+          --file Dockerfile
+          --load
+          .
+
+      - name: Report all High and Critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: pywi:security-${{ matrix.arch }}
+          version: v0.76.0
+          scanners: vuln
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+      - name: Fail on fixable High and Critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: pywi:security-${{ matrix.arch }}
+          version: v0.76.0
+          scanners: vuln
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          skip-setup-trivy: true
+
+  config:
+    name: Docker configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan Dockerfile configuration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: Dockerfile
+          version: v0.76.0
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Scan Docker Compose security rules
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: docker-compose.yml
+          version: v0.76.0
+          trivy-config: .trivy/trivy.yaml
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'

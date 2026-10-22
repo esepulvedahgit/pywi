@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python)",
+      "Bash(cd \"d:\\\\Proyectos_app\\\\python-web-ide\" *)",
+      "Bash(find /mnt/d/Proyectos_app/python-web-ide/node_modules/lucide-react -maxdepth 2 -name \"*.js\" 2>/dev/null | head -5 || echo \"cannot find\")",
+      "Read(//mnt/d/Proyectos_app/python-web-ide/node_modules/**)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(docker-compose down *)",
+      "Bash(docker-compose up *)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(powershell -Command \"New-Item -ItemType Directory -Force -Path '.\\\\public\\\\images' | Out-Null; Get-ChildItem -Path '.\\\\public' -Force\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path '.\\\\public\\\\images\\\\' -Force\")",
+      "Bash(curl -s http://localhost:3000/api/metrics)",
+      "Bash(Get-Content \"C:\\\\Users\\\\eesep\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Proyectos-app-python-web-ide\\\\ccb7d441-51c1-4397-afe2-d7e1dd91e239\\\\tasks\\\\bc1p23xyp.output\" -Wait -Tail 5)",
+      "Bash(Get-Content \"C:\\\\Users\\\\eesep\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--Proyectos-app-python-web-ide\\\\ccb7d441-51c1-4397-afe2-d7e1dd91e239\\\\tasks\\\\bmkz6wlcj.output\" -Tail 20)",
+      "Bash(pwsh -Command \"cd 'd:\\\\Proyectos_app\\\\python-web-ide' && npm run dev\")",
+      "Bash(cat)",
+      "Bash(node /tmp/test_console.js)",
+      "Bash(git diff *)",
+      "Read(//dev/**)",
+      "Bash(npm --version)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "PowerShell($env:PATH.Split\\(';'\\) | Select-Object -First 20)",
+      "PowerShell(Get-Command node -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command npm -ErrorAction SilentlyContinue)",
+      "PowerShell(node -v)",
+      "Bash(powershell -Command \"cd 'd:\\\\Proyectos_app\\\\python-web-ide'; npm run lint\")",
+      "Read(//usr/**)",
+      "Read(//usr/local/**)",
+      "Bash(npx --version)",
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(Invoke-WebRequest -Uri \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 5)",
+      "Bash(Select-Object -First 5)",
+      "Bash(npm exec *)",
+      "Bash(python3)",
+      "Read(//tmp/**)",
+      "Bash(cat > *)",
+      "PowerShell($env:PATH += \";C:\\\\Program Files\\\\nodejs\"; cd d:\\\\Proyectos_app\\\\python-web-ide; node --version 2>&1)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}

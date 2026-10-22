@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#4f46e5" stroke="#4338ca" stroke-width="2"/>
+
+  <!-- Terminal symbol -->
+  <g transform="translate(100, 100)">
+    <!-- Terminal window -->
+    <rect x="-45" y="-40" width="90" height="70" fill="#1e293b" stroke="#94a3b8" stroke-width="2" rx="4"/>
+
+    <!-- Title bar -->
+    <rect x="-45" y="-40" width="90" height="16" fill="#64748b" rx="4 4 0 0"/>
+
+    <!-- Window buttons -->
+    <circle cx="-30" cy="-32" r="2" fill="#f87171"/>
+    <circle cx="-22" cy="-32" r="2" fill="#fbbf24"/>
+    <circle cx="-14" cy="-32" r="2" fill="#34d399"/>
+
+    <!-- Terminal text -->
+    <g font-family="monospace" font-size="10" fill="#00ff00">
+      <text x="-40" y="-15">$ python</text>
+      <text x="-40" y="0">>>> print("Hello")</text>
+      <text x="-40" y="15">'Hello'</text>
+      <text x="-40" y="30">$ _</text>
+    </g>
+  </g>
+
+  <!-- Shine effect -->
+  <ellipse cx="70" cy="70" rx="25" ry="25" fill="#ffffff" opacity="0.1"/>
+</svg>

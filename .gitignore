@@ -1,0 +1,71 @@
+# Node.js / npm
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Build outputs
+build/
+dist/
+coverage/
+.nyc_output/
+
+# Environment variables
+.env*
+!.env.example
+.env.local
+.env.*.local
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+ENV/
+env/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.coverage
+
+# Runtime data (user data - should not be versioned)
+data/
+db.json
+
+# Claude Code internal state (excluir todo excepto scripts/ que son parte del proyecto)
+.claude/agents/
+.claude/worktrees/
+
+# Superpowers brainstorming artifacts
+docs/superpowers/img/
+
+# App export artifacts — large binaries that must not be versioned
+export/
+*.tar
+
+# Development / test artifacts
+TASK8_VERIFICATION_RESULTS.md
+playwright-test.mjs
+test-api.sh
+test-script.js
+
+# OS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+ehthumbs.db
+
+# Line endings
+* text=auto eol=lf
