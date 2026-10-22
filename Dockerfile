@@ -4,6 +4,8 @@
 # Este stage se descarta al final; build-essential NO llega
 # a la imagen runtime.
 # ============================================================
+FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv-bin
+
 FROM node:24-bookworm-slim AS deps
 
 WORKDIR /app
@@ -32,14 +34,16 @@ FROM node:24-bookworm-slim
 
 WORKDIR /app
 
-# Solo runtime: python para crear el venv, gosu para bajar
-# privilegios. Sin build-essential ni python3-pip.
+# Solo runtime: python para ejecutar los paquetes, uv para crear
+# el venv y administrarlos, gosu para bajar privilegios.
+# Sin build-essential ni pip.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     python3 \
-    python3-venv \
     gosu \
     p7zip-full \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv-bin /uv /usr/local/bin/uv
 
 # npm is only needed in the build stage. The runtime launches Node directly.
 RUN rm -rf /usr/local/lib/node_modules/npm && \
@@ -56,9 +60,9 @@ COPY --chown=node:node --from=deps /app/node_modules ./node_modules
 COPY --chown=node:node requirements.txt ./
 RUN chown node:node /app
 USER node
-RUN python3 -m venv .venv && \
-    .venv/bin/pip install --no-cache-dir --upgrade pip setuptools && \
-    .venv/bin/pip install --no-cache-dir -r requirements.txt
+RUN uv venv --python /usr/bin/python3 --no-managed-python .venv && \
+    UV_CACHE_DIR=/tmp/uv-cache uv pip install --python .venv/bin/python -r requirements.txt && \
+    rm -rf /tmp/uv-cache
 USER root
 
 # Código fuente de la app — propiedad de node en una sola capa.

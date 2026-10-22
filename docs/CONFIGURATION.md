@@ -12,6 +12,11 @@
 | `EXEC_TIMEOUT_MS` | ❌ | Timeout máximo de ejecución Python en milisegundos / Max Python execution timeout in milliseconds | `120000` (2 min) |
 | `PORT` | ❌ | Puerto interno del servidor Node.js / Internal Node.js server port | `3000` |
 | `NODE_ENV` | ❌ | Entorno de Node.js / Node.js environment | `production` |
+| `UV_BIN` | ❌ | Ruta del ejecutable `uv` al ejecutar el servidor directamente / Path to the `uv` executable when running the server directly | `uv` (`uv.exe` en Windows / on Windows) |
+
+El contenedor oficial ya incluye `uv`. Si ejecutas el servidor fuera de Docker, instala `uv` y déjalo disponible en `PATH`, o configura `UV_BIN` con su ruta completa. El gestor de paquetes de la interfaz utiliza `uv` para crear el entorno virtual e instalar, listar, actualizar y desinstalar paquetes.
+
+The official container already includes `uv`. When running the server outside Docker, install `uv` and make it available on `PATH`, or set `UV_BIN` to its full path. The package manager in the UI uses `uv` to create the virtual environment and install, list, update, and uninstall packages.
 
 ### Generar JWT_SECRET y ENCRYPTION_KEY / Generate JWT_SECRET and ENCRYPTION_KEY
 

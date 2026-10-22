@@ -17,6 +17,7 @@ import sevenBin from '7zip-bin';
 
 const app = express();
 const PORT = 3000;
+const UV_EXECUTABLE = process.env.UV_BIN?.trim() || (process.platform === 'win32' ? 'uv.exe' : 'uv');
 
 if (!process.env.JWT_SECRET) {
   console.error('FATAL: JWT_SECRET environment variable is not set. Set it before starting the server.');
@@ -355,19 +356,37 @@ function getVenvPythonPath(): string {
   return '';
 }
 
-function checkInstalledPackages() {
+function runUvPip(
+  command: string,
+  args: string[],
+  callback: (error: Error | null, stdout: string, stderr: string) => void,
+  timeout?: number
+) {
   const venvPython = getVenvPythonPath();
-  if (!venvPython) return;
-  
-  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-  const listCmd = `"${pipPath}" list --format=json`;
-  
-  exec(listCmd, (err, stdout) => {
+  if (!venvPython) {
+    callback(new Error('No se encontró Python dentro del entorno virtual'), '', '');
+    return;
+  }
+
+  execFile(
+    UV_EXECUTABLE,
+    ['pip', command, '--python', venvPython, ...args],
+    timeout === undefined ? {} : { timeout },
+    callback
+  );
+}
+
+function checkInstalledPackages() {
+  if (!getVenvPythonPath()) return;
+
+  runUvPip('list', ['--format=json'], (err, stdout) => {
     if (err) {
-      // In case --format=json fails or is not supported by older pip, try standard fallback parsing
-      exec(`"${pipPath}" list`, (err2, stdout2) => {
+      // Fall back to the table format if the JSON command is unavailable.
+      runUvPip('list', [], (err2, stdout2) => {
         if (!err2) {
-          const lines = stdout2.split('\n').filter(l => l.trim() && !l.startsWith('-') && !l.startsWith('Package'));
+          const lines = stdout2.split('\n').filter(l =>
+            l.trim() && !l.startsWith('-') && !/^(Package|Name)(\s|$)/i.test(l.trim())
+          );
           installedPackagesList = lines.map(line => {
             const parts = line.split(/\s+/);
             return { name: parts[0] || '', version: parts[1] || '' };
@@ -382,7 +401,7 @@ function checkInstalledPackages() {
       venvStatus.installedCount = installedPackagesList.length;
       console.log(`Discovered ${installedPackagesList.length} packages in venv.`);
     } catch (e) {
-      console.warn('Failed to parse json pip list output.');
+      console.warn('Failed to parse JSON package list output from uv.');
     }
   });
 }
@@ -393,9 +412,7 @@ function checkPackageUpdates(userId: string): void {
   if (!venvPython) return;
 
   userUpdateCheckJobs.set(userId, true);
-  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-
-  execFile(pipPath, ['list', '--outdated', '--format=json'], { timeout: 60000 }, (err, stdout) => {
+  runUvPip('list', ['--outdated', '--format=json'], (err, stdout) => {
     userUpdateCheckJobs.delete(userId);
     if (err) return;
     try {
@@ -407,7 +424,7 @@ function checkPackageUpdates(userId: string): void {
         writeDB(db);
       }
     } catch (e) { /* silent parse failure */ }
-  });
+  }, 60000);
 }
 
 function onVenvCreated() {
@@ -415,28 +432,23 @@ function onVenvCreated() {
   venvStatus.created = true;
   venvStatus.installingBase = true;
   
-  const venvPython = getVenvPythonPath();
-  if (!venvPython) {
+  if (!getVenvPythonPath()) {
     venvStatus.installingBase = false;
     venvStatus.error = 'No se encontró la ruta del binario de Python dentro del .venv';
     return;
   }
   
   console.log('Installing base packages in background...');
-  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-
-  // Upgrade pip first to ensure compatibility
-  exec(`"${venvPython}" -m pip install --upgrade pip`, () => {
-    const installCmd = `"${pipPath}" install numpy pandas matplotlib seaborn scikit-learn openpyxl xlrd pyarrow`;
-    exec(installCmd, (err) => {
-      venvStatus.installingBase = false;
-      if (err) {
-        console.warn('warning: some base packages failed to preinstall or timed out', err);
-      } else {
-        console.log('Base Python packages pre-installed successfully.');
-      }
-      checkInstalledPackages();
-    });
+  runUvPip('install', [
+    'numpy', 'pandas', 'matplotlib', 'seaborn', 'scikit-learn', 'openpyxl', 'xlrd', 'pyarrow'
+  ], (err) => {
+    venvStatus.installingBase = false;
+    if (err) {
+      console.warn('warning: some base packages failed to preinstall or timed out', err);
+    } else {
+      console.log('Base Python packages pre-installed successfully.');
+    }
+    checkInstalledPackages();
   });
 }
 
@@ -454,23 +466,28 @@ function setupVenv() {
   }
   
   console.log('Starting Python Virtual Environment creation (.venv)...');
-  const createCmd = `python3 -m venv "${VENV_DIR}"`;
-  
-  exec(createCmd, (error) => {
-    if (error) {
-      const fallbackCreateCmd = `python -m venv "${VENV_DIR}"`;
-      exec(fallbackCreateCmd, (err2) => {
-        if (err2) {
-          console.error('Failed to create python venv:', err2);
-          venvStatus.error = 'Error creando entorno virtual: ' + err2.message;
-          return;
-        }
-        onVenvCreated();
-      });
-    } else {
-      onVenvCreated();
+  const pythonCandidates = process.platform === 'win32' ? ['python'] : ['python3', 'python'];
+  const createWithPython = (index: number, lastError?: Error) => {
+    if (index >= pythonCandidates.length) {
+      const detail = lastError ? `: ${lastError.message}` : '';
+      const message = `No se pudo crear el entorno virtual con uv y Python del sistema${detail}`;
+      console.error(message);
+      venvStatus.error = message;
+      return;
     }
-  });
+
+    execFile(UV_EXECUTABLE, [
+      'venv', '--python', pythonCandidates[index], '--no-managed-python', VENV_DIR
+    ], { timeout: 60000 }, (error) => {
+      if (error) {
+        createWithPython(index + 1, error);
+        return;
+      }
+      onVenvCreated();
+    });
+  };
+
+  createWithPython(0);
 }
 
 // Start setup
@@ -1217,9 +1234,7 @@ function restoreUserPackages(userId: string, packages: string[]): void {
       return;
     }
 
-    const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-
-    execFile(pipPath, ['install', '--', pkg], { timeout: 90000 }, (error) => {
+    runUvPip('install', [pkg], (error) => {
       if (error) {
         job.failed.push(pkg);
       } else {
@@ -1230,7 +1245,7 @@ function restoreUserPackages(userId: string, packages: string[]): void {
         }
       }
       installNext();
-    });
+    }, 90000);
   };
 
   installNext();
@@ -1355,10 +1370,8 @@ app.post('/api/pip/install', requireAuth, (req, res) => {
     return res.status(500).json({ error: 'Entorno virtual no configurado correctamente' });
   }
 
-  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-
-  console.log(`Running pip installation: ${pipPath} install ${sanitized}`);
-  execFile(pipPath, ['install', '--', sanitized], { timeout: 90000 }, (error, stdout, stderr) => {
+  console.log(`Running uv installation in ${venvPython}: ${sanitized}`);
+  runUvPip('install', [sanitized], (error, stdout, stderr) => {
     if (error) {
       console.error(`Pip install error for ${sanitized}:`, error);
       return res.status(550).json({
@@ -1382,7 +1395,7 @@ app.post('/api/pip/install', requireAuth, (req, res) => {
       stdout: stdout || '',
       stderr: stderr || ''
     });
-  });
+  }, 90000);
 });
 
 // API: Uninstall one or more packages via pip
@@ -1422,8 +1435,7 @@ app.post('/api/pip/uninstall', requireAuth, (req, res) => {
         return;
       }
 
-      const pipPath = getVenvPythonPath().replace('python', 'pip');
-      execFile(pipPath, ['uninstall', '-y', '--', pkgName], (err) => {
+      runUvPip('uninstall', [pkgName], (err) => {
         if (!err) {
           removed.push(pkgName);
           removePackageForUser(userId, pkgName);
@@ -1472,9 +1484,7 @@ app.post('/api/pip/update', requireAuth, (req, res) => {
     return res.status(500).json({ success: false, error: 'Entorno virtual no configurado' });
   }
 
-  const pipPath = venvPython.replace(/python(3|3\.exe|\.exe)?$/, 'pip');
-
-  execFile(pipPath, ['install', '--upgrade', '--', sanitized], { timeout: 90000 }, (error, stdout, stderr) => {
+  runUvPip('install', ['--upgrade', sanitized], (error, stdout, stderr) => {
     if (error) {
       return res.status(550).json({ success: false, error: error.message, stdout: stdout || '', stderr: stderr || '' });
     }
@@ -1491,7 +1501,7 @@ app.post('/api/pip/update', requireAuth, (req, res) => {
 
     checkInstalledPackages();
     res.json({ success: true, stdout: stdout || '', stderr: stderr || '' });
-  });
+  }, 90000);
 });
 
 // API: Check if initial setup (first admin) is complete (public — used by frontend to hide register tab)

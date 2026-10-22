@@ -63,7 +63,7 @@
 | **Frontend** | React 19, Vite, CodeMirror 6, Tailwind CSS, TypeScript |
 | **Backend** | Node.js 20, Express, TypeScript, esbuild |
 | **Terminal interactiva** | xterm.js, node-pty, WebSocket (soporta `input()` en vivo) |
-| **Runtime Python** | Python 3.11, venv, pandas, numpy, matplotlib, seaborn, scikit-learn, openpyxl, xlrd, pyarrow |
+| **Runtime Python** | Python 3.11, uv, venv, pandas, numpy, matplotlib, seaborn, scikit-learn, openpyxl, xlrd, pyarrow |
 | **Tutor IA / AI Tutor** | OpenAI, DeepSeek, Google Gemini, custom (OpenAI-compatible) |
 | **Seguridad / Security** | JWT, bcryptjs, AES-256-GCM (API keys at rest) |
 | **Infraestructura** | Docker, Docker Compose |
