@@ -9,7 +9,7 @@ import multer from 'multer';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { createServer as createViteServer } from 'vite';
-import rateLimit from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import http from 'http';
 import { WebSocketServer, WebSocket as WS } from 'ws';
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
@@ -101,6 +101,10 @@ function migrateEncryptUserApiKey(database: SimpleDB): boolean {
 // ── End encryption helpers ─────────────────────────────────────────────────────
 
 // Authentication utilities
+function createResourceId(prefix: string): string {
+  return prefix + '_' + crypto.randomBytes(16).toString('hex');
+}
+
 function generateToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
 }
@@ -612,10 +616,15 @@ const upload = multer({
 // Multer dedicado para la restauración: el .zip subido se guarda en un archivo
 // temporal del sistema (no en el árbol del usuario) con un límite amplio.
 const RESTORE_MAX_BYTES = Number(process.env.RESTORE_MAX_BYTES) || 1024 * 1024 * 1024; // 1 GB
+const restoreUploadPaths = new WeakMap<express.Request, string>();
 const restoreUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, os.tmpdir()),
-    filename: (_req, _file, cb) => cb(null, `restore_${Date.now()}_${crypto.randomBytes(6).toString('hex')}.zip`)
+    filename: (req, _file, cb) => {
+      const filename = 'restore_' + Date.now() + '_' + crypto.randomBytes(6).toString('hex') + '.zip';
+      restoreUploadPaths.set(req, path.join(os.tmpdir(), filename));
+      cb(null, filename);
+    }
   }),
   limits: { fileSize: RESTORE_MAX_BYTES }
 });
@@ -749,46 +758,60 @@ interface TokenUsageServer {
   totalTokens: number;
 }
 
-// Guard against SSRF via user-supplied baseUrl.
-// Policy (user decision): block only cloud metadata endpoints (169.254.0.0/16,
-// metadata.google.internal). Localhost and private ranges are intentionally
-// allowed to support self-hosted LLMs (Ollama, LM Studio, etc.).
-//
-// Bypass vectors addressed:
-//   - Direct IPv4 numeric: 169.254.169.254
-//   - IPv6-mapped IPv4:    ::ffff:169.254.169.254  (bracket form: [::ffff:169.254.x.x])
-//   - Trailing FQDN dot:   169.254.169.254.
-//   - Redirect bypass:     fetch uses redirect:'manual' so 3xx responses are
-//     caught by the !res.ok check instead of being followed silently.
-function isMetadataHost(hostname: string): boolean {
-  // Strip trailing FQDN dot and lowercase
-  const h = hostname.toLowerCase().replace(/\.$/, '');
+// Custom AI endpoints must be explicitly trusted by the deployment operator.
+// This preserves self-hosted providers such as Ollama while keeping an account's
+// saved baseUrl from selecting arbitrary internal services or cloud metadata.
+const DEFAULT_AI_BASE_URLS: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  deepseek: 'https://api.deepseek.com/v1',
+};
 
-  // Named cloud metadata hostnames
+function isMetadataHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   if (h === 'metadata.google.internal') return true;
 
-  // Normalize IPv6-mapped IPv4 (::ffff:x.x.x.x) — URL.hostname strips brackets
   const v4mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
   const ipToCheck = v4mapped ? v4mapped[1] : h;
-
-  // IPv4: block 169.254.0.0/16 (link-local, covers all major cloud metadata services)
-  if (net.isIPv4(ipToCheck)) {
-    const [a, b] = ipToCheck.split('.').map(Number);
-    return a === 169 && b === 254;
-  }
-
-  return false;
+  if (!net.isIPv4(ipToCheck)) return false;
+  const [a, b] = ipToCheck.split('.').map(Number);
+  return a === 169 && b === 254;
 }
 
-function assertSafeBaseUrl(raw?: string): void {
-  if (!raw) return; // no override → provider default is safe
-  let u: URL;
-  try { u = new URL(raw); }
-  catch { throw new Error('baseUrl no es una URL válida'); }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:')
-    throw new Error('baseUrl debe usar http o https');
-  if (isMetadataHost(u.hostname))
-    throw new Error('baseUrl apunta a un endpoint de metadata no permitido');
+function normalizeAIBaseUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (url.username || url.password || url.search || url.hash) return null;
+    if (isMetadataHost(url.hostname)) return null;
+    return url.origin + url.pathname.replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function assertSafeBaseUrl(raw: string | undefined, provider: string): string {
+  const requestedUrl = raw?.trim() || DEFAULT_AI_BASE_URLS[provider];
+  if (!requestedUrl) {
+    throw new Error('Configura una URL base permitida para el proveedor personalizado.');
+  }
+
+  const normalizedRequest = normalizeAIBaseUrl(requestedUrl);
+  if (!normalizedRequest) {
+    throw new Error('baseUrl debe ser una URL HTTP(S) válida y no puede apuntar a metadata.');
+  }
+
+  // Return an entry from trusted configuration, never the user-supplied URL.
+  const configuredUrls = (process.env.AI_ALLOWED_BASE_URLS || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+  const trustedUrl = [...Object.values(DEFAULT_AI_BASE_URLS), ...configuredUrls]
+    .find(value => normalizeAIBaseUrl(value) === normalizedRequest);
+  if (!trustedUrl) {
+    throw new Error('baseUrl no permitido. Un administrador debe agregarlo a AI_ALLOWED_BASE_URLS.');
+  }
+
+  return normalizeAIBaseUrl(trustedUrl)!;
 }
 
 // AI provider adapter — supports OpenAI-compatible (openai/deepseek/custom) and Gemini REST
@@ -840,12 +863,7 @@ async function callAIProvider(
 
     } else {
       // OpenAI-compatible: openai, deepseek, custom
-      assertSafeBaseUrl(config.baseUrl);
-      const defaultBaseUrls: Record<string, string> = {
-        openai: 'https://api.openai.com/v1',
-        deepseek: 'https://api.deepseek.com/v1',
-      };
-      const base = (config.baseUrl || defaultBaseUrls[config.provider] || 'https://api.openai.com/v1').replace(/\/$/, '');
+      const base = assertSafeBaseUrl(config.baseUrl, config.provider);
       const url = `${base}/chat/completions`;
 
       const res = await fetch(url, {
@@ -1002,12 +1020,7 @@ async function callAIProviderStream(
       }
     } else {
       // OpenAI-compatible: openai, deepseek, custom
-      assertSafeBaseUrl(config.baseUrl);
-      const defaultBaseUrls: Record<string, string> = {
-        openai: 'https://api.openai.com/v1',
-        deepseek: 'https://api.deepseek.com/v1',
-      };
-      const base = (config.baseUrl || defaultBaseUrls[config.provider] || 'https://api.openai.com/v1').replace(/\/$/, '');
+      const base = assertSafeBaseUrl(config.baseUrl, config.provider);
       const url = `${base}/chat/completions`;
 
       const res = await fetch(url, {
@@ -1149,6 +1162,27 @@ const baseLimiterOpts = {
   validate: false,
 } as const;
 
+const apiLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: 'Demasiadas solicitudes. Inténtalo de nuevo en un minuto.' }
+});
+
+const packageLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Límite de operaciones de paquetes alcanzado. Inténtalo de nuevo en un minuto.' }
+});
+
+const passwordChangeLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Demasiados intentos. Inténtalo de nuevo en 15 minutos.' }
+});
+
 const authStrictLimiter = rateLimit({
   ...baseLimiterOpts,
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -1192,6 +1226,8 @@ const restoreLimiter = rateLimit({
   max: 10,
   message: { error: 'Límite de restauraciones alcanzado. Inténtalo de nuevo más tarde.' }
 });
+
+app.use('/api', apiLimiter);
 
 // API: Venv status & stats
 app.get('/api/pip/status', requireAuth, (req, res) => {
@@ -1273,7 +1309,7 @@ app.get('/api/pip/updates', requireAuth, (req, res) => {
 });
 
 // API: Trigger manual update check
-app.post('/api/pip/check-updates', requireAuth, (req, res) => {
+app.post('/api/pip/check-updates', requireAuth, packageLimiter, (req, res) => {
   const userId = (req as any).userId;
   if (!hasPython || !venvStatus.created) {
     return res.status(400).json({ success: false, error: 'Python o venv no disponible' });
@@ -1322,7 +1358,7 @@ function removePackageForUser(userId: string, packageName: string) {
 }
 
 // API: Install a new package via pip
-app.post('/api/pip/install', requireAuth, (req, res) => {
+app.post('/api/pip/install', requireAuth, packageLimiter, (req, res) => {
   const userId = (req as any).userId;
   const { packageName } = req.body;
   if (!packageName) {
@@ -1373,7 +1409,7 @@ app.post('/api/pip/install', requireAuth, (req, res) => {
   console.log(`Running uv installation in ${venvPython}: ${sanitized}`);
   runUvPip('install', [sanitized], (error, stdout, stderr) => {
     if (error) {
-      console.error(`Pip install error for ${sanitized}:`, error);
+      console.error('Pip install error for %s:', sanitized, error);
       return res.status(550).json({
         success: false,
         error: error.message,
@@ -1399,7 +1435,7 @@ app.post('/api/pip/install', requireAuth, (req, res) => {
 });
 
 // API: Uninstall one or more packages via pip
-app.post('/api/pip/uninstall', requireAuth, (req, res) => {
+app.post('/api/pip/uninstall', requireAuth, packageLimiter, (req, res) => {
   const userId = (req as any).userId;
   const { packageNames } = req.body;
 
@@ -1465,7 +1501,7 @@ app.post('/api/pip/uninstall', requireAuth, (req, res) => {
 });
 
 // API: Update a package to its latest version
-app.post('/api/pip/update', requireAuth, (req, res) => {
+app.post('/api/pip/update', requireAuth, packageLimiter, (req, res) => {
   const userId = (req as any).userId;
   const { packageName } = req.body;
 
@@ -1512,7 +1548,7 @@ app.get('/api/auth/admin-exists', adminExistsLimiter, (req, res) => {
 });
 
 // API: Auth registration (only allowed when no users exist; first user becomes admin)
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authStrictLimiter, async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
@@ -1536,7 +1572,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   try {
-    const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    const userId = createResourceId('user');
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const newUser = { id: userId, username, email, passwordHash, role: 'admin' as const };
@@ -1544,7 +1580,7 @@ app.post('/api/auth/register', async (req, res) => {
     writeDB(database);
 
   // Auto-create a default project for the new user
-  const projectId = 'proj_' + Math.random().toString(36).substr(2, 9);
+  const projectId = createResourceId('proj');
   const newProject = {
     id: projectId,
     userId,
@@ -1568,7 +1604,7 @@ print(f"La suma de {a} y {b} es {suma}")
   fs.writeFileSync(path.join(projPath, 'main.py'), defaultCode);
 
   database.files.push({
-    id: 'file_' + Math.random().toString(36).substr(2, 9),
+    id: createResourceId('file'),
     projectId,
     filename: 'main.py',
     filepath: path.join(userId, projectId, 'main.py'),
@@ -1746,7 +1782,7 @@ app.get('/api/ai/config', requireAuth, (req, res) => {
 // PUT /api/ai/config — save AI config and auto-validate by calling the provider.
 // 'enabled' and 'validated' are set to true only when the provider call succeeds.
 // Use POST /api/ai/test for an ephemeral probe without persisting.
-app.put('/api/ai/config', requireAuth, async (req, res) => {
+app.put('/api/ai/config', requireAuth, aiLimiter, async (req, res) => {
   const userId = (req as any).userId;
   const { provider, model, apiKey, baseUrl } = req.body;
 
@@ -1828,7 +1864,7 @@ app.put('/api/ai/config', requireAuth, async (req, res) => {
 // Body: { provider?, model?, apiKey?, baseUrl? }
 // Falls back to the stored config for any field not supplied.
 // Only PUT /api/ai/config (save) sets validated = true and enables the tutor button.
-app.post('/api/ai/test', requireAuth, async (req, res) => {
+app.post('/api/ai/test', requireAuth, aiLimiter, async (req, res) => {
   const userId = (req as any).userId;
   const database = readDB();
   const user = database.users.find(u => u.id === userId);
@@ -2157,7 +2193,7 @@ app.post('/api/ai/intro', requireAuth, aiLimiter, async (req, res) => {
 // ── End AI Configuration ───────────────────────────────────────────────────────
 
 // API: Change own password (any authenticated user)
-app.put('/api/users/:userId/password', requireAuth, async (req, res) => {
+app.put('/api/users/:userId/password', requireAuth, passwordChangeLimiter, async (req, res) => {
   const { userId } = req.params;
   const currentUserId = (req as any).userId;
 
@@ -2227,12 +2263,12 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   }
 
   try {
-    const userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    const userId = createResourceId('user');
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const newUser = { id: userId, username, email, passwordHash, role: 'user' as const };
     database.users.push(newUser);
 
-    const projectId = 'proj_' + Math.random().toString(36).substr(2, 9);
+    const projectId = createResourceId('proj');
     database.projects.push({ id: projectId, userId, name: 'Mi Primer Proyecto Python', createdAt: new Date().toISOString() });
 
     const projPath = path.join(APP_DATA_DIR, userId, projectId);
@@ -2242,7 +2278,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     fs.writeFileSync(path.join(projPath, 'main.py'), defaultCode);
 
     database.files.push({
-      id: 'file_' + Math.random().toString(36).substr(2, 9),
+      id: createResourceId('file'),
       projectId,
       filename: 'main.py',
       filepath: path.join(userId, projectId, 'main.py'),
@@ -2616,7 +2652,10 @@ app.post('/api/users/:userId/restore', requireAuth, restoreLimiter, (req, res) =
     // controlamos por completo (la copia no tiene ningún writer abierto) y operamos
     // sobre ella; en Linux es inocuo. Node abre con share mode permisivo, así que la
     // copia funciona aunque multer aún tenga el original abierto.
-    const uploadedZip = file.path;
+    const uploadedZip = restoreUploadPaths.get(req);
+    if (!uploadedZip) {
+      return res.status(400).json({ error: 'No se pudo resolver el archivo subido' });
+    }
     const workZip = uploadedZip + '.work.zip';
     const cleanupZip = () => {
       try { fs.unlinkSync(workZip); } catch {}
@@ -2792,7 +2831,7 @@ app.post('/api/users/:userId/projects', requireAuth, (req, res) => {
   }
 
   const database = readDB();
-  const projectId = 'proj_' + Math.random().toString(36).substr(2, 9);
+  const projectId = createResourceId('proj');
   const newProject = {
     id: projectId,
     userId,
@@ -2815,7 +2854,7 @@ app.post('/api/users/:userId/projects', requireAuth, (req, res) => {
   fs.writeFileSync(path.join(projPath, defaultFilename), sampleCode);
 
   database.files.push({
-    id: 'file_' + Math.random().toString(36).substr(2, 9),
+    id: createResourceId('file'),
     projectId,
     filename: defaultFilename,
     filepath: path.join(userId, projectId, defaultFilename),
@@ -2922,7 +2961,7 @@ app.post('/api/projects/:projectId/files', requireAuth, (req, res) => {
   const fileContent = content || '';
   fs.writeFileSync(targetPath, fileContent);
 
-  const fileId = 'file_' + Math.random().toString(36).substr(2, 9);
+  const fileId = createResourceId('file');
   const newFile: SimpleDB['files'][0] = {
     id: fileId,
     projectId,
@@ -2957,7 +2996,12 @@ app.post('/api/projects/:projectId/folders', requireAuth, (req, res) => {
   const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
   if (!project) return res.status(403).json({ error: 'Acceso denegado' });
 
-  const folderPath = path.join(APP_DATA_DIR, currentUserId, projectId, folderName);
+  let folderPath: string;
+  try {
+    folderPath = safePath(APP_DATA_DIR, currentUserId, projectId, folderName);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de carpeta inválida' });
+  }
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
   }
@@ -2985,11 +3029,10 @@ app.patch('/api/projects/:projectId/files/:fileId/rename', requireAuth, (req, re
   const fileRecord = database.files.find(f => f.id === fileId && f.projectId === projectId);
   if (!fileRecord) return res.status(404).json({ error: 'Archivo no encontrado' });
 
-  const projectDir = path.join(APP_DATA_DIR, currentUserId, projectId);
-  const oldPath = path.join(projectDir, fileRecord.folder || '', fileRecord.filename);
-  const newPath = path.join(projectDir, fileRecord.folder || '', newFilename);
-
   try {
+    const projectDir = safePath(APP_DATA_DIR, currentUserId, projectId);
+    const oldPath = safePath(projectDir, fileRecord.folder || '', fileRecord.filename);
+    const newPath = safePath(projectDir, fileRecord.folder || '', newFilename);
     fs.renameSync(oldPath, newPath);
   } catch (e) {
     return res.status(500).json({ error: 'Error al renombrar el archivo en disco' });
@@ -3035,12 +3078,14 @@ app.patch('/api/projects/:projectId/files/:fileId/move', requireAuth, (req, res)
     return res.status(409).json({ error: 'Ya existe un archivo con ese nombre en el destino' });
   }
 
-  const projectDir = path.join(APP_DATA_DIR, currentUserId, projectId);
-  const oldPath = path.join(projectDir, currentFolder, fileRecord.filename);
-  const targetDir = path.join(projectDir, normalizedFolder);
-  const newPath = path.join(targetDir, fileRecord.filename);
-
+  let targetDir: string;
+  let oldPath: string;
+  let newPath: string;
   try {
+    const projectDir = safePath(APP_DATA_DIR, currentUserId, projectId);
+    oldPath = safePath(projectDir, currentFolder, fileRecord.filename);
+    targetDir = safePath(projectDir, normalizedFolder);
+    newPath = safePath(targetDir, fileRecord.filename);
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
     }
@@ -3075,9 +3120,15 @@ app.patch('/api/projects/:projectId/folders/rename', requireAuth, (req, res) => 
   const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
   if (!project) return res.status(403).json({ error: 'Acceso denegado' });
 
-  const projectDir = path.join(APP_DATA_DIR, currentUserId, projectId);
-  const oldFsPath = path.join(projectDir, oldFolderPath);
-  const newFsPath = path.join(projectDir, newFolderPath);
+  let oldFsPath: string;
+  let newFsPath: string;
+  try {
+    const projectDir = safePath(APP_DATA_DIR, currentUserId, projectId);
+    oldFsPath = safePath(projectDir, oldFolderPath);
+    newFsPath = safePath(projectDir, newFolderPath);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de carpeta inválida' });
+  }
 
   if (!fs.existsSync(oldFsPath)) {
     return res.status(404).json({ error: 'Carpeta no encontrada' });
@@ -3122,7 +3173,12 @@ app.delete('/api/projects/:projectId/folders', requireAuth, (req, res) => {
   const project = database.projects.find(p => p.id === projectId && p.userId === currentUserId);
   if (!project) return res.status(403).json({ error: 'Acceso denegado' });
 
-  const fsDirPath = path.join(APP_DATA_DIR, currentUserId, projectId, folderPath);
+  let fsDirPath: string;
+  try {
+    fsDirPath = safePath(APP_DATA_DIR, currentUserId, projectId, folderPath);
+  } catch {
+    return res.status(400).json({ error: 'Ruta de carpeta inválida' });
+  }
   try {
     if (fs.existsSync(fsDirPath)) {
       fs.rmSync(fsDirPath, { recursive: true, force: true });
@@ -3360,7 +3416,7 @@ app.post('/api/projects/:projectId/upload/:userId', requireAuth, (req, res) => {
       fileRecord.updatedAt = new Date().toISOString();
     } else {
       const newFile: SimpleDB['files'][0] = {
-        id: 'file_' + Math.random().toString(36).substr(2, 9),
+        id: createResourceId('file'),
         projectId,
         filename,
         filepath: path.join(userId, projectId, uploadFolder || '', filename),
@@ -4116,12 +4172,14 @@ async function startServer() {
     // Serve production package assets from static dist
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
+    app.use(apiLimiter);
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   // Fallback SPA route for all other requests
+  app.use(apiLimiter);
   app.get('*', (req, res) => {
     const distPath = path.join(process.cwd(), 'dist');
     const indexPath = path.join(distPath, 'index.html');
