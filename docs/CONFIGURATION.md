@@ -6,10 +6,10 @@
 
 | Variable | Requerida / Required | Descripción / Description | Valor por defecto / Default |
 |---|---|---|---|
-| `JWT_SECRET` | ✅ | Secreto para firmar tokens de sesión JWT / JWT session token signing secret | — |
 | `ENCRYPTION_KEY` | ✅ | Clave AES-256-GCM de 64 hex chars para cifrar API keys en reposo / AES-256-GCM key (64 hex chars) for encrypting API keys at rest | — |
-| `APP_URL` | ✅ | URL pública de la aplicación / Public application URL | `http://localhost:3000` |
-| `EXEC_TIMEOUT_MS` | ❌ | Timeout máximo de ejecución Python en milisegundos / Max Python execution timeout in milliseconds | `120000` (2 min) |
+| `APP_URL` | ✅ | URL pública exacta (HTTPS si Sophos termina TLS) / Exact public URL (HTTPS if Sophos terminates TLS) | `http://localhost:3000` |
+| `TRUSTED_PROXY_IPS` | ❌ | IPs exactas de proxies cuyos X-Forwarded-For se aceptan / Exact proxy IPs whose X-Forwarded-For is accepted | vacío / empty |
+| `EXEC_TIMEOUT_MS` | ❌ | Timeout máximo de ejecución Python en milisegundos / Max Python execution timeout in milliseconds | `180000` (3 min) |
 | `PORT` | ❌ | Puerto interno del servidor Node.js / Internal Node.js server port | `3000` |
 | `NODE_ENV` | ❌ | Entorno de Node.js / Node.js environment | `production` |
 | `UV_BIN` | ❌ | Ruta del ejecutable `uv` al ejecutar el servidor directamente / Path to the `uv` executable when running the server directly | `uv` (`uv.exe` en Windows / on Windows) |
@@ -19,21 +19,19 @@ El contenedor oficial ya incluye `uv`. Si ejecutas el servidor fuera de Docker, 
 
 The official container already includes `uv`. When running the server outside Docker, install `uv` and make it available on `PATH`, or set `UV_BIN` to its full path. The package manager in the UI uses `uv` to create the virtual environment and install, list, update, and uninstall packages.
 
-### Generar JWT_SECRET y ENCRYPTION_KEY / Generate JWT_SECRET and ENCRYPTION_KEY
+### Generar ENCRYPTION_KEY / Generate ENCRYPTION_KEY
 
 ```bash
 # Con Node.js / With Node.js
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"  # JWT_SECRET
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"  # ENCRYPTION_KEY
 
 # Sin Node.js / Without Node.js
-python3 -c "import secrets; print(secrets.token_hex(48))"  # JWT_SECRET
 python3 -c "import secrets; print(secrets.token_hex(32))"  # ENCRYPTION_KEY
 ```
 
 ### EXEC_TIMEOUT_MS — para scripts de ML / for ML scripts
 
-El valor por defecto es 2 minutos. Para entrenamientos más largos / Default is 2 minutes. For longer training:
+El valor por defecto es 3 minutos. Para entrenamientos más largos / Default is 3 minutes. For longer training:
 
 ```env
 # 5 minutos / 5 minutes

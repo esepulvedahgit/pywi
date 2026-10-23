@@ -65,7 +65,6 @@ export interface XtermConsoleProps {
   projectId: string;
   fileId: string;
   runCode: string;         // current editor content (saved before run)
-  token: string;
   runNonce: number;        // increment to start a new run
   stopNonce: number;       // increment to stop the current run
   activeTheme: 'light' | 'vibrant-dark' | 'midnight-obsidian';
@@ -81,7 +80,7 @@ const MAX_BUFFER_CHARS = 64 * 1024; // 64 KB
 
 export default function XtermConsole({
   isOpen, onClose, onClear, isExpanded, onToggleExpand,
-  projectId, fileId, runCode, token,
+  projectId, fileId, runCode,
   runNonce, stopNonce,
   activeTheme,
   aiReady, onRunStateChange, onExitResult, onExplainError, onImportBlocked,
@@ -221,7 +220,6 @@ export default function XtermConsole({
       // Send start message with auth + params
       ws.send(JSON.stringify({
         type: 'start',
-        token,
         projectId,
         fileId,
         runCode,
@@ -326,7 +324,7 @@ export default function XtermConsole({
   const handleDownload = async (filename: string) => {
     const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}`;
     try {
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, { headers: {} });
       if (!res.ok) return;
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -554,7 +552,7 @@ export default function XtermConsole({
           {/* Plots panel — overlays when viewMode === 'plots' */}
           {viewMode === 'plots' && exitResult?.generatedFiles?.length ? (
             <div className="absolute inset-0 overflow-auto p-4 bg-[#0b0f19]">
-              <PlotsPanel projectId={projectId} files={exitResult.generatedFiles} token={token} />
+              <PlotsPanel projectId={projectId} files={exitResult.generatedFiles} />
             </div>
           ) : null}
         </div>

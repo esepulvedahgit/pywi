@@ -87,7 +87,6 @@ interface ConsoleSheetProps {
   onToggleExpand: () => void;
   isRunning?: boolean;
   projectId: string;
-  token: string;
   waitingForInput?: boolean;
   inputPrompt?: string;
   onSendInput?: (text: string) => void;
@@ -104,7 +103,6 @@ export default function ConsoleSheet({
   onToggleExpand,
   isRunning = false,
   projectId,
-  token,
   waitingForInput = false,
   inputPrompt = '',
   onSendInput,
@@ -118,7 +116,7 @@ export default function ConsoleSheet({
   const panelRef = useRef<HTMLDivElement>(null);
 
   const handleDownload = async (filename: string) => {
-    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`;
+    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}`;
     try {
       const res = await fetch(url);
       if (!res.ok) return;
@@ -291,7 +289,6 @@ export default function ConsoleSheet({
             <PlotsPanel
               projectId={projectId}
               files={result.generatedFiles}
-              token={token}
             />
           ) : (
             result ? (

@@ -1,5 +1,7 @@
 # Guía de despliegue PyWI en arm64 — NPU Rockchip RK3588S
 
+> Aviso: el repositorio actual no incluye `docker-compose.arm64.yml` ni una imagen con RKNN. Para ejecutar PyWI en arm64 sin aceleración NPU, use `docker build -t pywi:local .` y `docker compose up -d` como indica el README. Los pasos de NPU de esta guía son históricos y requieren un overlay e imagen adicionales.
+
 Placa de referencia: **Radxa Rock 5A** (kernel 6.1.84-8-rk2410, aarch64, Debian 12 bookworm,
 driver RKNPU v0.9.8). Compatible también con Orange Pi 5, Rock 5B y otras placas con RK3588/RK3588S.
 
@@ -102,17 +104,13 @@ cp .env.example .env
 Edita `.env` y asegúrate de tener al menos:
 
 ```env
-JWT_SECRET=<genera con: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))">
 ENCRYPTION_KEY=<genera con: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
 APP_URL=http://<IP-de-tu-placa>:3000
 ```
 
-Para generar los secretos si no tienes Node instalado en la placa:
+Para generar la clave si no tienes Node instalado en la placa:
 
 ```bash
-# JWT_SECRET (96 chars hex)
-python3 -c "import secrets; print(secrets.token_hex(48))"
-
 # ENCRYPTION_KEY (64 chars hex = 32 bytes)
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```

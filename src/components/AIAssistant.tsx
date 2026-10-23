@@ -399,12 +399,10 @@ export default function AIAssistant({
     let fullText = '';
 
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ messages: updatedMsgs, ideContext })
       });

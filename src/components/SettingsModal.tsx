@@ -113,8 +113,7 @@ export default function SettingsModal({
     if (!isOpen) return;
     // Jump to the requested tab when opening
     if (initialTab) setActiveTab(initialTab);
-    const token = localStorage.getItem('py_ide_token');
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
+    const headers = {};
 
     fetch('/api/system/smtp', { headers })
       .then(r => r.json())
@@ -156,12 +155,10 @@ export default function SettingsModal({
     }
     setSavingPassword(true);
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch(`/api/users/${userId}/password`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ currentPassword, newPassword })
       });
@@ -183,13 +180,11 @@ export default function SettingsModal({
   };
 
   const handleSetAllowUnsafeImports = async (value: boolean) => {
-    const token = localStorage.getItem('py_ide_token');
     try {
       const res = await fetch('/api/system/security', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ allowUnsafeImports: value })
       });
@@ -203,9 +198,8 @@ export default function SettingsModal({
   };
 
   const loadAdminUsers = async () => {
-    const token = localStorage.getItem('py_ide_token');
     const res = await fetch('/api/admin/users', {
-      headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      headers: {}
     });
     if (res.ok) setAdminUsers(await res.json());
   };
@@ -223,12 +217,10 @@ export default function SettingsModal({
     }
     setCreatingUser(true);
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ username: newUsername, email: newEmail, password: newUserPassword })
       });
@@ -251,11 +243,10 @@ export default function SettingsModal({
   };
 
   const handleDeleteUser = async (targetId: string) => {
-    const token = localStorage.getItem('py_ide_token');
     try {
       const res = await fetch(`/api/admin/users/${targetId}`, {
         method: 'DELETE',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: {}
       });
       const data = await res.json();
       if (!res.ok) {
@@ -286,13 +277,11 @@ export default function SettingsModal({
       return;
     }
     setBackupLoading(true);
-    const token = localStorage.getItem('py_ide_token');
     try {
       const res = await fetch(`/api/users/${userId}/backup`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ password: backupPassword })
       });
@@ -335,14 +324,13 @@ export default function SettingsModal({
     }
     setRestoreConfirm(false);
     setRestoring(true);
-    const token = localStorage.getItem('py_ide_token');
     try {
       const formData = new FormData();
       formData.append('backup', restoreFile);
       formData.append('password', restorePassword);
       const res = await fetch(`/api/users/${userId}/restore`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {},
         body: formData
       });
       const data = await res.json().catch(() => ({}));
@@ -363,12 +351,10 @@ export default function SettingsModal({
   const handleSaveSettings = async () => {
     setSaving(true);
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch(`/api/users/${userId}/settings`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify(localSettings),
       });
@@ -390,12 +376,10 @@ export default function SettingsModal({
   const handleSaveSmtp = async () => {
     setSaving(true);
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/system/smtp', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify(smtpConfig),
       });
@@ -415,12 +399,10 @@ export default function SettingsModal({
   const handleTestSmtp = async () => {
     setSmtpLoading(true);
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/system/smtp/test', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
       });
 
@@ -443,12 +425,10 @@ export default function SettingsModal({
     setAiSaving(true);
     setAiSaveMessage('');
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/ai/config', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           provider: aiConfig.provider,
@@ -463,8 +443,7 @@ export default function SettingsModal({
         setAiSavedOk(true);
         setAiApiKey('');
         // Refresh to get hasKey + validated status
-        const token2 = localStorage.getItem('py_ide_token');
-        const r2 = await fetch('/api/ai/config', { headers: token2 ? { Authorization: `Bearer ${token2}` } : {} });
+        const r2 = await fetch('/api/ai/config', { headers: {} });
         if (r2.ok) {
           const freshCfg = await r2.json();
           setAiConfig(freshCfg);
@@ -496,13 +475,12 @@ export default function SettingsModal({
     setAiTesting(true);
     setAiMessage('');
     try {
-      const token = localStorage.getItem('py_ide_token');
       // Send current form values so the test works even before saving.
       // The server uses the body key in plain text (or falls back to the stored encrypted key).
       // Nothing is persisted — only Guardar enables the tutor button.
       const res = await fetch('/api/ai/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json',  },
         body: JSON.stringify({
           provider: aiConfig.provider,
           model: aiConfig.model,

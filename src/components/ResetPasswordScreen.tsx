@@ -50,7 +50,14 @@ export default function ResetPasswordScreen({ token, onDone }: ResetPasswordScre
           <h1 className="text-xl font-bold text-slate-100">{t('resetPasswordTitle')}</h1>
         </div>
 
-        {success ? (
+        {!token ? (
+          <div className="text-center space-y-4">
+            <p className="text-sm text-red-400">{t('resetTokenInvalid')}</p>
+            <button onClick={onDone} className="w-full py-2.5 bg-indigo-600 text-white rounded-lg">
+              {t('backToLogin')}
+            </button>
+          </div>
+        ) : success ? (
           <div className="text-center space-y-4">
             <p className="text-sm text-emerald-400">{t('resetSuccess')}</p>
             <p className="text-xs text-slate-500">{t('backToLogin')}...</p>

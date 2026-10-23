@@ -34,19 +34,20 @@ export default class ErrorBoundary extends React.Component<{ children: React.Rea
 
   render() {
     if (this.state.hasError) {
+      const english = localStorage.getItem('py_ide_lang') === 'en';
       return (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950 text-slate-100 p-6">
           <div className="max-w-sm w-full text-center space-y-4">
             <p className="text-2xl">⚠️</p>
-            <h1 className="text-base font-bold">Ocurrió un error inesperado</h1>
+            <h1 className="text-base font-bold">{english ? 'An unexpected error occurred' : 'Ocurrió un error inesperado'}</h1>
             <p className="text-sm text-slate-400">
-              Algo falló al mostrar la aplicación. Pulsa el botón para recargar de forma segura.
+              {english ? 'Something went wrong while displaying the application. Reload to try again.' : 'Algo falló al mostrar la aplicación. Recarga para intentarlo de nuevo.'}
             </p>
             <button
               onClick={this.handleRecover}
               className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors"
             >
-              Recargar
+              {english ? 'Reload' : 'Recargar'}
             </button>
           </div>
         </div>

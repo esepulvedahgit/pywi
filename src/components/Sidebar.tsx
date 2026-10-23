@@ -638,9 +638,8 @@ export default function Sidebar({
   useEffect(() => {
     const loadMetrics = async () => {
       try {
-        const token = localStorage.getItem('py_ide_token');
         const response = await fetch('/api/metrics', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
+          headers: {}
         });
         if (response.ok) {
           const data = await response.json();

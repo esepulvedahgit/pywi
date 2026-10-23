@@ -5,14 +5,13 @@ import { useT } from '../i18n';
 interface PlotsPanelProps {
   projectId: string;
   files: string[];
-  token: string;
 }
 
-export default function PlotsPanel({ projectId, files, token }: PlotsPanelProps) {
+export default function PlotsPanel({ projectId, files }: PlotsPanelProps) {
   const t = useT();
 
   const handleDownload = async (filename: string) => {
-    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`;
+    const url = `/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}`;
     try {
       const res = await fetch(url);
       if (!res.ok) return;
@@ -51,7 +50,7 @@ export default function PlotsPanel({ projectId, files, token }: PlotsPanelProps)
             </button>
           </div>
           <img
-            src={`/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}?token=${encodeURIComponent(token)}`}
+            src={`/api/projects/${projectId}/output-files/${encodeURIComponent(filename)}`}
             alt={filename}
             className="rounded-lg border border-slate-700 max-w-full object-contain bg-slate-900"
             loading="lazy"
