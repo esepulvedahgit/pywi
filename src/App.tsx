@@ -50,26 +50,48 @@ import AIAssistant from './components/AIAssistant';
 import DataPreviewModal from './components/DataPreviewModal';
 import OutputPreviewModal from './components/OutputPreviewModal';
 import LockScreen from './components/LockScreen';
+import { setCsrfToken } from './lib/sessionClient';
 
-// Helper: construye headers con el JWT del usuario actual
 const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
-  const token = localStorage.getItem('py_ide_token');
-  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extra };
+  return extra;
 };
+
+const sessionUser = (data: User): User => ({
+  id: data.id, username: data.username, email: data.email, role: data.role,
+});
 
 // Tiempo de inactividad antes de bloquear la sesión (10 minutos)
 const INACTIVITY_LIMIT_MS = 10 * 60 * 1000;
 
 function AppContent() {
   const tl = useT();
+  const { lang } = useLang();
   // Authentication & session state
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('py_ide_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState(false);
   // Persistimos el bloqueo para que sobreviva a un refresco del navegador
   const [isLocked, setIsLocked] = useState(() => localStorage.getItem('py_ide_locked') === '1');
   const [setupComplete, setSetupComplete] = useState<boolean>(true);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    localStorage.removeItem('py_ide_token');
+    localStorage.removeItem('py_ide_user');
+    fetch('/api/auth/session', { signal: controller.signal }).then(async response => {
+      if (!active) return;
+      if (response.status >= 500) { setSessionError(true); return; }
+      if (!response.ok) return;
+      const session = await response.json();
+      if (!active) return;
+      setCsrfToken(session.csrfToken);
+      setUser(sessionUser(session));
+      setIsLocked(session.locked);
+    }).catch(() => { if (active) setSessionError(true); })
+      .finally(() => { if (active) setSessionLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, []);
 
   // Publica el viewport VISIBLE como variables CSS para que el root y los paneles fijos
   // abracen exactamente el área visible sin dejar huecos negros debajo del teclado.
@@ -219,9 +241,8 @@ function AppContent() {
 
     const interval = setInterval(async () => {
       try {
-        const token = localStorage.getItem('py_ide_token');
         const res = await fetch('/api/pip/restore-status', {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          headers: {}
         });
         const status = await res.json();
         setEnvRestore(status);
@@ -234,11 +255,10 @@ function AppContent() {
   }, [envRestore?.inProgress, user]);
 
   // Load user settings and AI config — al montar/login y también al desbloquear
-  // (un token nuevo puede traer datos que el fetch inicial no pudo obtener por 401).
+  // (una sesión renovada puede traer datos que el fetch inicial no pudo obtener por 401).
   const loadSettingsAndAiConfig = () => {
     if (!user) return;
-    const token = localStorage.getItem('py_ide_token');
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {} as Record<string, string>;
+    const headers = {};
     fetch(`/api/users/${user.id}/settings`, { headers })
       .then(res => res.ok ? res.json() : null)
       .then(settings => {
@@ -261,9 +281,8 @@ function AppContent() {
   const fetchPackageUpdates = async () => {
     if (!user) return;
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/pip/updates', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: {}
       });
       if (res.ok) {
         const data = await res.json();
@@ -288,13 +307,11 @@ function AppContent() {
     }
   }, [user?.id]);
 
-  // Synchronization: Persist user session
+  // Server session is the source of truth; only keep profile in memory.
   useEffect(() => {
     if (user) {
-      localStorage.setItem('py_ide_user', JSON.stringify(user));
       fetchProjects();
     } else {
-      localStorage.removeItem('py_ide_user');
       setProjects([]);
       setCurrentProject(null);
       setFiles([]);
@@ -335,9 +352,11 @@ function AppContent() {
   useEffect(() => {
     if (!user || isLocked) return;
 
+    let lastActivitySent = 0;
+
     const lockSession = () => {
-      // Invalida el token en el servidor: el token retenido no podrá reutilizarse
-      // mientras esté bloqueado (aunque falle la red, el candado UI se activa igual).
+      // El servidor impide reutilizar la sesión bloqueada; el candado visual
+      // se activa incluso si la red falla.
       fetch('/api/auth/lock', { method: 'POST', headers: authHeaders() }).catch(() => {});
       localStorage.setItem('py_ide_locked', '1');
       setIsLocked(true);
@@ -346,17 +365,36 @@ function AppContent() {
     const resetTimer = () => {
       if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
       inactivityTimer.current = setTimeout(lockSession, INACTIVITY_LIMIT_MS);
+      if (Date.now() - lastActivitySent >= 60_000) {
+        lastActivitySent = Date.now();
+        fetch('/api/auth/activity', { method: 'POST' }).catch(() => {});
+      }
     };
 
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'wheel'] as const;
     events.forEach(e => window.addEventListener(e, resetTimer, { passive: true }));
-    resetTimer(); // arrancar el contador desde ya
+    inactivityTimer.current = setTimeout(lockSession, INACTIVITY_LIMIT_MS);
 
     return () => {
       events.forEach(e => window.removeEventListener(e, resetTimer));
       if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
     };
   }, [user, isLocked]);
+
+  useEffect(() => {
+    const handleSessionFailure = (event: Event) => {
+      const code = (event as CustomEvent<{ code?: string }>).detail?.code;
+      if (code === 'SESSION_LOCKED') {
+        localStorage.setItem('py_ide_locked', '1');
+        setIsLocked(true);
+      } else if (code === 'AUTH_REQUIRED') {
+        setCsrfToken(undefined);
+        setUser(null);
+      }
+    };
+    window.addEventListener('pywi:session-failure', handleSessionFailure);
+    return () => window.removeEventListener('pywi:session-failure', handleSessionFailure);
+  }, []);
 
   // API Call: Fetch projects for active log
   const fetchProjects = async () => {
@@ -1024,9 +1062,14 @@ function AppContent() {
 
   // Log of session switcher
   const handleLogout = async () => {
-    // Invalida el token en el servidor antes de borrarlo del cliente (logout real).
-    // Si falla la red, cerramos sesión localmente de todas formas.
-    try { await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }); } catch { /* noop */ }
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() });
+      if (!response.ok) throw new Error('logout failed');
+    } catch {
+      window.alert(userSettings.language === 'en' ? 'Could not sign out. Please try again.' : 'No se pudo cerrar la sesión. Inténtalo de nuevo.');
+      return;
+    }
+    setCsrfToken(undefined);
     setUser(null);
     localStorage.removeItem('py_ide_user');
     localStorage.removeItem('py_ide_last_proj');
@@ -1121,7 +1164,7 @@ function AppContent() {
     // Limpia un candado obsoleto: un login fresco no debe heredar el bloqueo previo.
     localStorage.removeItem('py_ide_locked');
     setIsLocked(false);
-    setUser(data);
+    setUser(sessionUser(data));
     setPackageUpdates({ outdated: [], lastChecked: null, dismissed: false });
     if (data.restoreNeeded) {
       const restoreCount = data.restoreCount ?? 0;
@@ -1135,6 +1178,21 @@ function AppContent() {
     }
   };
 
+  if (sessionLoading) return null;
+  if (sessionError) {
+    const english = lang === 'en';
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
+        <div className="max-w-sm text-center space-y-4">
+          <h1 className="text-xl font-bold">{english ? 'Service unavailable' : 'Servicio no disponible'}</h1>
+          <p className="text-sm text-slate-400">{english ? 'Could not check your session. Please try again.' : 'No pudimos verificar tu sesión. Inténtalo de nuevo.'}</p>
+          <button onClick={() => window.location.reload()} className="px-5 py-3 bg-indigo-600 rounded-lg text-white">
+            {english ? 'Retry' : 'Reintentar'}
+          </button>
+        </div>
+      </main>
+    );
+  }
   if (!user) {
     return <AuthScreen onLoginSuccess={handleLoginSuccess} setupComplete={setupComplete} />;
   }
@@ -1200,7 +1258,6 @@ function AppContent() {
       <OutputPreviewModal
         file={previewOutputFile}
         projectId={currentProject?.id ?? ''}
-        token={localStorage.getItem('py_ide_token') ?? ''}
         onClose={() => setPreviewOutputFile(null)}
         activeTheme={activeTheme}
       />
@@ -2032,7 +2089,6 @@ function AppContent() {
           projectId={currentProject?.id ?? ''}
           fileId={currentFile?.id ?? ''}
           runCode={code}
-          token={localStorage.getItem('py_ide_token') ?? ''}
           runNonce={runNonce}
           stopNonce={stopNonce}
           activeTheme={activeTheme}
@@ -2064,10 +2120,11 @@ function AppContent() {
           <LockScreen
             user={user}
             activeTheme={activeTheme}
-            onUnlock={() => {
+            onUnlock={(freshUser) => {
               localStorage.removeItem('py_ide_locked');
               setIsLocked(false);
-              fetchProjects(); // el token cambió tras re-autenticar; recargar datos
+              setUser(sessionUser(freshUser));
+              fetchProjects(); // sesión renovada; recargar datos
               loadSettingsAndAiConfig(); // idem para IA/settings, que pudieron fallar (401) mientras estaba bloqueado
             }}
             onLogout={handleLogout}
@@ -2216,7 +2273,7 @@ export default function App() {
 
   // Detect reset-password route
   const [isResetRoute, setIsResetRoute] = React.useState(
-    window.location.pathname === '/reset-password' && !!new URLSearchParams(window.location.search).get('token')
+    window.location.pathname === '/reset-password'
   );
   const resetToken = new URLSearchParams(window.location.search).get('token') ?? '';
 

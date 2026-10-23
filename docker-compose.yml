@@ -5,19 +5,17 @@
 #   docker compose logs -f        # ver logs en tiempo real
 #
 # Requisitos previos en el host:
-#   1. Imagen cargada:  docker load < python-web-ide-<arch>.tar.gz
-#   2. Archivo .env con JWT_SECRET, ENCRYPTION_KEY, APP_URL e IMAGE_NAME
+#   1. Imagen creada: docker build -t pywi:local .
+#   2. Archivo .env con ENCRYPTION_KEY, APP_URL e IMAGE_NAME
 #
-# Cambia IMAGE_NAME en .env según la arquitectura:
-#   amd64 → IMAGE_NAME=python-web-ide:amd64
-#   arm64 → IMAGE_NAME=python-web-ide:arm64
+# Docker selecciona la arquitectura local al construir la imagen.
 
 services:
   web-ide:
     image: ${IMAGE_NAME:-pywi:local}
     container_name: python-web-ide
     ports:
-      - "0.0.0.0:3000:3000"
+      - "${PYWI_BIND_IP:-127.0.0.1}:3000:3000"
     volumes:
       # Volumen nombrado para persistir datos de usuario (DB, proyectos, paquetes)
       - pywi_data:/app/data
@@ -25,8 +23,8 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - APP_URL=${APP_URL:-http://localhost:3000}
-      - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-}
       - AI_ALLOWED_BASE_URLS=${AI_ALLOWED_BASE_URLS:-}
       - EXEC_TIMEOUT_MS=${EXEC_TIMEOUT_MS:-180000}
       - INPUT_IDLE_TIMEOUT_MS=${INPUT_IDLE_TIMEOUT_MS:-600000}

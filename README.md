@@ -65,7 +65,7 @@
 | **Terminal interactiva** | xterm.js, node-pty, WebSocket (soporta `input()` en vivo) |
 | **Runtime Python** | Python 3.11, uv, venv, pandas, numpy, matplotlib, seaborn, scikit-learn, openpyxl, xlrd, pyarrow |
 | **Tutor IA / AI Tutor** | OpenAI, DeepSeek, Google Gemini, custom (OpenAI-compatible) |
-| **Seguridad / Security** | JWT, bcryptjs, AES-256-GCM (API keys at rest) |
+| **Seguridad / Security** | Cookie de sesión HttpOnly, bcryptjs, AES-256-GCM (API keys at rest) |
 | **Infraestructura** | Docker, Docker Compose |
 | **Hardware soportado** | NVIDIA GPU (amd64), Rockchip RK3588S NPU (arm64) |
 
@@ -79,8 +79,8 @@
 curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/pywi/main/deploy.sh | bash
 ```
 
-El script clona el repositorio, genera `JWT_SECRET` y `ENCRYPTION_KEY`, pregunta el dominio público de forma interactiva, construye la imagen Docker y levanta el servicio con `docker compose up -d`, verificando al final que quede arriba.
-The script clones the repository, generates `JWT_SECRET` and `ENCRYPTION_KEY`, interactively asks for the public domain, builds the Docker image, and starts the service with `docker compose up -d`, verifying it's up at the end.
+El script genera `ENCRYPTION_KEY`, solicita el dominio público, construye la imagen y levanta Docker Compose.
+The script generates `ENCRYPTION_KEY`, asks for the public domain, builds the image and starts Docker Compose.
 
 > No configura nginx/TLS — se asume un reverse proxy externo delante del puerto 3000. Para arm64/NPU (Radxa, Orange Pi) o pasos manuales, usa la guía detallada de abajo.
 > Does not configure nginx/TLS — an external reverse proxy in front of port 3000 is assumed. For arm64/NPU boards (Radxa, Orange Pi) or manual steps, use the detailed guide below.
@@ -88,15 +88,16 @@ The script clones the repository, generates `JWT_SECRET` and `ENCRYPTION_KEY`, i
 ### amd64 — PC / Servidor con GPU NVIDIA
 
 ```bash
-# 1. Descarga los archivos de despliegue / Download deployment files
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/.env.example
+# 1. Obtén el repositorio completo / Get the complete repository
+git clone https://github.com/esepulvedahgit/pywi.git
+cd pywi
 
 # 2. Configura las variables de entorno / Configure environment variables
 cp .env.example .env
 # Edita .env con tus valores / Edit .env with your values
 
-# 3. Levanta la aplicación / Start the application
+# 3. Construye y levanta la aplicación / Build and start the application
+docker build -t pywi:local .
 docker compose up -d
 ```
 
@@ -110,21 +111,13 @@ Guía detallada → [docs/DEPLOY-AMD64.md](docs/DEPLOY-AMD64.md)
 ### arm64 — Radxa Rock 5A / Orange Pi 5 (NPU RK3588S)
 
 ```bash
-# 1. Descarga los archivos / Download files
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.arm64.yml
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/.env.example
-
-# 2. Configura el GID del grupo render y las variables de entorno
-# Configure render group GID and environment variables
-getent group render  # anota el GID / note the GID
-cp .env.example .env  # edita con tus valores / edit with your values
-
-# 3. Levanta con el override arm64 / Start with arm64 override
-docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d
+# Desde el repositorio / From the repository
+cp .env.example .env  # configura ENCRYPTION_KEY y APP_URL
+docker build -t pywi:local .
+docker compose up -d
 ```
 
-Guía detallada → [docs/DEPLOY-ARM64.md](docs/DEPLOY-ARM64.md)
+Configuración detallada → [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
 ---
 
@@ -146,20 +139,20 @@ docker compose up -d
 
 | Variable | Requerida / Required | Descripción / Description | Por defecto / Default |
 |---|---|---|---|
-| `JWT_SECRET` | ✅ | Secreto para firmar tokens JWT / JWT signing secret | — |
 | `ENCRYPTION_KEY` | ✅ | Clave AES-256-GCM para cifrar API keys (hex 64 chars) | — |
-| `APP_URL` | ✅ | URL pública de la app / Public app URL | `http://localhost:3000` |
-| `EXEC_TIMEOUT_MS` | ❌ | Timeout de ejecución Python en ms / Python execution timeout | `120000` |
+| `APP_URL` | ✅ | URL pública exacta; usar HTTPS detrás de Sophos / Exact public URL; use HTTPS behind Sophos | `http://localhost:3000` |
+| `PYWI_BIND_IP` | ❌ | IP local para el puerto 3000; use la IP privada si el proxy está en otro host / Local bind IP; use the private IP for a remote proxy | `127.0.0.1` |
+| `TRUSTED_PROXY_IPS` | ❌ | IPs exactas de proxies confiables / Exact trusted proxy IPs | vacío / empty |
+| `EXEC_TIMEOUT_MS` | ❌ | Timeout de ejecución Python en ms / Python execution timeout | `180000` |
 
-Generar los secretos / Generate secrets:
+Generar la clave de cifrado / Generate the encryption key:
 ```bash
-# JWT_SECRET
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 # ENCRYPTION_KEY
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 Configuración completa → [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+Migración de sesiones y claves antiguas → [docs/security/session-hardening.md](docs/security/session-hardening.md)
 
 ---
 

@@ -81,8 +81,7 @@ export default function PackageManagerModal({
 
   const fetchStatusAndPackages = async () => {
     try {
-      const token = localStorage.getItem('py_ide_token');
-      const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const authHeaders = {};
 
       const resStatus = await fetch('/api/pip/status', { headers: authHeaders });
       const dataStatus = await resStatus.json();
@@ -125,8 +124,7 @@ export default function PackageManagerModal({
       // Periodically refresh if venv base packages are installing in the background
       const interval = setInterval(async () => {
         try {
-          const token = localStorage.getItem('py_ide_token');
-          const authHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+          const authHeaders = {};
 
           const res = await fetch('/api/pip/status', { headers: authHeaders });
           const data = await res.json();
@@ -156,12 +154,10 @@ export default function PackageManagerModal({
     setInstallError(null);
 
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/pip/install', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ packageName: name.trim() })
       });
@@ -226,7 +222,6 @@ export default function PackageManagerModal({
     setUninstallProgress({ currentPackage: null, removed: [], failed: [] });
 
     try {
-      const token = localStorage.getItem('py_ide_token');
 
       // Uninstall each package sequentially and update progress
       const removed: string[] = [];
@@ -243,7 +238,6 @@ export default function PackageManagerModal({
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
             },
             body: JSON.stringify({ packageNames: [pkgName] })
           });
@@ -283,12 +277,10 @@ export default function PackageManagerModal({
     setUpdateError(null);
 
     try {
-      const token = localStorage.getItem('py_ide_token');
       const res = await fetch('/api/pip/update', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({ packageName })
       });
@@ -312,17 +304,16 @@ export default function PackageManagerModal({
     if (isCheckingUpdates) return;
     setIsCheckingUpdates(true);
     try {
-      const token = localStorage.getItem('py_ide_token');
       await fetch('/api/pip/check-updates', {
         method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        headers: {}
       });
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts++;
         try {
           const res2 = await fetch('/api/pip/updates', {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            headers: {}
           });
           const data2 = await res2.json();
           if (!data2.isChecking || attempts >= 10) {

@@ -15,7 +15,6 @@ const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024; // 1 MB
 interface OutputPreviewModalProps {
   file: OutputFile | null;
   projectId: string;
-  token: string;
   onClose: () => void;
   activeTheme?: 'light' | 'vibrant-dark' | 'midnight-obsidian';
 }
@@ -71,7 +70,7 @@ const getThemeClasses = (theme: 'light' | 'vibrant-dark' | 'midnight-obsidian') 
 };
 
 export default function OutputPreviewModal({
-  file, projectId, token, onClose, activeTheme = 'midnight-obsidian',
+  file, projectId, onClose, activeTheme = 'midnight-obsidian',
 }: OutputPreviewModalProps) {
   const t = useT();
   const s = getThemeClasses(activeTheme);
@@ -88,7 +87,7 @@ export default function OutputPreviewModal({
   const textTooLarge = TEXT_EXTS.has(ext) && (file?.size ?? 0) > TEXT_PREVIEW_MAX_BYTES;
 
   const fileUrl = file
-    ? `/api/projects/${projectId}/output-files/${encodeURIComponent(file.name)}?token=${encodeURIComponent(token)}`
+    ? `/api/projects/${projectId}/output-files/${encodeURIComponent(file.name)}`
     : '';
 
   // Cargar el cuerpo como texto (markdown → ReactMarkdown, texto plano → <pre>).
@@ -124,7 +123,7 @@ export default function OutputPreviewModal({
   const handleDownload = async () => {
     if (!file) return;
     try {
-      const res = await fetch(`${fileUrl}&download=1`);
+      const res = await fetch(`${fileUrl}?download=1`);
       if (!res.ok) return;
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);

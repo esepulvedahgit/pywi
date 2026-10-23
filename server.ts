@@ -6,7 +6,6 @@ import crypto from 'crypto';
 import net from 'net';
 import os from 'os';
 import multer from 'multer';
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { createServer as createViteServer } from 'vite';
 import { rateLimit } from 'express-rate-limit';
@@ -14,24 +13,28 @@ import http from 'http';
 import { WebSocketServer, WebSocket as WS } from 'ws';
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 import sevenBin from '7zip-bin';
+import { SessionStore } from './server/session-store';
+import { LoginBackoff } from './server/login-backoff';
+import { securityHeaders } from './server/security-headers';
+import { authErrorMessage, errorMessage, errorPage } from './server/error-pages';
+import { clientIp } from './server/proxy-ip';
+import { clearSessionCookie, createSessionCookie, readSessionCookie, sameOrigin, validCsrf } from './server/session-http';
+import { asyncRoute } from './server/async-route';
 
 const app = express();
-const PORT = 3000;
+app.disable('x-powered-by');
+const PORT = Number(process.env.PORT) || 3000;
+const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const SESSION_COOKIE_SECURE = new URL(APP_URL).protocol === 'https:';
 const UV_EXECUTABLE = process.env.UV_BIN?.trim() || (process.platform === 'win32' ? 'uv.exe' : 'uv');
 
-if (!process.env.JWT_SECRET) {
-  console.error('FATAL: JWT_SECRET environment variable is not set. Set it before starting the server.');
-  process.exit(1);
-}
-const JWT_SECRET = process.env.JWT_SECRET as string;
-
-// Process-level safety net: an uncaught error in any single request must never
-// take down the server for every other user. Log it and keep running instead.
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL-CAUGHT] uncaughtException:', err);
+  console.error('[FATAL] uncaughtException:', err);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL-CAUGHT] unhandledRejection:', reason);
+  console.error('[FATAL] unhandledRejection:', reason);
+  process.exit(1);
 });
 
 // ── Encryption helpers for AI API keys ────────────────────────────────────────
@@ -40,16 +43,13 @@ process.on('unhandledRejection', (reason) => {
 // If ENCRYPTION_KEY is absent the server refuses to start — storing plaintext
 // is never a safe fallback for credentials.
 
-if (!process.env.ENCRYPTION_KEY) {
+if (!process.env.ENCRYPTION_KEY || !/^[a-f\d]{64}$/i.test(process.env.ENCRYPTION_KEY)) {
   console.error('FATAL: ENCRYPTION_KEY environment variable is not set. Set a 64-char hex string (32 bytes) before starting the server.');
   process.exit(1);
 }
 
-// Derive a fixed 32-byte key from the env var (accept raw hex or arbitrary string)
 const _rawEncKey = process.env.ENCRYPTION_KEY as string;
-const ENCRYPTION_KEY: Buffer = _rawEncKey.length === 64 && /^[0-9a-fA-F]+$/.test(_rawEncKey)
-  ? Buffer.from(_rawEncKey, 'hex')
-  : crypto.createHash('sha256').update(_rawEncKey).digest();
+const ENCRYPTION_KEY: Buffer = Buffer.from(_rawEncKey, 'hex');
 
 const ENC_PREFIX = 'enc:v1:';
 
@@ -105,19 +105,8 @@ function createResourceId(prefix: string): string {
   return prefix + '_' + crypto.randomBytes(16).toString('hex');
 }
 
-function generateToken(userId: string): string {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
-}
-
-function verifyToken(token: string): { userId: string; iat: number } | null {
-  try {
-    return jwt.verify(token, JWT_SECRET) as { userId: string; iat: number };
-  } catch {
-    return null;
-  }
-}
-
 const BCRYPT_ROUNDS = 12;
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('invalid-account-placeholder', BCRYPT_ROUNDS);
 
 // Password policy validator — must stay in sync with src/utils/passwordPolicy.ts
 // Rules: min 10 chars, lowercase letter, uppercase letter, digit, special character
@@ -131,63 +120,38 @@ function validatePassword(pw: string): string | null {
   return null;
 }
 
+function resolveBrowserSession(req: express.Request) {
+  const token = readSessionCookie(req.headers.cookie);
+  if (!token) return { kind: 'invalid' as const };
+  const stored = sessionStore.get(token);
+  if (!stored) return { kind: 'invalid' as const };
+  const user = readDB().users.find(candidate => candidate.id === stored.userId);
+  if (!user) return { kind: 'invalid' as const };
+  const result = sessionStore.authenticate(token, user.authVersion ?? 0);
+  if (result.kind === 'invalid') return { kind: 'invalid' as const };
+  return { kind: result.kind, user, session: result.session, token };
+}
+
 // Middleware: Require authentication
 const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (!token) {
-    return res.status(401).json({ error: 'Token requerido' });
-  }
-
-  const payload = verifyToken(token);
-  if (!payload) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
-  }
-
-  // Verify user still exists in DB (handles post-wipe / deleted-account tokens)
-  const database = readDB();
-  const user = database.users.find(u => u.id === payload.userId);
-  if (!user) {
-    return res.status(401).json({ error: 'Sesión inválida. Inicia sesión de nuevo.' });
-  }
-
-  // Invalidate tokens issued before the last password change
-  if (user.passwordChangedAt && payload.iat < user.passwordChangedAt) {
-    return res.status(401).json({ error: 'Sesión invalidada. Inicia sesión de nuevo.' });
-  }
-
-  // Invalidate tokens issued before the session was locked / logged out
-  if (user.sessionLockedAt && payload.iat < user.sessionLockedAt) {
-    return res.status(401).json({ error: 'Sesión bloqueada. Inicia sesión de nuevo.' });
-  }
-
-  (req as any).userId = payload.userId;
+  const auth = resolveBrowserSession(req);
+  if (auth.kind === 'locked') return res.status(401).json({ error: authErrorMessage('SESSION_LOCKED', req.headers['accept-language']), code: 'SESSION_LOCKED' });
+  if (auth.kind !== 'ok') return res.status(401).json({ error: authErrorMessage('AUTH_REQUIRED', req.headers['accept-language']), code: 'AUTH_REQUIRED' });
+  (req as any).userId = auth.user.id;
   next();
 };
 
-// Middleware: Require admin — verifies role from DB (not from JWT payload)
+// Middleware: Require admin — role is always read from the database.
 const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (!token) {
-    return res.status(401).json({ error: 'Token requerido' });
-  }
-
-  const payload = verifyToken(token);
-  if (!payload) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
-  }
-
-  const database = readDB();
-  const user = database.users.find(u => u.id === payload.userId);
-  if (!user || user.role !== 'admin') {
-    return res.status(403).json({ error: 'Acceso denegado: se requieren permisos de administrador' });
-  }
-
-  (req as any).userId = payload.userId;
-  next();
+  return requireAuth(req, res, () => {
+    const database = readDB();
+    const user = database.users.find(u => u.id === (req as any).userId);
+    if (!user || user.role !== 'admin') {
+      res.status(403).json({ error: 'Acceso denegado: se requieren permisos de administrador' });
+      return;
+    }
+    next();
+  });
 };
 
 // Validate package name: strict whitelist to prevent command injection
@@ -202,6 +166,8 @@ function isValidPackageName(pkg: string): boolean {
 // Root storage paths
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const sessionStore = new SessionStore(path.join(DATA_DIR, 'sessions.json'));
+const loginBackoff = new LoginBackoff(path.join(DATA_DIR, 'login-backoff.json'));
 const APP_DATA_DIR = path.join(DATA_DIR, 'app_data');
 
 // Compute budget in ms (wall-clock time spent actually running, NOT counting input() waits).
@@ -221,6 +187,13 @@ const WS_RATE_WINDOW_MS = 60_000;
 // Active PTY processes indexed by runId (WebSocket execution)
 type RunningPty = { pty: pty.IPty; userId: string };
 const runningPtys = new Map<string, RunningPty>();
+const activeRunSockets = new Map<WS, { token: string; userId: string }>();
+
+function closeRunSockets(predicate: (session: { token: string; userId: string }) => boolean): void {
+  for (const [ws, session] of activeRunSockets) {
+    if (predicate(session)) ws.close(1008, 'Session ended');
+  }
+}
 
 // Helper: safe path construction — prevents path traversal attacks
 function safePath(base: string, ...parts: string[]): string {
@@ -675,8 +648,7 @@ interface SimpleDB {
       outdated: Array<{ name: string; version: string; latest_version: string }>;
       lastChecked: string | null;
     };
-    passwordChangedAt?: number; // unix timestamp; tokens issued before this are invalid
-    sessionLockedAt?: number; // unix timestamp; tokens issued before this are invalid (lock/logout)
+    authVersion?: number; // increments on password changes to revoke every session
     aiConfig?: AIConfig;
   }>;
   projects: Array<{ id: string; userId: string; name: string; createdAt: string; secretsEnc?: Record<string, string> }>;
@@ -697,21 +669,24 @@ interface SimpleDB {
 function readDB(): SimpleDB {
   if (!fs.existsSync(DB_FILE)) {
     const initial: SimpleDB = { users: [], projects: [], files: [], resetTokens: [] };
-    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2));
+    writeDB(initial);
     return initial;
   }
   const raw = fs.readFileSync(DB_FILE, 'utf8');
-  try {
-    const parsed = JSON.parse(raw) as SimpleDB;
-    if (!parsed.resetTokens) parsed.resetTokens = [];
-    return parsed;
-  } catch (err) {
-    return { users: [], projects: [], files: [], resetTokens: [] };
+  const parsed = JSON.parse(raw) as SimpleDB;
+  if (!parsed || !Array.isArray(parsed.users) || !Array.isArray(parsed.projects) || !Array.isArray(parsed.files)) {
+    throw new Error('Invalid database structure');
   }
+  if (!parsed.resetTokens) parsed.resetTokens = [];
+  return parsed;
 }
 
 function writeDB(data: SimpleDB) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  const temp = `${DB_FILE}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(temp, JSON.stringify(data, null, 2), { mode: 0o600 });
+    fs.renameSync(temp, DB_FILE);
+  } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
 
 // SMTP Configuration
@@ -1118,6 +1093,12 @@ const db = readDB();
   if (migrated) writeDB(db);
 }
 
+app.use((req, res, next) => {
+  for (const [key, value] of Object.entries(securityHeaders(SESSION_COOKIE_SECURE, APP_URL))) res.setHeader(key, value);
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 // Basic JSON APIs with Express
 app.use(express.json());
 
@@ -1134,22 +1115,30 @@ app.use((req, _res, next) => {
   next();
 });
 
+const PUBLIC_AUTH_PATHS = new Set(['/auth/login', '/auth/register', '/auth/forgot-password', '/auth/reset-password', '/auth/logout']);
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (!sameOrigin(req.headers.origin, APP_URL)) {
+    return res.status(403).json({ error: authErrorMessage('ORIGIN_DENIED', req.headers['accept-language']), code: 'ORIGIN_DENIED' });
+  }
+  if (PUBLIC_AUTH_PATHS.has(req.path)) return next();
+  const auth = resolveBrowserSession(req);
+  if (auth.kind !== 'ok') {
+    const code = auth.kind === 'locked' ? 'SESSION_LOCKED' : 'AUTH_REQUIRED';
+    return res.status(401).json({ error: authErrorMessage(code, req.headers['accept-language']), code });
+  }
+  const header = req.headers['x-csrf-token'];
+  if (typeof header !== 'string' || !validCsrf(header, auth.session.csrfToken)) {
+    return res.status(403).json({ error: authErrorMessage('CSRF_INVALID', req.headers['accept-language']), code: 'CSRF_INVALID' });
+  }
+  next();
+});
+
 // Rate limiters
-// Resolve the real client IP for rate-limiting without setting 'trust proxy' globally.
-// Security: X-Forwarded-For is only trusted when the TCP connection itself comes from a
-// private/loopback address — meaning it passed through a local reverse proxy (nginx, etc.).
-// If the socket comes from a public IP, XFF is ignored (spoofable), and we use the socket
-// IP directly. This prevents rate-limit bypass via forged XFF headers on direct connections.
+// Trust forwarded addresses only from explicitly configured reverse proxies.
 function rateLimitKey(req: express.Request): string {
   const socketIp = req.socket?.remoteAddress ?? '';
-  // RFC 1918 private ranges + loopback + IPv6 equivalents + Docker bridge (172.16-31.x)
-  const isPrivate = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|::ffff:127\.|::ffff:10\.|::ffff:172\.(1[6-9]|2\d|3[01])\.|::ffff:192\.168\.)/.test(socketIp);
-  if (isPrivate) {
-    const xff = req.headers['x-forwarded-for'];
-    if (typeof xff === 'string' && xff.length > 0) return xff.split(',')[0].trim();
-    if (Array.isArray(xff) && xff.length > 0) return xff[0];
-  }
-  return socketIp || req.ip || 'unknown';
+  return clientIp(socketIp || req.ip || 'unknown', req.headers['x-forwarded-for'], process.env.TRUSTED_PROXY_IPS || '');
 }
 
 // Shared base options — avoids repeating keyGenerator/validate on every limiter.
@@ -1188,6 +1177,13 @@ const authStrictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5,
   message: { error: 'Demasiados intentos. Inténtalo de nuevo en 15 minutos.' }
+});
+
+const loginIpLimiter = rateLimit({
+  ...baseLimiterOpts,
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Demasiados intentos. Inténtalo más tarde.' }
 });
 
 const adminExistsLimiter = rateLimit({
@@ -1548,8 +1544,8 @@ app.get('/api/auth/admin-exists', adminExistsLimiter, (req, res) => {
 });
 
 // API: Auth registration (only allowed when no users exist; first user becomes admin)
-app.post('/api/auth/register', authStrictLimiter, async (req, res) => {
-  const { username, email, password } = req.body;
+app.post('/api/auth/register', authStrictLimiter, asyncRoute(async (req, res) => {
+  const { username, email, password } = req.body ?? {};
 
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'Todos los campos son obligatorios' });
@@ -1560,20 +1556,26 @@ app.post('/api/auth/register', authStrictLimiter, async (req, res) => {
   const pwError = validatePassword(password);
   if (pwError) return res.status(400).json({ error: pwError });
 
-  const database = readDB();
-
-  if (database.users.length > 0) {
-    return res.status(403).json({ error: 'El registro está deshabilitado. Contacta al administrador.' });
-  }
-
-  const exists = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  if (exists) {
-    return res.status(400).json({ error: 'El correo electrónico ya está registrado' });
-  }
-
   try {
+    let database = readDB();
+
+    if (database.users.length > 0) {
+      return res.status(403).json({ error: 'El registro está deshabilitado. Contacta al administrador.' });
+    }
+
+    const exists = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (exists) {
+      return res.status(400).json({ error: 'El correo electrónico ya está registrado' });
+    }
+
     const userId = createResourceId('user');
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    // Recheck after the async hash: concurrent setup requests must not both create admins.
+    database = readDB();
+    if (database.users.length > 0) {
+      return res.status(403).json({ error: 'El registro está deshabilitado. Contacta al administrador.' });
+    }
 
     const newUser = { id: userId, username, email, passwordHash, role: 'admin' as const };
     database.users.push(newUser);
@@ -1615,39 +1617,62 @@ print(f"La suma de {a} y {b} es {suma}")
 
     writeDB(database);
 
-    const token = generateToken(userId);
-    res.json({ id: userId, username, email, role: 'admin', token });
+    const session = sessionStore.issue(userId, 0);
+    res.setHeader('Set-Cookie', createSessionCookie(session.token, SESSION_COOKIE_SECURE));
+    res.json({ id: userId, username, email, role: 'admin', csrfToken: session.csrfToken });
   } catch (err: any) {
     return res.status(500).json({ error: 'Error al registrar usuario' });
   }
-});
+}));
 
 // API: Auth login
-app.post('/api/auth/login', authStrictLimiter, async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
+app.post('/api/auth/login', loginIpLimiter, asyncRoute(async (req, res) => {
+  const { email, password } = req.body ?? {};
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password || email.length > 254 || password.length > 128) {
     return res.status(400).json({ error: 'Credenciales inválidas' });
   }
 
   try {
+    const retryAfter = loginBackoff.retryAfter(email);
+    if (retryAfter > 0) {
+      res.setHeader('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'Demasiados intentos. Inténtalo más tarde.', retryAfter });
+    }
+
     const database = readDB();
     const user = database.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    // Reserve the attempt before bcrypt yields, so concurrent guesses cannot bypass backoff.
+    loginBackoff.failure(email);
     if (!user) {
-      return res.status(400).json({ error: 'Credenciales inválidas' });
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
-      return res.status(400).json({ error: 'Credenciales inválidas' });
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+    // A password reset may have completed while bcrypt was comparing the old hash.
+    let currentDatabase = readDB();
+    let currentUser = currentDatabase.users.find(u => u.id === user.id);
+    if (!currentUser || currentUser.passwordHash !== user.passwordHash || (currentUser.authVersion ?? 0) !== (user.authVersion ?? 0)) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
     // Upgrade hash silently if rounds < BCRYPT_ROUNDS (doesn't invalidate existing sessions)
     if (bcrypt.getRounds(user.passwordHash) < BCRYPT_ROUNDS) {
-      user.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-      writeDB(database);
+      const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+      currentDatabase = readDB();
+      currentUser = currentDatabase.users.find(u => u.id === user.id);
+      if (!currentUser || currentUser.passwordHash !== user.passwordHash || (currentUser.authVersion ?? 0) !== (user.authVersion ?? 0)) {
+        return res.status(401).json({ error: 'Credenciales inválidas' });
+      }
+      currentUser.passwordHash = passwordHash;
+      writeDB(currentDatabase);
     }
 
-    const token = generateToken(user.id);
+    loginBackoff.success(email);
+    const session = sessionStore.issue(user.id, currentUser.authVersion ?? 0);
 
     // Check for missing packages and initiate restore if needed
     const userPackages = (user.packages ?? []).filter(isValidPackageName);
@@ -1666,44 +1691,52 @@ app.post('/api/auth/login', authStrictLimiter, async (req, res) => {
       setImmediate(() => checkPackageUpdates(user.id));
     }
 
+    res.setHeader('Set-Cookie', createSessionCookie(session.token, SESSION_COOKIE_SECURE));
     res.json({
       id: user.id,
       username: user.username,
       email: user.email,
       role: user.role,
-      token,
+      csrfToken: session.csrfToken,
       restoreNeeded: missingPackages.length > 0,
       restoreCount: missingPackages.length
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Error al iniciar sesión' });
   }
+}));
+
+app.get('/api/auth/session', (req, res) => {
+  const auth = resolveBrowserSession(req);
+  if (auth.kind === 'invalid') return res.status(401).json({ error: authErrorMessage('AUTH_REQUIRED', req.headers['accept-language']), code: 'AUTH_REQUIRED' });
+  res.json({ id: auth.user.id, username: auth.user.username, email: auth.user.email,
+    role: auth.user.role, locked: auth.kind === 'locked',
+    csrfToken: auth.kind === 'ok' ? auth.session.csrfToken : undefined });
 });
 
-// API: Lock session — invalidates the current token server-side until re-auth.
-// The client shows the lock screen; this ensures the retained token can't be reused.
+app.post('/api/auth/activity', requireAuth, (req, res) => {
+  const token = readSessionCookie(req.headers.cookie);
+  const user = readDB().users.find(candidate => candidate.id === (req as any).userId);
+  if (!token || !user || !sessionStore.activity(token, user.authVersion ?? 0))
+    return res.status(401).json({ error: authErrorMessage('SESSION_LOCKED', req.headers['accept-language']), code: 'SESSION_LOCKED' });
+  res.status(204).end();
+});
+
+// Lock only the current device's session.
 app.post('/api/auth/lock', requireAuth, (req, res) => {
-  const userId = (req as any).userId as string;
-  const database = readDB();
-  const user = database.users.find(u => u.id === userId);
-  if (!user) {
-    return res.status(401).json({ error: 'Sesión inválida. Inicia sesión de nuevo.' });
-  }
-  user.sessionLockedAt = Math.floor(Date.now() / 1000);
-  writeDB(database);
+  const token = readSessionCookie(req.headers.cookie);
+  if (!token || !sessionStore.lock(token)) return res.status(401).json({ error: 'Sesión inválida' });
+  closeRunSockets(session => session.token === token);
   res.status(200).json({ ok: true });
 });
 
-// API: Logout — invalidates the current token server-side (client also clears storage).
-app.post('/api/auth/logout', requireAuth, (req, res) => {
-  const userId = (req as any).userId as string;
-  const database = readDB();
-  const user = database.users.find(u => u.id === userId);
-  if (!user) {
-    return res.status(401).json({ error: 'Sesión inválida. Inicia sesión de nuevo.' });
+app.post('/api/auth/logout', (req, res) => {
+  const token = readSessionCookie(req.headers.cookie);
+  if (token) {
+    sessionStore.revoke(token);
+    closeRunSockets(session => session.token === token);
   }
-  user.sessionLockedAt = Math.floor(Date.now() / 1000);
-  writeDB(database);
+  res.setHeader('Set-Cookie', clearSessionCookie(SESSION_COOKIE_SECURE));
   res.status(200).json({ ok: true });
 });
 
@@ -1782,7 +1815,7 @@ app.get('/api/ai/config', requireAuth, (req, res) => {
 // PUT /api/ai/config — save AI config and auto-validate by calling the provider.
 // 'enabled' and 'validated' are set to true only when the provider call succeeds.
 // Use POST /api/ai/test for an ephemeral probe without persisting.
-app.put('/api/ai/config', requireAuth, aiLimiter, async (req, res) => {
+app.put('/api/ai/config', requireAuth, aiLimiter, asyncRoute(async (req, res) => {
   const userId = (req as any).userId;
   const { provider, model, apiKey, baseUrl } = req.body;
 
@@ -1858,13 +1891,13 @@ app.put('/api/ai/config', requireAuth, aiLimiter, async (req, res) => {
 
   // Always return 200: the config was persisted. Include validation outcome.
   res.json({ success: true, validated, ...(validationError ? { error: validationError } : {}) });
-});
+}));
 
 // POST /api/ai/test — ephemeral probe using form values; does NOT persist anything.
 // Body: { provider?, model?, apiKey?, baseUrl? }
 // Falls back to the stored config for any field not supplied.
 // Only PUT /api/ai/config (save) sets validated = true and enables the tutor button.
-app.post('/api/ai/test', requireAuth, aiLimiter, async (req, res) => {
+app.post('/api/ai/test', requireAuth, aiLimiter, asyncRoute(async (req, res) => {
   const userId = (req as any).userId;
   const database = readDB();
   const user = database.users.find(u => u.id === userId);
@@ -1911,7 +1944,7 @@ app.post('/api/ai/test', requireAuth, aiLimiter, async (req, res) => {
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Error al conectar con el proveedor IA' });
   }
-});
+}));
 
 // POST /api/ai/chat — tutor chat, rate-limited
 const AI_MAX_MESSAGES = 12;
@@ -2078,7 +2111,7 @@ function buildIdeContextBlock(ctx: IdeContextPayload, lang: 'es' | 'en'): string
   return parts.join('\n');
 }
 
-app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
+app.post('/api/ai/chat', requireAuth, aiLimiter, asyncRoute(async (req, res) => {
   const userId = (req as any).userId;
   const database = readDB();
   const user = database.users.find(u => u.id === userId);
@@ -2096,8 +2129,8 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   }
   const cfgForChat = { ...cfg, apiKey: decryptedChatKey };
 
-  const { messages, ideContext } = req.body;
-  if (!Array.isArray(messages) || messages.length === 0) {
+  const { messages, ideContext } = req.body ?? {};
+  if (!Array.isArray(messages) || messages.length === 0 || messages.some(m => !m || typeof m !== 'object' || !['user', 'assistant'].includes(m.role) || typeof m.content !== 'string')) {
     return res.status(400).json({ error: 'Mensajes inválidos' });
   }
 
@@ -2149,10 +2182,10 @@ app.post('/api/ai/chat', requireAuth, aiLimiter, async (req, res) => {
   } finally {
     res.end();
   }
-});
+}));
 
 // POST /api/ai/intro — generate a one-off greeting from the model (no history stored)
-app.post('/api/ai/intro', requireAuth, aiLimiter, async (req, res) => {
+app.post('/api/ai/intro', requireAuth, aiLimiter, asyncRoute(async (req, res) => {
   const userId = (req as any).userId;
   const database = readDB();
   const user = database.users.find(u => u.id === userId);
@@ -2188,12 +2221,12 @@ app.post('/api/ai/intro', requireAuth, aiLimiter, async (req, res) => {
     }
     res.status(500).json({ error: err.message || 'Error al consultar el proveedor IA' });
   }
-});
+}));
 
 // ── End AI Configuration ───────────────────────────────────────────────────────
 
 // API: Change own password (any authenticated user)
-app.put('/api/users/:userId/password', requireAuth, passwordChangeLimiter, async (req, res) => {
+app.put('/api/users/:userId/password', requireAuth, passwordChangeLimiter, asyncRoute(async (req, res) => {
   const { userId } = req.params;
   const currentUserId = (req as any).userId;
 
@@ -2201,8 +2234,8 @@ app.put('/api/users/:userId/password', requireAuth, passwordChangeLimiter, async
     return res.status(403).json({ error: 'Sin permisos para cambiar la contraseña de otro usuario' });
   }
 
-  const { currentPassword, newPassword } = req.body;
-  if (!currentPassword || !newPassword) {
+  const { currentPassword, newPassword } = req.body ?? {};
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword || !newPassword) {
     return res.status(400).json({ error: 'Contraseña actual y nueva son obligatorias' });
   }
   const pwError = validatePassword(newPassword);
@@ -2220,14 +2253,22 @@ app.put('/api/users/:userId/password', requireAuth, passwordChangeLimiter, async
       return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
     }
 
-    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    user.passwordChangedAt = Math.floor(Date.now() / 1000);
-    writeDB(database);
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    const currentDatabase = readDB();
+    const currentUser = currentDatabase.users.find(u => u.id === userId);
+    if (!currentUser || (currentUser.authVersion ?? 0) !== (user.authVersion ?? 0)) {
+      return res.status(409).json({ error: 'La contraseña cambió durante la solicitud. Inicia sesión de nuevo.' });
+    }
+    currentUser.passwordHash = passwordHash;
+    currentUser.authVersion = (currentUser.authVersion ?? 0) + 1;
+    writeDB(currentDatabase);
+    closeRunSockets(session => session.userId === userId);
+    res.setHeader('Set-Cookie', clearSessionCookie(SESSION_COOKIE_SECURE));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Error al cambiar la contraseña' });
   }
-});
+}));
 
 // API: List all users (admin only — passwordHash and aiConfig.apiKey excluded)
 app.get('/api/admin/users', requireAdmin, (req, res) => {
@@ -2244,7 +2285,7 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
 });
 
 // API: Create user (admin only)
-app.post('/api/admin/users', requireAdmin, async (req, res) => {
+app.post('/api/admin/users', requireAdmin, asyncRoute(async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
@@ -2292,7 +2333,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Error al crear el usuario' });
   }
-});
+}));
 
 // API: Admin — delete user and all their resources
 app.delete('/api/admin/users/:targetUserId', requireAdmin, (req, res) => {
@@ -2399,7 +2440,7 @@ app.put('/api/system/smtp', requireAdmin, (req, res) => {
 });
 
 // API: Test SMTP connection
-app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
+app.post('/api/system/smtp/test', requireAdmin, asyncRoute(async (req, res) => {
   const config = readSmtpConfig();
 
   if (!config) {
@@ -2416,7 +2457,7 @@ app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
       secure: implicitSSL,
       requireTLS: config.secure && !implicitSSL,
       auth: { user: config.user, pass: config.password },
-      tls: { rejectUnauthorized: false }
+      tls: { rejectUnauthorized: true }
     });
 
     await transporter.verify();
@@ -2424,13 +2465,13 @@ app.post('/api/system/smtp/test', requireAdmin, async (req, res) => {
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'Error verificando SMTP' });
   }
-});
+}));
 
 // API: Forgot password
 app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
   const { email } = req.body;
 
-  if (!email) {
+  if (typeof email !== 'string' || !email || email.length > 254) {
     return res.status(400).json({ error: 'El correo es obligatorio' });
   }
 
@@ -2456,7 +2497,7 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
             secure: implicitSSL2,
             requireTLS: config.secure && !implicitSSL2,
             auth: { user: config.user, pass: config.password },
-            tls: { rejectUnauthorized: false }
+            tls: { rejectUnauthorized: true }
           });
 
           const resetUrl = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password?token=${token}`;
@@ -2477,40 +2518,50 @@ app.post('/api/auth/forgot-password', authStrictLimiter, (req, res) => {
 });
 
 // API: Reset password
-app.post('/api/auth/reset-password', authStrictLimiter, async (req, res) => {
-  const { token, newPassword } = req.body;
+app.post('/api/auth/reset-password', authStrictLimiter, asyncRoute(async (req, res) => {
+  const { token, newPassword } = req.body ?? {};
 
-  if (!token || !newPassword) {
+  if (typeof token !== 'string' || typeof newPassword !== 'string' || !token || !newPassword) {
     return res.status(400).json({ error: 'Token y contraseña requeridos' });
   }
   const pwErr = validatePassword(newPassword);
   if (pwErr) return res.status(400).json({ error: pwErr });
 
-  const database = readDB();
-  const resetToken = database.resetTokens.find(t => t.token === token);
-
-  if (!resetToken || new Date(resetToken.expiresAt) < new Date()) {
-    return res.status(400).json({ error: 'Token inválido o expirado' });
-  }
-
-  const user = database.users.find(u => u.id === resetToken.userId);
-  if (!user) {
-    return res.status(400).json({ error: 'Usuario no encontrado' });
-  }
-
   try {
-    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    user.passwordChangedAt = Math.floor(Date.now() / 1000);
+    const database = readDB();
+    const resetToken = database.resetTokens.find(t => t.token === token);
+
+    if (!resetToken || new Date(resetToken.expiresAt) < new Date()) {
+      return res.status(400).json({ error: 'Token inválido o expirado' });
+    }
+
+    const user = database.users.find(u => u.id === resetToken.userId);
+    if (!user) {
+      return res.status(400).json({ error: 'Usuario no encontrado' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    const currentDatabase = readDB();
+    const currentToken = currentDatabase.resetTokens.find(t => t.token === token);
+    if (!currentToken || new Date(currentToken.expiresAt) < new Date()) {
+      return res.status(400).json({ error: 'Token inválido o expirado' });
+    }
+    const currentUser = currentDatabase.users.find(u => u.id === currentToken.userId);
+    if (!currentUser) return res.status(400).json({ error: 'Usuario no encontrado' });
+    currentUser.passwordHash = passwordHash;
+    currentUser.authVersion = (currentUser.authVersion ?? 0) + 1;
 
     // Invalidar TODOS los tokens de reset del usuario, no solo el usado
-    database.resetTokens = database.resetTokens.filter(t => t.userId !== resetToken.userId);
-    writeDB(database);
+    currentDatabase.resetTokens = currentDatabase.resetTokens.filter(t => t.userId !== currentToken.userId);
+    writeDB(currentDatabase);
+    closeRunSockets(session => session.userId === resetToken.userId);
 
+    res.setHeader('Set-Cookie', clearSessionCookie(SESSION_COOKIE_SECURE));
     res.json({ success: true, message: 'Contraseña restablecida' });
   } catch (err: any) {
     res.status(500).json({ error: 'Error al restablecer la contraseña' });
   }
-});
+}));
 
 // Nombre del archivo de metadatos incrustado en cada copia (proyectos + archivos
 // de db.json) para poder reconstruir la base de datos al restaurar.
@@ -2796,14 +2847,14 @@ app.post('/api/users/:userId/restore', requireAuth, restoreLimiter, (req, res) =
 });
 
 // API: Get container metrics (CPU, RAM, GPU) — requireAuth prevents host info leak
-app.get('/api/metrics', requireAuth, async (req, res) => {
+app.get('/api/metrics', requireAuth, asyncRoute(async (req, res) => {
   try {
     const metrics = await getMetrics();
     res.json(metrics);
   } catch (err: any) {
     res.status(500).json({ error: 'Error reading metrics' });
   }
-});
+}));
 
 // API: Get projects list for a user
 app.get('/api/users/:userId/projects', requireAuth, (req, res) => {
@@ -3597,13 +3648,10 @@ app.post('/api/projects/:projectId/output-files/clear', requireAuth, (req, res) 
   res.json({ ok: true, removed });
 });
 
-// API: Sirve un artefacto individual de output/ (auth por query param para <img src=...> y descargas).
-app.get('/api/projects/:projectId/output-files/:filename', (req, res) => {
-  const token = req.query.token as string;
-  if (!token) return res.status(401).json({ error: 'Token requerido' });
-  const payload = verifyToken(token);
-  if (!payload) return res.status(401).json({ error: 'Token inválido' });
-  const userId = payload.userId;
+// API: Serve generated artifacts through the same protected browser session.
+app.get('/api/projects/:projectId/output-files/:filename', requireAuth, (req, res) => {
+  const database = readDB();
+  const userId = (req as any).userId as string;
 
   const { projectId, filename } = req.params;
 
@@ -3611,7 +3659,6 @@ app.get('/api/projects/:projectId/output-files/:filename', (req, res) => {
     return res.status(400).json({ error: 'Archivo inválido' });
   }
 
-  const database = readDB();
   const project = database.projects.find(p => p.id === projectId);
   if (!project || project.userId !== userId) {
     return res.status(403).json({ error: 'Acceso denegado' });
@@ -3649,7 +3696,7 @@ app.get('/api/projects/:projectId/output-files/:filename', (req, res) => {
 
 app.post('/api/projects/:projectId/files/:fileId/run', requireAuth, runLimiter, (req, res) => {
   const { projectId, fileId } = req.params;
-  const userId = (req as any).userId; // Always use userId from JWT, never from body
+  const userId = (req as any).userId; // Always use the authenticated user ID, never the body.
   const { runCode } = req.body;
 
   const database = readDB();
@@ -3814,16 +3861,17 @@ function wsHitRateLimit(
 }
 
 function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { count: number; resetAt: number }>) {
-  wss.on('connection', (ws: WS) => {
+  wss.on('connection', (ws: WS, req: http.IncomingMessage) => {
     // Auth + params arrive in the very first message
-    ws.once('message', async (rawMsg) => {
+    ws.once('message', (rawMsg) => {
+      try {
       let parsed: any;
       try { parsed = JSON.parse(rawMsg.toString()); } catch {
         ws.close(1003, 'Invalid JSON'); return;
       }
-      if (parsed.type !== 'start') { ws.close(1003, 'Expected start'); return; }
+      if (!parsed || typeof parsed !== 'object' || parsed.type !== 'start') { ws.close(1003, 'Expected start'); return; }
 
-      const { token, projectId, fileId, runCode, cols = 80, rows = 24 } = parsed;
+      const { projectId, fileId, runCode, cols = 80, rows = 24 } = parsed;
 
       // ── Local helper: send a denial frame and close the socket ───────────────
       const deny = (message: string, extra?: Record<string, unknown>) => {
@@ -3831,25 +3879,16 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
       };
 
       // ── Auth ──────────────────────────────────────────────────────────────────
-      if (typeof token !== 'string') { deny('Token requerido'); return; }
-      const payload = verifyToken(token);
-      if (!payload) { deny('Token inválido o expirado'); return; }
-      const userId = payload.userId;
+      const auth = resolveBrowserSession(req as express.Request);
+      if (auth.kind !== 'ok') { deny('Sesión inválida o bloqueada'); return; }
+      const database = readDB();
+      const userId = auth.user.id;
+      activeRunSockets.set(ws, { token: auth.token, userId });
+      ws.on('close', () => activeRunSockets.delete(ws));
 
       // Per-user rate limit (20 runs/60s, mirrors runLimiter)
       if (wsHitRateLimit(wsUserRateMap, userId)) {
         deny('Demasiadas ejecuciones. Intenta de nuevo en un minuto.'); return;
-      }
-
-      // Invalidate tokens issued before the last password change (mirrors requireAuth)
-      const database = readDB();
-      const userRecord = database.users.find((u: any) => u.id === userId);
-      if (userRecord?.passwordChangedAt && payload.iat < userRecord.passwordChangedAt) {
-        deny('Sesión invalidada. Inicia sesión de nuevo.'); return;
-      }
-      // Invalidate tokens issued before the session was locked / logged out
-      if (userRecord?.sessionLockedAt && payload.iat < userRecord.sessionLockedAt) {
-        deny('Sesión bloqueada. Inicia sesión de nuevo.'); return;
       }
 
       // ── Ownership check ───────────────────────────────────────────────────────
@@ -4065,6 +4104,11 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
 
       // Client → PTY
       ws.on('message', (raw) => {
+        if (resolveBrowserSession(req as express.Request).kind !== 'ok') {
+          ws.close(1008, 'Session ended');
+          killPty();
+          return;
+        }
         try {
           const msg = JSON.parse(raw.toString());
           if (msg.type === 'input' && typeof msg.data === 'string') {
@@ -4148,6 +4192,10 @@ function setupWsRunHandler(wss: WebSocketServer, wsUserRateMap: Map<string, { co
         runningPtys.delete(runId);
         killPty();
       });
+      } catch (err) {
+        console.error('[SERVER] WebSocket request failed:', err);
+        ws.close(1011, 'Internal error');
+      }
     });
   });
 }
@@ -4160,43 +4208,47 @@ async function startServer() {
   if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa',
+      appType: 'custom',
     });
     app.use(vite.middlewares);
     // Fallback to static dist for access from other devices in dev mode
     const distPath = path.join(process.cwd(), 'dist');
     if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
+      app.use(express.static(distPath, { index: false }));
     }
   } else {
     // Serve production package assets from static dist
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.use(apiLimiter);
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    app.use(express.static(distPath, { index: false }));
   }
 
-  // Fallback SPA route for all other requests
-  app.use(apiLimiter);
-  app.get('*', (req, res) => {
+  app.get(['/', '/reset-password'], (req, res) => {
     const distPath = path.join(process.cwd(), 'dist');
     const indexPath = path.join(distPath, 'index.html');
     if (fs.existsSync(indexPath)) {
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(indexPath);
     } else {
-      res.status(404).send('index.html not found. Run: npm run build');
+      res.status(503).type('html').send(errorPage(503, req.headers['accept-language']));
     }
+  });
+
+  app.use((req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.path === '/api' || req.path.startsWith('/api/')) return res.status(404).json({ error: errorMessage(404, req.headers['accept-language']), code: 'NOT_FOUND' });
+    res.status(404).type('html').send(errorPage(404, req.headers['accept-language']));
   });
 
   // Catch-all Express error handler: any sync/async error thrown by a route
   // that wasn't already caught locally ends here as a generic 500 instead of
   // crashing the process or leaking a stack trace to the client.
-  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error('[FATAL-CAUGHT] Express error handler:', err);
-    if (res.headersSent) return;
-    res.status(500).json({ error: 'Error interno del servidor' });
+  app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (res.headersSent) { res.destroy(); return; }
+    res.setHeader('Cache-Control', 'no-store');
+    const status = err.status === 400 || err.status === 413 ? err.status : 500;
+    if (status === 500) console.error('[SERVER] Request failed:', err);
+    if (req.path === '/api' || req.path.startsWith('/api/')) return res.status(status).json({ error: errorMessage(status, req.headers['accept-language']), code: status === 500 ? 'INTERNAL_ERROR' : 'BAD_REQUEST' });
+    res.status(status).type('html').send(errorPage(status, req.headers['accept-language']));
   });
 
   const httpServer = http.createServer(app);
@@ -4213,9 +4265,24 @@ async function startServer() {
     for (const [k, v] of wsUserRateMap) if (now > v.resetAt) wsUserRateMap.delete(k);
   }, WS_RATE_WINDOW_MS);
 
+  setInterval(() => {
+    const users = readDB().users;
+    for (const [ws, session] of activeRunSockets) {
+      const user = users.find(candidate => candidate.id === session.userId);
+      if (!user || sessionStore.authenticate(session.token, user.authVersion ?? 0).kind !== 'ok') {
+        ws.close(1008, 'Session ended');
+      }
+    }
+  }, 15_000);
+
   httpServer.on('upgrade', (req, socket, head) => {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
     if (pathname !== '/ws/run') {
+      socket.destroy();
+      return;
+    }
+    if (!sameOrigin(req.headers.origin, APP_URL) || resolveBrowserSession(req as express.Request).kind !== 'ok') {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
     }

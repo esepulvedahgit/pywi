@@ -18,8 +18,8 @@
 ## Paso 1 — Descargar los archivos / Step 1 — Download files
 
 ```bash
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/esepulvedahgit/pywi/main/.env.example
+git clone https://github.com/esepulvedahgit/pywi.git
+cd pywi
 ```
 
 ---
@@ -33,21 +33,16 @@ cp .env.example .env
 Edita `.env` con tus valores / Edit `.env` with your values:
 
 ```env
-JWT_SECRET=<genera con el comando de abajo / generate with command below>
 ENCRYPTION_KEY=<genera con el comando de abajo / generate with command below>
 APP_URL=http://localhost:3000
 ```
 
-Generar los secretos / Generate secrets:
+Generar la clave de cifrado / Generate the encryption key:
 ```bash
-# JWT_SECRET (96 hex chars)
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-
 # ENCRYPTION_KEY (64 hex chars = 32 bytes)
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 # Sin Node.js / Without Node.js:
-python3 -c "import secrets; print(secrets.token_hex(48))"  # JWT_SECRET
 python3 -c "import secrets; print(secrets.token_hex(32))"  # ENCRYPTION_KEY
 ```
 
@@ -56,6 +51,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"  # ENCRYPTION_KEY
 ## Paso 3 — Arrancar PyWI / Step 3 — Start PyWI
 
 ```bash
+docker build -t pywi:local .
 docker compose up -d
 ```
 
@@ -160,7 +156,6 @@ docker compose logs web-ide  # ver el error exacto / see exact error
 ```
 
 Causas comunes / Common causes:
-- `JWT_SECRET` o `ENCRYPTION_KEY` no configurados en `.env` / not configured in `.env`
 - Puerto 3000 ocupado / Port 3000 in use: cambia el mapeo / change mapping: `"3001:3000"`
 
 ### La app tarda en iniciar la primera vez / App takes long to start the first time

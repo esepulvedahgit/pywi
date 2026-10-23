@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Lock, LogOut, Eye, EyeOff } from 'lucide-react';
 import { useT } from '../i18n';
 import { User } from '../types';
+import { setCsrfToken } from '../lib/sessionClient';
 
 interface LockScreenProps {
   user: User;
   activeTheme: 'light' | 'vibrant-dark' | 'midnight-obsidian';
-  onUnlock: () => void;
+  onUnlock: (user: User) => void;
   onLogout: () => void;
 }
 
@@ -35,9 +36,9 @@ export default function LockScreen({ user, activeTheme, onUnlock, onLogout }: Lo
         body: JSON.stringify({ email: user.email, password }),
       });
       const data = await res.json();
-      if (res.ok && data.token) {
-        localStorage.setItem('py_ide_token', data.token);
-        onUnlock();
+      if (res.ok && data.csrfToken) {
+        setCsrfToken(data.csrfToken);
+        onUnlock(data);
       } else {
         setError(tl('lockScreenPasswordError'));
         setPassword('');

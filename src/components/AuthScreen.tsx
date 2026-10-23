@@ -4,6 +4,7 @@ import { User } from '../types';
 import { useT } from '../i18n';
 import { isValidPassword } from '../utils/passwordPolicy';
 import PasswordStrengthMeter from './PasswordStrengthMeter';
+import { setCsrfToken } from '../lib/sessionClient';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: User) => void;
@@ -41,9 +42,7 @@ export default function AuthScreen({ onLoginSuccess, setupComplete }: AuthScreen
         throw new Error(data.error || t('errorLoginFallback'));
       }
 
-      if (data.token) {
-        localStorage.setItem('py_ide_token', data.token);
-      }
+      setCsrfToken(data.csrfToken);
       onLoginSuccess(data);
     } catch (err: any) {
       setError(err.message || t('errorConnectionFallback'));
@@ -73,9 +72,7 @@ export default function AuthScreen({ onLoginSuccess, setupComplete }: AuthScreen
         throw new Error(data.error || t('errorRegisterFallback'));
       }
 
-      if (data.token) {
-        localStorage.setItem('py_ide_token', data.token);
-      }
+      setCsrfToken(data.csrfToken);
       onLoginSuccess(data);
     } catch (err: any) {
       setError(err.message || t('errorConnectionFallback'));

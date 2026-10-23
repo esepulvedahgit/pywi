@@ -4,7 +4,7 @@
 # Uso:
 #   curl -fsSL https://raw.githubusercontent.com/esepulvedahgit/pywi/main/deploy.sh | bash
 #
-# Clona el repo, genera JWT_SECRET/ENCRYPTION_KEY, pide el dominio de forma
+# Clona el repo, genera ENCRYPTION_KEY, pide el dominio de forma
 # interactiva, construye la imagen Docker y levanta el servicio con
 # docker compose up -d.
 
@@ -70,14 +70,7 @@ gen_hex() {
   fi
 }
 
-log "Generando secretos (JWT_SECRET, ENCRYPTION_KEY)"
-current_jwt="$(grep '^JWT_SECRET=' .env | cut -d= -f2- || true)"
-case "$current_jwt" in
-  ""|CHANGE_ME*)
-    set_env_var JWT_SECRET "$(gen_hex 48)"
-    ;;
-esac
-
+log "Generando clave de cifrado"
 current_enc="$(grep '^ENCRYPTION_KEY=' .env | cut -d= -f2- || true)"
 case "$current_enc" in
   ""|CHANGE_ME*)
@@ -100,6 +93,12 @@ else
   APP_URL="http://localhost:3000"
 fi
 set_env_var APP_URL "$APP_URL"
+
+if [ -n "$DOMAIN" ]; then
+  echo "PyWI escucha solo en 127.0.0.1 por defecto. Si Sophos está en otro host, indica la IP privada de este servidor en la DMZ."
+  read -r -p "IP local para recibir tráfico desde Sophos (Enter: 127.0.0.1): " BIND_IP < /dev/tty || true
+  set_env_var PYWI_BIND_IP "${BIND_IP:-127.0.0.1}"
+fi
 
 log "Detectando arquitectura"
 ARCH_RAW="$(uname -m)"
@@ -126,7 +125,7 @@ docker compose up -d
 log "Esperando a que el servicio responda"
 READY=0
 for i in $(seq 1 30); do
-  if docker compose logs 2>/dev/null | grep -q "Server running on port 3000"; then
+  if docker compose logs 2>/dev/null | grep -q "Web Python IDE running at"; then
     READY=1
     break
   fi
