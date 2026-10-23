@@ -141,7 +141,7 @@ docker compose up -d
 |---|---|---|---|
 | `ENCRYPTION_KEY` | ✅ | Clave AES-256-GCM para cifrar API keys (hex 64 chars) | — |
 | `APP_URL` | ✅ | URL pública exacta; usar HTTPS detrás de Sophos / Exact public URL; use HTTPS behind Sophos | `http://localhost:3000` |
-| `PYWI_BIND_IP` | ❌ | IP local para el puerto 3000; use la IP privada DMZ si Sophos está en otro host / Local bind IP; use the private DMZ IP for remote Sophos | `127.0.0.1` |
+| `PYWI_BIND_IP` | ❌ | IP local para el puerto 3000; use la IP privada si el proxy está en otro host / Local bind IP; use the private IP for a remote proxy | `127.0.0.1` |
 | `TRUSTED_PROXY_IPS` | ❌ | IPs exactas de proxies confiables / Exact trusted proxy IPs | vacío / empty |
 | `EXEC_TIMEOUT_MS` | ❌ | Timeout de ejecución Python en ms / Python execution timeout | `180000` |
 
